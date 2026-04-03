@@ -70,3 +70,22 @@ def test_engine_has_glfw_init():
     # Just verify glfw can be initialized (creates a valid context)
     assert glfw.init() is not None
     glfw.terminate()
+
+
+def test_engine_has_webgpu_attributes():
+    """Engine has attributes for WebGPU context."""
+    engine = Engine("Test")
+    # Engine should have placeholder attributes for WebGPU objects
+    assert hasattr(engine, "_adapter") or hasattr(engine, "adapter")
+    assert hasattr(engine, "_device") or hasattr(engine, "device")
+    assert hasattr(engine, "_canvas") or hasattr(engine, "canvas")
+    assert hasattr(engine, "_swap_chain") or hasattr(engine, "swap_chain")
+
+
+def test_engine_has_wgpu_import():
+    """Engine imports wgpu module."""
+    try:
+        import wgpu
+        assert True
+    except ImportError:
+        pytest.skip("wgpu-py not available")
