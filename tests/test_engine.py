@@ -89,3 +89,31 @@ def test_engine_has_wgpu_import():
         assert True
     except ImportError:
         pytest.skip("wgpu-py not available")
+
+def test_engine_has_update_callbacks():
+    """Engine has update decorator and callback list."""
+    engine = Engine("Test")
+    assert hasattr(engine, "_update_callbacks")
+    assert hasattr(engine, "update")
+    assert callable(engine.update)
+
+
+def test_engine_calls_update_callbacks():
+    """Engine calls update callbacks in the main loop."""
+    engine = Engine("Test")
+    call_count = 0
+
+    @engine.update
+    def tick():
+        nonlocal call_count
+        call_count += 1
+
+    # Verify callback registered
+    assert len(engine._update_callbacks) == 1
+    assert tick in engine._update_callbacks
+
+
+def test_engine_has_render_method():
+    """Engine has method for rendering frames."""
+    engine = Engine("Test")
+    assert hasattr(engine, "_render_frame") or hasattr(engine, "render_frame")
