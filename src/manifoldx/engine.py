@@ -38,14 +38,14 @@ class Engine:
     def _init_webgpu(self):
         # Use rendercanvas's GlfwRenderCanvas
         self._render_canvas = GlfwRenderCanvas()
-        
+
         # Get the wgpu context from the canvas
         self._wgpu_context = self._render_canvas.get_wgpu_context()
-        
+
         # Request adapter and device (use sync API to avoid deprecation warnings)
         self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
         self._device = self._adapter.request_device_sync()
-        
+
         # Configure the swap chain
         self._wgpu_context.configure(
             device=self._device,
@@ -56,10 +56,10 @@ class Engine:
         """Render a single frame: acquire, encode, render, present."""
         # Get the next frame's texture view
         texture_view = self._wgpu_context.get_current_texture()
-        
+
         # Create command encoder
         command_encoder = self._device.create_command_encoder()
-        
+
         # Create render pass with clear color
         render_pass = command_encoder.begin_render_pass(
             color_attachments=[
@@ -72,13 +72,13 @@ class Engine:
                 }
             ]
         )
-        
+
         # End render pass (no actual rendering yet, just clear)
         render_pass.end()
-        
+
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
-        
+
         # Present the frame (swaps buffer for FIFO)
         self._wgpu_context.present()
 
@@ -88,18 +88,18 @@ class Engine:
         self._running = True
         for callback in self._startup_callbacks:
             callback()
-        
+
         while self._running:
             # Call update callbacks
             for callback in self._update_callbacks:
                 callback()
-            
+
             # Render frame
             self._render_frame()
-            
+
             # Check if window should close
             if self._render_canvas.is_closing:
                 self._running = False
-        
+
         for callback in self._shutdown_callbacks:
             callback()
