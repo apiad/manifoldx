@@ -1,5 +1,7 @@
 # Plan: Minimal WebGPU Engine
 
+**Status: COMPLETE**
+
 ## Problem
 
 Create a working engine skeleton that initializes a window, starts a WebGPU rendering loop, and renders one empty frame. The goal is to validate the API from `hello_world.py` works end-to-end.

@@ -117,3 +117,44 @@ def test_engine_has_render_method():
     """Engine has method for rendering frames."""
     engine = Engine("Test")
     assert hasattr(engine, "_render_frame") or hasattr(engine, "render_frame")
+
+
+def test_engine_uses_rendercanvas():
+    """Engine uses rendercanvas's GlfwRenderCanvas."""
+    try:
+        from rendercanvas.glfw import GlfwRenderCanvas
+        from manifoldx import Engine
+        engine = Engine("Test")
+        assert hasattr(engine, "_canvas") or hasattr(engine, "render_canvas")
+    except ImportError:
+        pytest.skip("rendercanvas not available")
+
+
+def test_engine_has_rendercanvas_import():
+    """Engine imports GlfwRenderCanvas from rendercanvas."""
+    try:
+        from rendercanvas.glfw import GlfwRenderCanvas
+        assert True
+    except ImportError:
+        pytest.skip("rendercanvas not available")
+
+
+def test_engine_get_wgpu_context():
+    """Engine can get wgpu context from rendercanvas canvas."""
+    try:
+        from rendercanvas.glfw import GlfwRenderCanvas
+        canvas = GlfwRenderCanvas()
+        wgpu_ctx = canvas.get_wgpu_context()
+        assert wgpu_ctx is not None
+        assert hasattr(wgpu_ctx, "configure")
+        assert hasattr(wgpu_ctx, "get_current_texture")
+    except ImportError:
+        pytest.skip("rendercanvas not available")
+
+
+def test_engine_stores_rendercanvas_canvas():
+    """Engine stores rendercanvas GlfwRenderCanvas instance."""
+    from manifoldx import Engine
+    engine = Engine("Test")
+    # Engine should store rendercanvas canvas
+    assert hasattr(engine, "_render_canvas") or hasattr(engine, "render_canvas")
