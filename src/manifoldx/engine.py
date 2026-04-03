@@ -42,9 +42,9 @@ class Engine:
         # Get the wgpu context from the canvas
         self._wgpu_context = self._render_canvas.get_wgpu_context()
         
-        # Request adapter and device
-        self._adapter = wgpu.gpu.request_adapter(power_preference="high-performance")
-        self._device = asyncio.run(self._adapter.request_device())
+        # Request adapter and device (use sync API to avoid deprecation warnings)
+        self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+        self._device = self._adapter.request_device_sync()
         
         # Configure the swap chain
         self._wgpu_context.configure(
