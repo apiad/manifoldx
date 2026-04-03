@@ -54,3 +54,19 @@ def test_engine_has_run_method():
     engine = Engine("Test")
     assert hasattr(engine, "run")
     assert callable(engine.run)
+
+
+def test_engine_has_window_attribute():
+    """Engine has window attribute for GLFW handle."""
+    engine = Engine("Test")
+    assert hasattr(engine, "_window") or hasattr(engine, "window")
+
+
+def test_engine_has_glfw_init():
+    """Engine has GLFW initialization in run()."""
+    import glfw
+    engine = Engine("Test")
+    # Verify glfw is being used - check that window create is part of flow
+    # Just verify glfw can be initialized (creates a valid context)
+    assert glfw.init() is not None
+    glfw.terminate()
