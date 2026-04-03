@@ -1,6 +1,7 @@
 import asyncio
-import glfw
 import wgpu
+
+from rendercanvas.glfw import GlfwRenderCanvas
 
 
 class Engine:
@@ -10,11 +11,10 @@ class Engine:
         self.w = w
         self.fullscreen = fullscreen
         self._running = False
-        self._window = None
+        self._render_canvas = None
+        self._wgpu_context = None
         self._adapter = None
         self._device = None
-        self._canvas = None
-        self._swap_chain = None
         self._present_mode = "fifo"
         self._startup_callbacks = []
         self._shutdown_callbacks = []
@@ -36,36 +36,18 @@ class Engine:
         self._running = False
 
     def _init_webgpu(self):
-        # Get canvas context using rendercanvas's WgpuContext
-        from rendercanvas.contexts import WgpuContext
+        # Use rendercanvas's GlfwRenderCanvas
+        self._render_canvas = GlfwRenderCanvas()
         
-        # Get platform (x11 or wayland)
-        platform = "x11"
-        if glfw.get_platform() == glfw.PLATFORM_WAYLAND:
-            platform = "wayland"
-        
-        # Get display for the platform
-        display = None
-        if platform == "wayland":
-            display = glfw.get_wayland_display()
-        
-        # Create present_info dict
-        present_info = {
-            "window": self._window,
-            "platform": platform,
-        }
-        if display:
-            present_info["display"] = display
-        
-        # Create canvas context
-        self._canvas = WgpuContext(present_info)
+        # Get the wgpu context from the canvas
+        self._wgpu_context = self._render_canvas.get_wgpu_context()
         
         # Request adapter and device
         self._adapter = wgpu.gpu.request_adapter(power_preference="high-performance")
         self._device = asyncio.run(self._adapter.request_device())
         
-        # Configure swap chain
-        self._canvas.configure(
+        # Configure the swap chain
+        self._wgpu_context.configure(
             device=self._device,
             format=wgpu.TextureFormat.bgra8unorm,
         )
@@ -73,7 +55,7 @@ class Engine:
     def _render_frame(self):
         """Render a single frame: acquire, encode, render, present."""
         # Get the next frame's texture view
-        texture_view = self._canvas.get_current_texture()
+        texture_view = self._wgpu_context.get_current_texture()
         
         # Create command encoder
         command_encoder = self._device.create_command_encoder()
@@ -98,13 +80,9 @@ class Engine:
         self._device.queue.submit([command_encoder.finish()])
         
         # Present the frame (swaps buffer for FIFO)
-        self._canvas.present()
+        self._wgpu_context.present()
 
     def run(self):
-        glfw.init()
-        self._window = glfw.create_window(self.w, self.h, self.name, None, None)
-        glfw.make_context_current(self._window)
-
         self._init_webgpu()
 
         self._running = True
@@ -119,16 +97,9 @@ class Engine:
             # Render frame
             self._render_frame()
             
-            # Poll GLFW events
-            glfw.poll_events()
-            
             # Check if window should close
-            if glfw.window_should_close(self._window):
+            if self._render_canvas.is_closing:
                 self._running = False
         
         for callback in self._shutdown_callbacks:
             callback()
-
-        if self._window:
-            glfw.destroy_window(self._window)
-        glfw.terminate()

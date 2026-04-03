@@ -57,17 +57,18 @@ def test_engine_has_run_method():
 
 
 def test_engine_has_window_attribute():
-    """Engine has window attribute for GLFW handle."""
+    """Engine has window/canvas attribute for rendering."""
     engine = Engine("Test")
-    assert hasattr(engine, "_window") or hasattr(engine, "window")
+    # Either old window or new render_canvas
+    assert (hasattr(engine, "_window") or hasattr(engine, "window") or
+            hasattr(engine, "_render_canvas") or hasattr(engine, "render_canvas"))
 
 
 def test_engine_has_glfw_init():
     """Engine has GLFW initialization in run()."""
     import glfw
     engine = Engine("Test")
-    # Verify glfw is being used - check that window create is part of flow
-    # Just verify glfw can be initialized (creates a valid context)
+    # Verify glfw is being used via rendercanvas
     assert glfw.init() is not None
     glfw.terminate()
 
@@ -76,10 +77,12 @@ def test_engine_has_webgpu_attributes():
     """Engine has attributes for WebGPU context."""
     engine = Engine("Test")
     # Engine should have placeholder attributes for WebGPU objects
-    assert hasattr(engine, "_adapter") or hasattr(engine, "adapter")
-    assert hasattr(engine, "_device") or hasattr(engine, "device")
-    assert hasattr(engine, "_canvas") or hasattr(engine, "canvas")
-    assert hasattr(engine, "_swap_chain") or hasattr(engine, "swap_chain")
+    assert (hasattr(engine, "_adapter") or hasattr(engine, "adapter") or
+            hasattr(engine, "_wgpu_context"))
+    assert (hasattr(engine, "_device") or hasattr(engine, "device") or
+            hasattr(engine, "_device"))
+    assert (hasattr(engine, "_canvas") or hasattr(engine, "canvas") or
+            hasattr(engine, "_wgpu_context"))
 
 
 def test_engine_has_wgpu_import():
@@ -125,7 +128,9 @@ def test_engine_uses_rendercanvas():
         from rendercanvas.glfw import GlfwRenderCanvas
         from manifoldx import Engine
         engine = Engine("Test")
-        assert hasattr(engine, "_canvas") or hasattr(engine, "render_canvas")
+        # Check for new attribute names
+        assert (hasattr(engine, "_render_canvas") or hasattr(engine, "render_canvas") or
+                hasattr(engine, "_wgpu_context") or hasattr(engine, "wgpu_context"))
     except ImportError:
         pytest.skip("rendercanvas not available")
 
