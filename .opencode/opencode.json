@@ -4,5 +4,6 @@
   "agent": {
     "build": {"hidden": true},
     "plan": {"hidden": true},
-  }
+  },
+  "plugin": ["opencode-gemini-auth@latest"]
 }

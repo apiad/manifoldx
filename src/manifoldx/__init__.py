@@ -6,6 +6,7 @@ from manifoldx.types import Vector3, Vector4, Float, Color
 from manifoldx.ecs import EntityStore, ComponentView
 from manifoldx.systems import Query
 from manifoldx.components import Transform, Mesh, Material, Colors
+from manifoldx.camera import Camera
 from manifoldx.resources import cube, sphere, plane, basic, phong, standard
 
 
@@ -65,6 +66,7 @@ colors = _ColorsProxy()
 
 __all__ = [
     'Engine',
+    'Camera',
     'Vector3',
     'Vector4',
     'Float',

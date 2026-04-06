@@ -12,6 +12,7 @@ from manifoldx.systems import SystemRegistry
 from manifoldx.resources import GeometryRegistry, MaterialRegistry
 from manifoldx.renderer import RenderPipeline
 from manifoldx.components import Transform, Mesh, Material
+from manifoldx.camera import Camera
 
 
 class Engine:
@@ -52,6 +53,10 @@ class Engine:
         Transform.register(self.store)
         Mesh.register(self.store)
         Material.register(self.store)
+
+        # Camera for MVP matrices
+        self._camera = Camera()
+        self.camera = self._camera
 
     def startup(self, func):
         self._startup_callbacks.append(func)
@@ -109,6 +114,11 @@ class Engine:
         # Handle Mesh, Material, and Transform component objects
         processed_kwargs = {}
         
+        # Convert positional args to kwargs by class name
+        for arg in args:
+            name = type(arg).__name__
+            kwargs[name] = arg
+        
         for name, value in kwargs.items():
             # Check if it's a custom component class (has _component_registry)
             if hasattr(value, '_component_registry') and hasattr(value, '_component_fields'):
@@ -140,7 +150,11 @@ class Engine:
             
             if hasattr(value, 'get_data'):
                 # It's a component object (Mesh, Material, Transform) - get data from it
-                processed_kwargs[name] = value.get_data(n, self._geometry_registry)
+                # Pass appropriate registry based on component type
+                if name == 'Material':
+                    processed_kwargs[name] = value.get_data(n, self._material_registry)
+                else:
+                    processed_kwargs[name] = value.get_data(n, self._geometry_registry)
             elif np.isscalar(value):
                 # Broadcast scalars to arrays
                 processed_kwargs[name] = np.full((n,), value, dtype=np.float32)
@@ -189,6 +203,15 @@ class Engine:
 
     def _render_frame(self):
         """Render a single frame: acquire, encode, render, present."""
+        # Ensure render pipeline is initialized
+        self._render_pipeline._ensure_pipeline(
+            self._device, wgpu.TextureFormat.bgra8unorm
+        )
+        
+        # Also update registries with device reference
+        self._geometry_registry._device = self._device
+        self._material_registry._device = self._device
+        
         # Get the next frame's texture and create view
         texture = self._wgpu_context.get_current_texture()
         texture_view = texture.create_view()
@@ -209,14 +232,16 @@ class Engine:
             ]
         )
 
-        # End render pass (no actual rendering yet, just clear)
+        # Issue draw calls via render pipeline
+        self._render_pipeline.render(self, render_pass)
+
+        # End render pass
         render_pass.end()
 
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
 
-        # Present the frame (swaps buffer for FIFO)
-        # In rendercanvas 2.6+, use canvas.request_draw() or force_draw()
+        # Present the frame
         self._render_canvas.force_draw()
 
     def run(self):

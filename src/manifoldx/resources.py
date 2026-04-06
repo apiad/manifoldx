@@ -1,5 +1,6 @@
 """GPU resource management: Geometry, Material registries and factories."""
 import numpy as np
+import wgpu
 from typing import Any, Dict, Optional
 
 
@@ -16,9 +17,50 @@ class GeometryRegistry:
     
     def __init__(self, device=None):
         self._device = device
-        self._geometries: Dict[int, Any] = {}  # id -> GPU resource
+        self._geometries: Dict[int, Any] = {}  # id -> geometry dict
         self._object_to_id: Dict[int, int] = {}  # object id -> registry id
         self._next_id = 1
+        self._gpu_buffers: Dict[int, dict] = {}  # id -> {vertex_buffer, index_buffer}
+        
+    def create_buffers(self, geometry_id: int, geometry_obj: dict, queue):
+        """Create GPU buffers for geometry."""
+        if self._device is None or queue is None:
+            return None
+            
+        buffers = {}
+        
+        # Create vertex buffer for positions
+        if 'positions' in geometry_obj:
+            positions = geometry_obj['positions']
+            data = positions.astype(np.float32).tobytes()
+            
+            vertex_buffer = self._device.create_buffer(
+                size=len(data),
+                usage=wgpu.BufferUsage.VERTEX | wgpu.BufferUsage.COPY_DST,
+            )
+            queue.write_buffer(vertex_buffer, 0, data)
+            buffers['vertex_buffer'] = vertex_buffer
+            buffers['vertex_count'] = len(positions)
+            
+        # Create index buffer
+        if 'indices' in geometry_obj:
+            indices = geometry_obj['indices']
+            data = indices.astype(np.uint32).tobytes()
+            
+            index_buffer = self._device.create_buffer(
+                size=len(data),
+                usage=wgpu.BufferUsage.INDEX | wgpu.BufferUsage.COPY_DST,
+            )
+            queue.write_buffer(index_buffer, 0, data)
+            buffers['index_buffer'] = index_buffer
+            buffers['index_count'] = len(indices)
+            
+        self._gpu_buffers[geometry_id] = buffers
+        return buffers
+    
+    def get_gpu_buffers(self, geometry_id: int) -> dict:
+        """Get GPU buffers for geometry."""
+        return self._gpu_buffers.get(geometry_id)
         
     def register(self, geometry_obj) -> int:
         """Register a geometry, return ID. Same object returns same ID."""
