@@ -8,8 +8,8 @@ engine.camera.zoom(0.1)
 
 # These are all static things that are created
 # and stored in memory once
-cube_mesh = mx.geometry.cube(1, 1, 1)
-cube_material = mx.material.phong(mx.colors.RED)
+cube_mesh = mx.geometry.sphere(1)
+cube_material = mx.material.phong(mx.colors.BLUE)
 
 
 # Custom component, gets registered in engine to keep track
@@ -47,7 +47,7 @@ def cube_life(query: mx.Query[Cube, Transform], dt: float):
     query[Transform].rotation += Transform.rotation(euler=query[Cube].angular * dt)
 
     # Scale depending on remaining life
-    query[Transform].scale = query[Cube].life / 20.0
+    query[Transform].scale = query[Cube].life / 10.0
 
     # This issues a single destroy command to all items that pass the filter.
     # Destroyed entities are actually just marked as `alive = False` in some
@@ -55,7 +55,7 @@ def cube_life(query: mx.Query[Cube, Transform], dt: float):
     engine.destroy(query[Cube].life <= 0)
 
     # Now we create lots of cubes
-    n_new = int(1000 * dt)
+    n_new = int(100 * dt)
 
     # This will in principle reuse the buffers for dead entities, but will
     # expand the buffer if necessary
@@ -66,7 +66,7 @@ def cube_life(query: mx.Query[Cube, Transform], dt: float):
         Cube(
             velocity=np.random.uniform(-5, 5, (n_new, 3)),
             angular=np.random.uniform(-2, 2, (n_new, 3)),
-            life=np.random.rand(n_new) * 20,
+            life=np.random.rand(n_new) * 10,
         ),
         n=n_new,
     )

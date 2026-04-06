@@ -7,3 +7,13 @@ entries:
       - src/manifoldx/ecs.py
       - src/manifoldx/engine.py
       - src/manifoldx/renderer.py
+  - timestamp: "2026-04-06T14:30:00Z"
+    type: commit
+    message: "feat(ecs): add full operator suite for _FieldView and vectorized rotation"
+    files:
+      - src/manifoldx/ecs.py
+      - src/manifoldx/components.py
+      - examples/cubes.py
+      - tests/test_ecs.py
+      - src/manifoldx/camera.py
+      - tests/test_camera.py

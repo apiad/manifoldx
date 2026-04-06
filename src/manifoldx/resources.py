@@ -202,9 +202,9 @@ def sphere(radius: float, segments: int = 32) -> dict:
         
         for lon in range(lon_lines + 1):
             phi = lon * 2 * np.pi / lon_lines
-            x = cos_theta * np.cos(phi)
-            y = sin_theta
-            z = cos_theta * np.sin(phi)
+            x = sin_theta * np.cos(phi)
+            y = cos_theta
+            z = sin_theta * np.sin(phi)
             positions.append([x * radius, y * radius, z * radius])
     
     positions = np.array(positions, dtype=np.float32)
