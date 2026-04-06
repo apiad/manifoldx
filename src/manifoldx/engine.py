@@ -186,7 +186,8 @@ class Engine:
             Transform.register(self.store)
         
         # NOW spawn the entities immediately (not deferred)
-        self.store.spawn(n, **processed_kwargs)
+        if n > 0:
+            self.store.spawn(n, **processed_kwargs)
         
     def destroy(self, indices):
         """Destroy entities matching condition by emitting DESTROY command."""

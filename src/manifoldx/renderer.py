@@ -8,15 +8,21 @@ import wgpu
 # =============================================================================
 
 SHADER_SOURCE = """
-struct Uniforms {
-    mvp: mat4x4<f32>,
+struct Globals {
+    vp: mat4x4<f32>,
     color: vec4<f32>,
 };
 
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+struct Transforms {
+    models: array<mat4x4<f32>>,
+};
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> transforms: Transforms;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
+    @builtin(instance_index) instance: u32,
 };
 
 struct VertexOutput {
@@ -26,13 +32,14 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.position = uniforms.mvp * vec4<f32>(in.position, 1.0);
+    let mvp = globals.vp * transforms.models[in.instance];
+    out.position = mvp * vec4<f32>(in.position, 1.0);
     return out;
 }
 
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
-    return uniforms.color;
+    return globals.color;
 }
 """
 
@@ -85,13 +92,6 @@ class TransformCache:
         # Extract quaternion components
         qx, qy, qz, qw = quats[:, 0], quats[:, 1], quats[:, 2], quats[:, 3]
         
-        # Rotation matrix from quaternion (row-major, 4x4 flattened)
-        # R = [[1-2(yy+zz), 2(xy-wz), 2(xz+wy), 0],
-        #      [2(xy+wz), 1-2(xx+zz), 2(yz-wx), 0],
-        #      [2(xz-wy), 2(yz+wx), 1-2(xx+yy), 0],
-        #      [0, 0, 0, 1]]
-        # Then multiply by scale and add translation
-        
         xx, yy, zz = qx*qx, qy*qy, qz*qz
         xy, xz, yz = qx*qy, qx*qz, qy*qz
         wx, wy, wz = qw*qx, qw*qy, qw*qz
@@ -102,20 +102,16 @@ class TransformCache:
         matrices[:, 0] = (1 - 2*(yy + zz)) * sx
         matrices[:, 1] = 2*(xy - wz) * sy
         matrices[:, 2] = 2*(xz + wy) * sz
-        
         # Row 1 (scaled)
         matrices[:, 4] = 2*(xy + wz) * sx
         matrices[:, 5] = (1 - 2*(xx + zz)) * sy
         matrices[:, 6] = 2*(yz - wx) * sz
-        
         # Row 2 (scaled)
         matrices[:, 8] = 2*(xz - wy) * sx
         matrices[:, 9] = 2*(yz + wx) * sy
         matrices[:, 10] = (1 - 2*(xx + yy)) * sz
-        
         # Row 3
         matrices[:, 15] = 1.0
-        
         # Translation (column 3)
         matrices[:, 12] = positions[:, 0]
         matrices[:, 13] = positions[:, 1]
@@ -140,22 +136,23 @@ def _color_hex_to_vec4(color_hex: str) -> np.ndarray:
 
 class RenderPipeline:
     """
-    Render pipeline that executes after command buffer.
+    Instanced render pipeline.
     
-    Flow:
-    1. Query all alive entities with Mesh + Material + Transform
-    2. Group by (geometry_id, material_id) into batches
-    3. For each batch: compute transforms (using cache), upload, draw
+    Groups entities by (geometry_id, material_id) into batches.
+    Each batch uses a single draw_indexed call with instance_count.
+    Per-instance transforms are uploaded via a storage buffer.
     """
     
     def __init__(self, store, device=None):
         self._store = store
         self._device = device
         self._transform_cache = TransformCache(store.max_entities)
-        self._pipeline = None  # WGPU render pipeline (lazy init)
+        self._pipeline = None
         self._bind_group_layout = None
         self._pipeline_layout = None
-        self._uniform_buffer = None
+        self._globals_buffer = None  # VP matrix + color (80 bytes)
+        self._transform_buffer = None  # Storage buffer for model matrices
+        self._transform_buffer_size = 0
         self._bind_group = None
         self._initialized = False
         
@@ -169,11 +166,19 @@ class RenderPipeline:
         # Create shader module
         shader_module = device.create_shader_module(code=SHADER_SOURCE)
         
-        # Create uniform buffer (mat4x4 + vec4 = 64 + 16 = 80 bytes)
-        self._uniform_buffer = device.create_buffer(
+        # Create globals uniform buffer (mat4x4 VP + vec4 color = 64 + 16 = 80 bytes)
+        self._globals_buffer = device.create_buffer(
             size=80,
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
+        
+        # Create initial transform storage buffer (will grow as needed)
+        initial_size = max(64, 64 * 1024)  # At least 1 matrix, start with 1024
+        self._transform_buffer = device.create_buffer(
+            size=initial_size,
+            usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
+        )
+        self._transform_buffer_size = initial_size
         
         # Create bind group layout
         self._bind_group_layout = device.create_bind_group_layout(
@@ -182,24 +187,16 @@ class RenderPipeline:
                     "binding": 0,
                     "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
                     "buffer": {"type": wgpu.BufferBindingType.uniform},
-                }
+                },
+                {
+                    "binding": 1,
+                    "visibility": wgpu.ShaderStage.VERTEX,
+                    "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+                },
             ]
         )
         
-        # Create bind group
-        self._bind_group = device.create_bind_group(
-            layout=self._bind_group_layout,
-            entries=[
-                {
-                    "binding": 0,
-                    "resource": {
-                        "buffer": self._uniform_buffer,
-                        "offset": 0,
-                        "size": 80,
-                    },
-                }
-            ],
-        )
+        self._create_bind_group()
         
         # Create pipeline layout
         self._pipeline_layout = device.create_pipeline_layout(
@@ -229,7 +226,7 @@ class RenderPipeline:
             primitive={
                 "topology": wgpu.PrimitiveTopology.triangle_list,
                 "front_face": wgpu.FrontFace.ccw,
-                "cull_mode": wgpu.CullMode.none,  # Disable culling for now
+                "cull_mode": wgpu.CullMode.none,
             },
             fragment={
                 "module": shader_module,
@@ -243,9 +240,50 @@ class RenderPipeline:
         )
         
         self._initialized = True
+    
+    def _create_bind_group(self):
+        """Create or recreate bind group (needed when transform buffer changes)."""
+        self._bind_group = self._device.create_bind_group(
+            layout=self._bind_group_layout,
+            entries=[
+                {
+                    "binding": 0,
+                    "resource": {
+                        "buffer": self._globals_buffer,
+                        "offset": 0,
+                        "size": 80,
+                    },
+                },
+                {
+                    "binding": 1,
+                    "resource": {
+                        "buffer": self._transform_buffer,
+                        "offset": 0,
+                        "size": self._transform_buffer_size,
+                    },
+                },
+            ],
+        )
+    
+    def _ensure_transform_buffer(self, needed_bytes):
+        """Grow transform storage buffer if needed."""
+        if needed_bytes <= self._transform_buffer_size:
+            return
+        
+        # Double until big enough
+        new_size = self._transform_buffer_size
+        while new_size < needed_bytes:
+            new_size *= 2
+        
+        self._transform_buffer = self._device.create_buffer(
+            size=new_size,
+            usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
+        )
+        self._transform_buffer_size = new_size
+        self._create_bind_group()  # Recreate with new buffer
         
     def render(self, engine, render_pass):
-        """Issue draw calls into an active render pass."""
+        """Issue instanced draw calls into an active render pass."""
         if not self._initialized or self._device is None:
             return
             
@@ -265,35 +303,40 @@ class RenderPipeline:
         aspect = engine.w / engine.h
         view = camera.get_view_matrix()
         proj = camera.get_projection_matrix(aspect)
-        vp = proj @ view  # view-projection matrix
+        vp = (proj @ view).T  # Transpose for WGSL column-major layout
         
         # Get transform data
         self._transform_cache.mark_dirty(alive_indices)
         model_matrices = self._transform_cache.get_transforms(self._store, alive_indices)
         
-        # Get mesh component data (geometry IDs)
+        # Get mesh and material IDs
         mesh_data = self._store.get_component_data('Mesh', alive_indices)
-        
-        # Get material data if available
         material_data = None
         if 'Material' in self._store._components:
             material_data = self._store.get_component_data('Material', alive_indices)
         
-        # Set pipeline
-        render_pass.set_pipeline(self._pipeline)
-        render_pass.set_bind_group(0, self._bind_group)
-        
-        # Draw each entity
+        # Group by (geom_id, mat_id) for batched instanced drawing
+        batches = {}  # (geom_id, mat_id) -> list of local indices
         for i, entity_idx in enumerate(alive_indices):
-            # Get geometry ID
             geom_id = int(mesh_data[i, 0])
+            mat_id = int(material_data[i, 0]) if material_data is not None else 0
             if geom_id == 0:
                 continue
-                
-            # Get GPU buffers for this geometry
+            key = (geom_id, mat_id)
+            if key not in batches:
+                batches[key] = []
+            batches[key].append(i)
+        
+        # Set pipeline once
+        render_pass.set_pipeline(self._pipeline)
+        
+        # Draw each batch
+        for (geom_id, mat_id), local_indices in batches.items():
+            instance_count = len(local_indices)
+            
+            # Get GPU buffers for geometry
             gpu_buffers = engine._geometry_registry.get_gpu_buffers(geom_id)
             if gpu_buffers is None:
-                # Need to create buffers
                 geom_obj = engine._geometry_registry.get(geom_id)
                 if geom_obj is None:
                     continue
@@ -303,44 +346,42 @@ class RenderPipeline:
                 if gpu_buffers is None:
                     continue
             
-            # Compute MVP for this entity
-            model = model_matrices[i].reshape(4, 4)
-            mvp = (vp @ model).T  # Transpose for WGSL column-major layout
-            
             # Get color from material
-            color = np.array([1.0, 0.0, 0.0, 1.0], dtype=np.float32)  # default red
-            if material_data is not None:
-                mat_id = int(material_data[i, 0])
-                if mat_id > 0:
-                    mat_obj = engine._material_registry.get(mat_id)
-                    if mat_obj is not None and hasattr(mat_obj, 'color'):
-                        if isinstance(mat_obj.color, str):
-                            color = _color_hex_to_vec4(mat_obj.color)
+            color = np.array([1.0, 0.0, 0.0, 1.0], dtype=np.float32)
+            if mat_id > 0:
+                mat_obj = engine._material_registry.get(mat_id)
+                if mat_obj is not None and hasattr(mat_obj, 'color'):
+                    if isinstance(mat_obj.color, str):
+                        color = _color_hex_to_vec4(mat_obj.color)
             
-            # Upload uniforms (MVP + color)
-            uniform_data = np.zeros(80, dtype=np.uint8)
-            uniform_data[0:64] = np.frombuffer(
-                mvp.astype(np.float32).tobytes(), dtype=np.uint8
-            )
-            uniform_data[64:80] = np.frombuffer(
-                color.tobytes(), dtype=np.uint8
-            )
-            self._device.queue.write_buffer(
-                self._uniform_buffer, 0, uniform_data.tobytes()
-            )
+            # Upload globals (VP + color)
+            globals_data = np.zeros(80, dtype=np.uint8)
+            globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
+            globals_data[64:80] = np.frombuffer(color.tobytes(), dtype=np.uint8)
+            self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
             
-            # Set vertex and index buffers
+            # Collect model matrices for this batch and transpose each for WGSL
+            batch_matrices = model_matrices[local_indices]  # (instance_count, 16)
+            # Transpose each 4x4 matrix for column-major WGSL layout
+            batch_matrices_t = batch_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
+            transform_bytes = batch_matrices_t.astype(np.float32).tobytes()
+            
+            # Ensure buffer is big enough
+            self._ensure_transform_buffer(len(transform_bytes))
+            
+            # Upload transforms
+            self._device.queue.write_buffer(self._transform_buffer, 0, transform_bytes)
+            
+            # Bind
+            render_pass.set_bind_group(0, self._bind_group)
             render_pass.set_vertex_buffer(0, gpu_buffers['vertex_buffer'])
-            render_pass.set_index_buffer(
-                gpu_buffers['index_buffer'], wgpu.IndexFormat.uint32
-            )
+            render_pass.set_index_buffer(gpu_buffers['index_buffer'], wgpu.IndexFormat.uint32)
             
-            # Draw!
-            render_pass.draw_indexed(gpu_buffers['index_count'])
+            # Single instanced draw call!
+            render_pass.draw_indexed(gpu_buffers['index_count'], instance_count)
     
     def run(self, engine, dt: float):
-        """Execute full render pipeline (CPU-side prep, no draw calls here)."""
-        # Get all alive entities with required components
+        """Execute full render pipeline (CPU-side prep)."""
         if 'Transform' not in self._store._components:
             return
             
@@ -348,14 +389,8 @@ class RenderPipeline:
         if len(alive_indices) == 0:
             return
         
-        # Mark transforms as dirty for all alive entities
         self._transform_cache.mark_dirty(alive_indices)
-        
-        # Get transforms using cache
-        transforms = self._transform_cache.get_transforms(self._store, alive_indices)
-        
-        # Verify transforms were computed
-        assert transforms.shape[1] == 16  # mat4x4
+        self._transform_cache.get_transforms(self._store, alive_indices)
 
 
 __all__ = [

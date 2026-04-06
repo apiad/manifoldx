@@ -114,45 +114,87 @@ class EntityStore:
 # TransformFieldView - Writable view into a Transform sub-field
 # =============================================================================
 
-class _TransformFieldView:
-    """View into a sub-field of the Transform component (position, rotation, scale).
+class _FieldView:
+    """View into a sub-field of a component.
     
-    Supports += for in-place updates. For rotation, += composes quaternions.
+    Supports +=, -=, <=, *, etc. Knows its absolute entity indices.
     """
     
-    def __init__(self, store: 'EntityStore', indices: np.ndarray, field_name: str, col_start: int, col_end: int):
+    def __init__(self, store: 'EntityStore', indices: np.ndarray, 
+                 component_name: str, col_start: int, col_end: int,
+                 field_name: str = ''):
         self._store = store
         self._indices = indices
-        self._field_name = field_name
+        self._component_name = component_name
         self._col_start = col_start
         self._col_end = col_end
+        self._field_name = field_name
     
     @property
     def data(self) -> np.ndarray:
-        """Get current data as a writable slice."""
-        return self._store._components['Transform'][np.ix_(self._indices, range(self._col_start, self._col_end))]
+        """Get current data."""
+        return self._store._components[self._component_name][
+            np.ix_(self._indices, range(self._col_start, self._col_end))
+        ]
+    
+    def _get_data(self) -> np.ndarray:
+        return self._store._components[self._component_name][
+            np.ix_(self._indices, range(self._col_start, self._col_end))
+        ]
+    
+    def _set_data(self, value):
+        self._store._components[self._component_name][
+            np.ix_(self._indices, range(self._col_start, self._col_end))
+        ] = value
     
     def __iadd__(self, other):
         """In-place add. For rotation, composes quaternions."""
         other = np.asarray(other, dtype=np.float32)
         
-        if self._field_name == 'rotation':
-            # Quaternion composition: q_new = other * q_current
-            current = self._store._components['Transform'][np.ix_(self._indices, range(3, 7))].copy()
+        if self._field_name == 'rotation' and self._component_name == 'Transform':
+            current = self._get_data().copy()
             result = _quat_multiply(other, current)
-            self._store._components['Transform'][np.ix_(self._indices, range(3, 7))] = result
+            self._set_data(result)
         else:
-            # Simple addition for position/scale
-            self._store._components['Transform'][np.ix_(self._indices, range(self._col_start, self._col_end))] += other
+            self._set_data(self._get_data() + other)
         return self
     
     def __isub__(self, other):
         other = np.asarray(other, dtype=np.float32)
-        self._store._components['Transform'][np.ix_(self._indices, range(self._col_start, self._col_end))] -= other
+        self._set_data(self._get_data() - other)
         return self
     
+    def __imul__(self, other):
+        other = np.asarray(other, dtype=np.float32)
+        self._set_data(self._get_data() * other)
+        return self
+    
+    def __mul__(self, other):
+        """Multiply field data by other, return ndarray."""
+        return self._get_data() * np.asarray(other, dtype=np.float32)
+    
+    def __rmul__(self, other):
+        return self.__mul__(other)
+    
+    def __le__(self, other):
+        """Comparison returns absolute entity indices where condition is true."""
+        mask = (self._get_data() <= other).flatten()
+        return self._indices[mask]
+    
+    def __lt__(self, other):
+        mask = (self._get_data() < other).flatten()
+        return self._indices[mask]
+    
+    def __ge__(self, other):
+        mask = (self._get_data() >= other).flatten()
+        return self._indices[mask]
+    
+    def __gt__(self, other):
+        mask = (self._get_data() > other).flatten()
+        return self._indices[mask]
+    
     def __repr__(self):
-        return f"_TransformFieldView({self._field_name}, {len(self._indices)} entities)"
+        return f"_FieldView({self._component_name}.{self._field_name}, {len(self._indices)} entities)"
 
 
 def _quat_multiply(q1, q2):
@@ -259,11 +301,11 @@ class ComponentAccessor:
         # Check if it's Transform with built-in fields
         if self._component_name == 'Transform':
             if name in ('position', 'pos'):
-                return _TransformFieldView(self._store, self._indices, 'position', 0, 3)
+                return _FieldView(self._store, self._indices, 'Transform', 0, 3, 'position')
             elif name in ('rotation', 'rot'):
-                return _TransformFieldView(self._store, self._indices, 'rotation', 3, 7)
+                return _FieldView(self._store, self._indices, 'Transform', 3, 7, 'rotation')
             elif name == 'scale':
-                return _TransformFieldView(self._store, self._indices, 'scale', 7, 10)
+                return _FieldView(self._store, self._indices, 'Transform', 7, 10, 'scale')
         
         # Check if component class has field positions
         comp_class = _COMPONENT_REGISTRY.get(self._component_name)
@@ -271,7 +313,7 @@ class ComponentAccessor:
             field_info = comp_class._component_start_idx.get(name)
             if field_info:
                 col, size = field_info
-                return data[:, col:col+size]
+                return _FieldView(self._store, self._indices, self._component_name, col, col + size, name)
         
         raise AttributeError(f"No field '{name}' in component '{self._component_name}'")
         
@@ -420,15 +462,19 @@ def _make_component_class(cls: type, engine) -> type:
                 value = np.asarray(value, dtype=np.float32)
                 if value.shape == ():
                     # Scalar: broadcast to all n rows
-                    data[:, col_offset] = value.item()
+                    data[:, col_offset:col_offset+size] = value.item()
+                elif len(value.shape) == 1 and value.shape[0] == n and size == 1:
+                    # (n,) array for scalar field: reshape to (n, 1)
+                    data[:, col_offset:col_offset+size] = value.reshape(n, 1)
                 elif len(value.shape) == 1 and value.shape[0] == size:
-                    # 1D array matching size: broadcast to n rows
+                    # 1D array matching field size: broadcast to all n rows
                     data[:, col_offset:col_offset+size] = value
                 elif value.shape[0] == n:
-                    # Already (n, size): use as-is
-                    data[:, col_offset:col_offset+size] = value
+                    # (n, size) or (n,) matching: reshape if needed
+                    if len(value.shape) == 1:
+                        value = value.reshape(n, -1)
+                    data[:, col_offset:col_offset+size] = value[:, :size]
                 else:
-                    # Other: flatten and hope for best
                     data[:, col_offset:col_offset+size] = value.flatten()[:size]
             
             col_offset += size
