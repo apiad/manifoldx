@@ -189,8 +189,9 @@ class Engine:
 
     def _render_frame(self):
         """Render a single frame: acquire, encode, render, present."""
-        # Get the next frame's texture view
-        texture_view = self._wgpu_context.get_current_texture()
+        # Get the next frame's texture and create view
+        texture = self._wgpu_context.get_current_texture()
+        texture_view = texture.create_view()
 
         # Create command encoder
         command_encoder = self._device.create_command_encoder()
@@ -215,7 +216,8 @@ class Engine:
         self._device.queue.submit([command_encoder.finish()])
 
         # Present the frame (swaps buffer for FIFO)
-        self._wgpu_context.present()
+        # In rendercanvas 2.6+, use canvas.request_draw() or force_draw()
+        self._render_canvas.force_draw()
 
     def run(self):
         self._init_webgpu()
@@ -245,7 +247,7 @@ class Engine:
             self._render_frame()
 
             # Check if window should close
-            if self._render_canvas.is_closing:
+            if self._render_canvas.get_closed():
                 self._running = False
 
         for callback in self._shutdown_callbacks:
