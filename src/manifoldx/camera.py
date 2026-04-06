@@ -4,8 +4,8 @@ import numpy as np
 
 class Camera:
     """Camera with position, target, FOV and projection."""
-    
-    def __init__(self, position=(0, 10, 20), target=(0, 0, 0), fov=60, up=(0, 1, 0)):
+
+    def __init__(self, position=(0, 1, 2), target=(0, 0, 0), fov=60, up=(0, 1, 0)):
         self.position = np.array(position, dtype=np.float32)
         self.target = np.array(target, dtype=np.float32)
         self.fov = fov
@@ -18,23 +18,23 @@ class Camera:
         direction_normalized = direction / self._distance
         self._azimuth = float(np.degrees(np.arctan2(direction_normalized[0], direction_normalized[2])))
         self._elevation = float(np.degrees(np.arcsin(direction_normalized[1])))
-    
+
     def get_view_matrix(self):
         """Compute view matrix using look-at formula.
-        
+
         Convention: camera looks down -Z in view space (standard OpenGL/WebGPU).
         """
         # Forward direction (from camera toward target)
         forward = self.target - self.position
         forward = forward / np.linalg.norm(forward)
-        
+
         # Right (x-axis): cross(forward, up)
         right = np.cross(forward, self.up)
         right = right / np.linalg.norm(right)
-        
+
         # True up: cross(right, forward)
         up = np.cross(right, forward)
-        
+
         # Build view matrix: rotation part uses -forward for Z (camera looks down -Z)
         view = np.eye(4, dtype=np.float32)
         view[0, 0:3] = right
@@ -43,41 +43,41 @@ class Camera:
         view[0, 3] = -np.dot(right, self.position)
         view[1, 3] = -np.dot(up, self.position)
         view[2, 3] = np.dot(forward, self.position)  # Note: no negate since forward already negated
-        
+
         return view
-    
+
     def get_forward(self):
         direction = self.target - self.position
         return direction / np.linalg.norm(direction)
-    
+
     def get_right(self):
         forward = self.get_forward()
         right = np.cross(forward, self.up)
         return right / np.linalg.norm(right)
-    
+
     def get_up(self):
         right = self.get_right()
         forward = self.get_forward()
         up = np.cross(right, forward)
         return up / np.linalg.norm(up)
-    
+
     def get_view_projection_matrix(self, aspect):
         view = self.get_view_matrix()
         proj = self.get_projection_matrix(aspect)
         return (proj @ view).T
-    
+
     def get_azimuth_elevation(self):
         return (self._azimuth, self._elevation)
-    
+
     def get_projection_matrix(self, aspect, near=0.1, far=100.0):
         """Compute perspective projection matrix for WebGPU.
-        
+
         WebGPU NDC: x,y in [-1,1], z in [0,1].
         Uses the same formula as pylinalg mat_perspective with depth_range=(0,1).
         """
         fov_rad = np.radians(self.fov)
         f = 1.0 / np.tan(fov_rad / 2.0)
-        
+
         proj = np.zeros((4, 4), dtype=np.float32)
         proj[0, 0] = f / aspect
         proj[1, 1] = f
@@ -87,7 +87,7 @@ class Camera:
         proj[2, 2] = -far / (far - near)
         proj[2, 3] = -(far * near) / (far - near)
         proj[3, 2] = -1.0
-        
+
         return proj
 
     def move_to(self, position):
@@ -113,31 +113,31 @@ class Camera:
 
     def orbit(self, d_azimuth=0, d_elevation=0):
         """Rotate camera around target by delta angles.
-        
+
         Args:
             d_azimuth: Delta azimuth angle in degrees (horizontal rotation)
             d_elevation: Delta elevation angle in degrees (vertical rotation)
-        
+
         Elevation clamped to ±89° to avoid gimbal lock.
         """
         self._azimuth += d_azimuth
         self._elevation += d_elevation
         self._elevation = np.clip(self._elevation, -89, 89)
-        
+
         az_rad = np.radians(self._azimuth)
         el_rad = np.radians(self._elevation)
-        
+
         direction = np.array([
             np.cos(az_rad) * np.cos(el_rad),
             np.sin(el_rad),
             np.sin(az_rad) * np.cos(el_rad)
         ], dtype=np.float32)
-        
+
         self.position = self.target + self._distance * direction
 
     def pan(self, dx, dy, relative_to_viewport=True):
         """Pan the camera perpendicular to view direction.
-        
+
         Args:
             dx: Horizontal displacement
             dy: Vertical displacement
@@ -146,14 +146,14 @@ class Camera:
         """
         right = self.get_right()
         up = self.get_up()
-        
+
         if relative_to_viewport:
             scale = self._distance * np.tan(np.radians(self.fov / 2))
         else:
             scale = 1.0
-        
+
         displacement = (right * dx + up * dy) * scale
-        
+
         self.target += displacement
         self.position += displacement
 
@@ -163,33 +163,33 @@ class Camera:
 
     def zoom(self, factor):
         """Zoom by dividing distance to target by factor.
-        
+
         Args:
             factor: Divisor for distance. >1 zooms in, <1 zooms out.
-        
+
         Example: zoom(2.0) halves the distance to target (zooms in).
         """
         self._distance /= factor
         self._distance = max(0.1, self._distance)
-        
+
         forward = self.get_forward()
         self.position = self.target - forward * self._distance
 
     def dolly(self, distance):
         """Move camera toward/away from target by distance.
-        
+
         Args:
             distance: World units to move toward (positive) or away (negative).
         """
         self._distance -= distance
         self._distance = max(0.1, self._distance)
-        
+
         forward = self.get_forward()
         self.position = self.target - forward * self._distance
 
     def fit(self, radius, center=(0, 0, 0), margin=0.8, azimuth=45, elevation=30):
         """Position camera to frame a sphere.
-        
+
         Args:
             radius: Radius of sphere to fit in view
             center: Center of sphere in world space
@@ -200,31 +200,31 @@ class Camera:
         self.target = np.array(center, dtype=np.float32)
         self._azimuth = azimuth
         self._elevation = elevation
-        
+
         fov_rad = np.radians(self.fov)
         self._distance = radius / np.sin((margin * fov_rad) / 2)
-        
+
         az_rad = np.radians(self._azimuth)
         el_rad = np.radians(self._elevation)
-        
+
         direction = np.array([
             np.cos(az_rad) * np.cos(el_rad),
             np.sin(el_rad),
             np.sin(az_rad) * np.cos(el_rad)
         ], dtype=np.float32)
-        
+
         self.position = self.target + self._distance * direction
 
     def fit_bounds(self, center, extent, margin=0.8, azimuth=45, elevation=30):
         """Position camera to frame an axis-aligned bounding box.
-        
+
         Args:
             center: Center of bounding box
             extent: Half-extents (half-widths) of bounding box
             margin: Fraction of viewport to leave as padding
             azimuth: Camera azimuth angle in degrees
             elevation: Camera elevation angle in degrees
-        
+
         extent can be:
           - float: cube with given half-extent
           - tuple(n,): uniform box (nx, ny, nz) all equal
@@ -236,9 +236,9 @@ class Camera:
             half_extents = np.array([extent[0], extent[0], extent[0]], dtype=np.float32)
         else:
             half_extents = np.array(extent[:3], dtype=np.float32)
-        
+
         radius = np.linalg.norm(half_extents)
-        
+
         self.fit(radius=radius, center=center, margin=margin, azimuth=azimuth, elevation=elevation)
 
 

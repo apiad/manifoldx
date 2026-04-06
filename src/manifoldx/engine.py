@@ -222,6 +222,14 @@ class Engine:
             format=wgpu.TextureFormat.bgra8unorm,
         )
 
+        # Create depth texture
+        self._depth_texture = self._device.create_texture(
+            size=(self.w, self.h, 1),
+            format=wgpu.TextureFormat.depth24plus,
+            usage=wgpu.TextureUsage.RENDER_ATTACHMENT,
+        )
+        self._depth_texture_view = self._depth_texture.create_view()
+
     def _draw_frame(self):
         """Draw callback invoked by rendercanvas event loop each frame."""
         dt = self._compute_dt()
@@ -255,7 +263,7 @@ class Engine:
         # Create command encoder
         command_encoder = self._device.create_command_encoder()
 
-        # Create render pass with clear color
+        # Create render pass with clear color and depth attachment
         render_pass = command_encoder.begin_render_pass(
             color_attachments=[
                 {
@@ -265,7 +273,13 @@ class Engine:
                     "load_op": wgpu.LoadOp.clear,
                     "store_op": wgpu.StoreOp.store,
                 }
-            ]
+            ],
+            depth_stencil_attachment={
+                "view": self._depth_texture_view,
+                "depth_clear_value": 1.0,
+                "depth_load_op": wgpu.LoadOp.clear,
+                "depth_store_op": wgpu.StoreOp.store,
+            },
         )
 
         # Issue draw calls via render pipeline

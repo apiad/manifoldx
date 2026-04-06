@@ -242,7 +242,12 @@ class RenderPipeline:
             primitive={
                 "topology": wgpu.PrimitiveTopology.triangle_list,
                 "front_face": wgpu.FrontFace.ccw,
-                "cull_mode": wgpu.CullMode.none,
+                "cull_mode": wgpu.CullMode.back,
+            },
+            depth_stencil={
+                "format": wgpu.TextureFormat.depth24plus,
+                "depth_write_enabled": True,
+                "depth_compare": wgpu.CompareFunction.less,
             },
             fragment={
                 "module": shader_module,
