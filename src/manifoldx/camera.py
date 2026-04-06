@@ -135,5 +135,27 @@ class Camera:
         
         self.position = self.target + self._distance * direction
 
+    def pan(self, dx, dy, relative_to_viewport=True):
+        """Pan the camera perpendicular to view direction.
+        
+        Args:
+            dx: Horizontal displacement
+            dy: Vertical displacement
+            relative_to_viewport: If True (default), dx/dy are in viewport units (0-1)
+                                  scaled by distance. If False, dx/dy are in world units.
+        """
+        right = self.get_right()
+        up = self.get_up()
+        
+        if relative_to_viewport:
+            scale = self._distance * np.tan(np.radians(self.fov / 2))
+        else:
+            scale = 1.0
+        
+        displacement = (right * dx + up * dy) * scale
+        
+        self.target += displacement
+        self.position += displacement
+
 
 __all__ = ['Camera']
