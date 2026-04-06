@@ -58,3 +58,34 @@ def test_render_pipeline():
     
     engine = MockEngine()
     pipeline.run(engine, 1/60)
+
+
+def test_render_pipeline_has_depth_stencil():
+    """Render pipeline source should configure depth stencil state."""
+    with open('src/manifoldx/renderer.py', 'r') as f:
+        source = f.read()
+    
+    assert 'depth_stencil' in source, \
+        "Render pipeline must have depth_stencil configuration"
+    assert 'depth24plus' in source or 'depth32float' in source, \
+        "Render pipeline must specify a depth format"
+
+
+def test_render_pipeline_has_backface_culling():
+    """Render pipeline should cull back faces."""
+    with open('src/manifoldx/renderer.py', 'r') as f:
+        source = f.read()
+    
+    assert 'CullMode.back' in source, \
+        "Render pipeline must use back-face culling"
+
+
+def test_engine_creates_depth_texture():
+    """Engine render pass should have depth attachment."""
+    with open('src/manifoldx/engine.py', 'r') as f:
+        source = f.read()
+    
+    assert 'depth_stencil_attachment' in source, \
+        "Engine render pass must have depth_stencil_attachment"
+    assert 'depth24plus' in source or 'depth32float' in source, \
+        "Engine must create a depth texture"
