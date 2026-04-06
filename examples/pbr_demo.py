@@ -1,3 +1,5 @@
+"""PBR Demo: 3x2 grid of objects with three orbiting lights."""
+
 import manifoldx as mx
 import numpy as np
 
@@ -5,95 +7,113 @@ from manifoldx.components import Transform, Mesh, Material
 from manifoldx.resources import StandardMaterial, PointLight, cube, sphere
 
 engine = mx.Engine("PBR Demo")
-engine.camera.zoom(0.15)
-engine.camera.orbit(30, 20)
+engine.camera.zoom(0.08)
+engine.camera.orbit(20, 25)
 
-# Create geometries
+# ---------------------------------------------------------------------------
+# Geometries
+# ---------------------------------------------------------------------------
 cube_geo = cube(1, 1, 1)
-sphere_geo = sphere(0.7, 24)
+sphere_geo = sphere(0.7, 32)
 
-# Create PBR materials with different properties
-red_shiny = StandardMaterial(color="#ff3333", roughness=0.15, metallic=0.9)
-green_dull = StandardMaterial(color="#33ff33", roughness=0.8, metallic=0.0)
-blue_medium = StandardMaterial(color="#3333ff", roughness=0.45, metallic=0.5)
-gold_shiny = StandardMaterial(color="#ffdd33", roughness=0.1, metallic=1.0)
-purple_dull = StandardMaterial(color="#8833ff", roughness=0.9, metallic=0.0)
-cyan_medium = StandardMaterial(color="#33ffff", roughness=0.5, metallic=0.3)
+# ---------------------------------------------------------------------------
+# Materials – increasing roughness left→right, top row metallic, bottom row dielectric
+# ---------------------------------------------------------------------------
+#                  col 0 (smooth)      col 1 (medium)       col 2 (rough)
+# Row 0 (cubes)   red metallic        gold metallic        copper metallic
+# Row 1 (spheres) blue dielectric     green dielectric     purple dielectric
 
-# Set up lights
-light1 = PointLight(color="#ffffff", intensity=2.0, position=(3, 4, 3))
-light2 = PointLight(color="#ff8844", intensity=1.5, position=(-3, 2, -3))
-light3 = PointLight(color="#4488ff", intensity=1.0, position=(0, -2, 3))
+materials = [
+    # Top row – metallic cubes
+    StandardMaterial(color="#ff3333", roughness=0.10, metallic=1.0),  # red smooth metal
+    StandardMaterial(
+        color="#ffdd33", roughness=0.45, metallic=1.0
+    ),  # gold medium metal
+    StandardMaterial(
+        color="#dd7744", roughness=0.85, metallic=1.0
+    ),  # copper rough metal
+    # Bottom row – dielectric spheres
+    StandardMaterial(
+        color="#3366ff", roughness=0.10, metallic=0.0
+    ),  # blue smooth plastic
+    StandardMaterial(
+        color="#33cc55", roughness=0.45, metallic=0.0
+    ),  # green medium plastic
+    StandardMaterial(
+        color="#8833ff", roughness=0.85, metallic=0.0
+    ),  # purple rough plastic
+]
 
-engine.set_lights([light1, light2, light3])
+# ---------------------------------------------------------------------------
+# 3 × 2 grid layout
+# ---------------------------------------------------------------------------
+spacing_x = 2.2
+spacing_y = 2.2
+cols, rows = 3, 2
+x_offset = -(cols - 1) * spacing_x / 2
+y_offset = -(rows - 1) * spacing_y / 2
 
-# Spawn 6 objects with different PBR materials
-engine.spawn(
-    Mesh(cube_geo),
-    Material(red_shiny),
-    Transform(pos=(-2.5, 0, 0)),
-    n=1,
+for row in range(rows):
+    for col in range(cols):
+        idx = row * cols + col
+        geo = cube_geo if row == 0 else sphere_geo
+        x = x_offset + col * spacing_x
+        y = y_offset + row * spacing_y
+        engine.spawn(
+            Mesh(geo),
+            Material(materials[idx]),
+            Transform(pos=(x, y, 0)),
+            n=1,
+        )
+
+# ---------------------------------------------------------------------------
+# Three orbiting lights on different planes
+# ---------------------------------------------------------------------------
+ORBIT_RADIUS = 5.0
+LIGHT_INTENSITY = 15.0
+
+light_equatorial = PointLight(
+    color="#ffffff", intensity=LIGHT_INTENSITY, position=(ORBIT_RADIUS, 0, 0)
+)
+light_polar = PointLight(
+    color="#ffaa44", intensity=LIGHT_INTENSITY, position=(0, ORBIT_RADIUS, 0)
+)
+light_sideways = PointLight(
+    color="#4488ff", intensity=LIGHT_INTENSITY, position=(0, 0, ORBIT_RADIUS)
 )
 
-engine.spawn(
-    Mesh(cube_geo),
-    Material(green_dull),
-    Transform(pos=(-2.5, 0, 2)),
-    n=1,
-)
-
-engine.spawn(
-    Mesh(sphere_geo),
-    Material(blue_medium),
-    Transform(pos=(2.5, 0, 0)),
-    n=1,
-)
-
-engine.spawn(
-    Mesh(sphere_geo),
-    Material(gold_shiny),
-    Transform(pos=(2.5, 0, 2)),
-    n=1,
-)
-
-engine.spawn(
-    Mesh(cube_geo),
-    Material(purple_dull),
-    Transform(pos=(0, 0, -3), scale=(1.2, 1.2, 1.2)),
-    n=1,
-)
-
-engine.spawn(
-    Mesh(sphere_geo),
-    Material(cyan_medium),
-    Transform(pos=(0, 2, -2), scale=(0.8, 0.8, 0.8)),
-    n=1,
-)
+engine.set_lights([light_equatorial, light_polar, light_sideways])
 
 
-# Animate lights
 @engine.system
 def animate_lights(query: mx.Query[Transform], dt: float):
     t = engine.elapsed
 
-    # Orbit light1 around the scene
-    light1.position = (
-        4 * np.sin(t * 0.5),
-        3 + np.cos(t * 0.3) * 1.5,
-        4 * np.cos(t * 0.5),
+    # Equatorial orbit – rotates in the XZ plane (around Y axis)
+    light_equatorial.position = (
+        ORBIT_RADIUS * np.cos(t * 0.7),
+        0.0,
+        ORBIT_RADIUS * np.sin(t * 0.7),
+    )
+
+    # Polar orbit – rotates in the XY plane (around Z axis)
+    light_polar.position = (
+        ORBIT_RADIUS * np.cos(t * 0.5),
+        ORBIT_RADIUS * np.sin(t * 0.5),
+        0.0,
+    )
+
+    # Sideways orbit – rotates in the YZ plane (around X axis)
+    light_sideways.position = (
+        0.0,
+        ORBIT_RADIUS * np.sin(t * 0.6),
+        ORBIT_RADIUS * np.cos(t * 0.6),
     )
 
 
-# Slow camera orbit
 @engine.system
 def camera_orbit(query: mx.Query[Transform], dt: float):
-    engine.camera.orbit(5 * dt, 0)
+    engine.camera.orbit(8 * dt, 0)
 
-
-print("Starting PBR demo with:")
-print("  - 6 objects (cubes + spheres)")
-print("  - Different PBR materials (roughness/metallic vary)")
-print("  - 3 animated point lights")
-print("  - Multi-instance per draw call")
 
 engine.run()

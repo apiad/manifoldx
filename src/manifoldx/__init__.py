@@ -41,7 +41,7 @@ class _MaterialProxy:
     """Proxy for mx.material module."""
     def basic(self, color): return basic(color)
     def phong(self, color, shininess=32): return phong(color, shininess)
-    def standard(self, color, roughness=0.5, metallic=0): return standard(color, roughness, metallic)
+    def standard(self, color, roughness=0.5, metallic=0.0): return standard(color, roughness, metallic)
 
 
 class _ColorsProxy:
