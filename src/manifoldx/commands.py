@@ -69,7 +69,14 @@ class CommandBuffer:
             component_name = cmd.data['component_name']
             indices = cmd.data['indices']
             new_data = cmd.data['new_data']
-            store._components[component_name][indices] = new_data
+            col_start = cmd.data.get('col_start')
+            col_end = cmd.data.get('col_end')
+            if col_start is not None and col_end is not None:
+                store._components[component_name][
+                    np.ix_(indices, range(col_start, col_end))
+                ] = new_data
+            else:
+                store._components[component_name][indices] = new_data
                 
         elif cmd.type == CommandType.NOP:
             pass

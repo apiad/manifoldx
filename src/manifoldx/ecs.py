@@ -101,11 +101,11 @@ class EntityStore:
         # Add to free list for reuse
         self._free_list.extend(indices.tolist())
         
-    def get_component_view(self, component_names: list[str]) -> 'ComponentView':
+    def get_component_view(self, component_names: list[str], engine=None) -> 'ComponentView':
         """Get a view into entities with specified components."""
         # Get indices of alive entities that have ALL specified components
         alive_indices = np.where(self._alive)[0]
-        return ComponentView(self, component_names, alive_indices)
+        return ComponentView(self, component_names, alive_indices, engine)
     
     def get_component_data(self, component_name: str, indices: np.ndarray) -> np.ndarray:
         """Get component data for specific entity indices."""
@@ -126,13 +126,14 @@ class _FieldView:
     
     def __init__(self, store: 'EntityStore', indices: np.ndarray, 
                  component_name: str, col_start: int, col_end: int,
-                 field_name: str = ''):
+                 field_name: str = '', commands=None):
         self._store = store
         self._indices = indices
         self._component_name = component_name
         self._col_start = col_start
         self._col_end = col_end
         self._field_name = field_name
+        self._commands = commands
     
     @property
     def data(self) -> np.ndarray:
@@ -175,9 +176,19 @@ class _FieldView:
                         f"for {(rot_magnitude < 0.01).sum()} entities"
                     )
         
-        self._store._components[self._component_name][
-            np.ix_(self._indices, range(self._col_start, self._col_end))
-        ] = value
+        if self._commands is not None:
+            from manifoldx.commands import Command, CommandType
+            self._commands.append(Command(CommandType.UPDATE_COMPONENT, {
+                'component_name': self._component_name,
+                'indices': self._indices.copy(),
+                'new_data': value.copy(),
+                'col_start': self._col_start,
+                'col_end': self._col_end
+            }))
+        else:
+            self._store._components[self._component_name][
+                np.ix_(self._indices, range(self._col_start, self._col_end))
+            ] = value
     
     def __iadd__(self, other):
         """In-place add. For rotation, composes quaternions."""
@@ -266,11 +277,12 @@ class ComponentView:
     Write operations emit Update commands (never write directly).
     """
     
-    def __init__(self, store: EntityStore, component_names: list[str], indices: np.ndarray):
+    def __init__(self, store: EntityStore, component_names: list[str], indices: np.ndarray, engine=None):
         self._store = store
         self._component_names = component_names
-        self._indices = indices  # Which entities this view represents
+        self._indices = indices
         self._len = len(indices)
+        self._engine = engine
         
     def __len__(self) -> int:
         return self._len
@@ -289,6 +301,10 @@ class ComponentView:
             component_name = component_name.__name__
         
         accessor = ComponentAccessor(self._store, component_name, self._indices)
+        
+        # Pass command buffer if engine available
+        if self._engine:
+            accessor._commands = self._engine.commands
         
         # Try to find the component class for field lookup
         from manifoldx.ecs import _COMPONENT_REGISTRY
@@ -321,7 +337,19 @@ class ComponentAccessor:
         self._store = store
         self._component_name = component_name
         self._indices = indices
-        self._component_class = None  # For field lookup
+        self._component_class = None
+        self._commands = None
+    
+    def _queue_update(self, new_data):
+        if self._commands is not None:
+            from manifoldx.commands import Command, CommandType
+            self._commands.append(Command(CommandType.UPDATE_COMPONENT, {
+                'component_name': self._component_name,
+                'indices': self._indices.copy(),
+                'new_data': new_data.copy()
+            }))
+        else:
+            self._store._components[self._component_name][self._indices] = new_data
     
     def __getattr__(self, name: str):
         """Access component fields by name: .position, .life, .velocity."""
@@ -333,11 +361,11 @@ class ComponentAccessor:
         # Check if it's Transform with built-in fields
         if self._component_name == 'Transform':
             if name in ('position', 'pos'):
-                return _FieldView(self._store, self._indices, 'Transform', 0, 3, 'position')
+                return _FieldView(self._store, self._indices, 'Transform', 0, 3, 'position', self._commands)
             elif name in ('rotation', 'rot'):
-                return _FieldView(self._store, self._indices, 'Transform', 3, 7, 'rotation')
+                return _FieldView(self._store, self._indices, 'Transform', 3, 7, 'rotation', self._commands)
             elif name == 'scale':
-                return _FieldView(self._store, self._indices, 'Transform', 7, 10, 'scale')
+                return _FieldView(self._store, self._indices, 'Transform', 7, 10, 'scale', self._commands)
         
         # Check if component class has field positions
         comp_class = _COMPONENT_REGISTRY.get(self._component_name)
@@ -345,10 +373,15 @@ class ComponentAccessor:
             field_info = comp_class._component_start_idx.get(name)
             if field_info:
                 col, size = field_info
-                return _FieldView(self._store, self._indices, self._component_name, col, col + size, name)
+                return _FieldView(self._store, self._indices, self._component_name, col, col + size, name, self._commands)
         
         raise AttributeError(f"No field '{name}' in component '{self._component_name}'")
-        
+    
+    @property
+    def data(self) -> np.ndarray:
+        """Get raw component data as numpy array."""
+        return self._store.get_component_data(self._component_name, self._indices)
+    
     def __getitem__(self, key):
         """Read: returns current data for entities at indices."""
         return self._store.get_component_data(self._component_name, self._indices)
@@ -366,24 +399,25 @@ class ComponentAccessor:
         else:
             new_data = current + other
             
-        # Note: In full implementation, this would emit Update command
-        # For now, we apply directly (tests need this for simplicity)
-        self._store._components[self._component_name][self._indices] = new_data
+        self._queue_update(new_data)
         return self
     
     def __isub__(self, other):
-        return self.__iadd__(-other if np.isscalar(other) else -other)
+        current = self._store.get_component_data(self._component_name, self._indices)
+        new_data = current - other
+        self._queue_update(new_data)
+        return self
     
     def __imul__(self, other):
         current = self._store.get_component_data(self._component_name, self._indices)
         new_data = current * other
-        self._store._components[self._component_name][self._indices] = new_data
+        self._queue_update(new_data)
         return self
     
     def __itruediv__(self, other):
         current = self._store.get_component_data(self._component_name, self._indices)
         new_data = current / other
-        self._store._components[self._component_name][self._indices] = new_data
+        self._queue_update(new_data)
         return self
 
 

@@ -61,6 +61,13 @@ def test_field_view_queues_command():
     store = EntityStore(max_entities=10)
     store.register_component('TestComp', np.dtype('f4'), (3,))
     
+    # Register a component class with fields so we can use field access
+    class TestComp:
+        _component_start_idx = {'x': (0, 1), 'y': (1, 1), 'z': (2, 1)}
+    
+    from manifoldx.ecs import _COMPONENT_REGISTRY
+    _COMPONENT_REGISTRY['TestComp'] = TestComp
+    
     # Spawn entities with initial data
     initial_data = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
     indices = store.spawn(n=2, TestComp=initial_data)
@@ -72,12 +79,12 @@ def test_field_view_queues_command():
     
     engine = MockEngine()
     
-    # Get view and field accessor
-    view = ComponentView(store, ['TestComp'], indices)
+    # Get view and field accessor - pass engine to ComponentView
+    view = ComponentView(store, ['TestComp'], indices, engine)
     accessor = view['TestComp']
     
-    # Get field (first 3 values)
-    field = accessor.data[:, 0:3]
+    # Get field using proper field access (this returns a _FieldView)
+    field = accessor.x
     
     # Now do += operation - should queue command, not write directly
     field += 10
@@ -88,9 +95,11 @@ def test_field_view_queues_command():
     # Execute commands
     engine.commands.execute(store)
     
-    # Verify data was updated
+    # Verify data was updated - only x field (column 0) should be updated
     updated = store.get_component_data('TestComp', indices)
-    assert np.allclose(updated[:, 0:3], initial_data + 10), "Data should be updated after command execution"
+    assert np.allclose(updated[:, 0], [11, 14]), "X field should be updated after command execution"
+    assert np.allclose(updated[:, 1], [2, 5]), "Y field should NOT be updated"
+    assert np.allclose(updated[:, 2], [3, 6]), "Z field should NOT be updated"
 
 
 def test_transform_position_updates_after_system():

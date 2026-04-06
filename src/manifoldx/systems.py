@@ -16,9 +16,7 @@ class System:
         
     def run(self, engine, dt: float):
         """Execute the system with component view."""
-        # Get view for the query components
-        view = engine.store.get_component_view(self.component_names)
-        # Call the system function
+        view = engine.store.get_component_view(self.component_names, engine)
         self.func(view, dt)
 
 
