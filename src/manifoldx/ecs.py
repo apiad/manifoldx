@@ -255,7 +255,7 @@ def component(cls: type) -> type:
 
 def _infer_shape_from_type(tp) -> tuple:
     """Infer array shape from type hint."""
-    from manifoldx.types import Float
+    from manifoldx.types import Float, Vector3, Vector4
     if tp == Float or tp == float:
         return ()  # Scalar
     elif tp == Vector3:

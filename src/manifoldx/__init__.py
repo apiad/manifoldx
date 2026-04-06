@@ -1,6 +1,5 @@
 import numpy as np
 
-
 # Lazy import to avoid wgpu dependency for types-only imports
 def __getattr__(name):
     if name == 'Engine':
@@ -21,8 +20,24 @@ from manifoldx.resources import cube, sphere, plane, basic, phong, standard
 
 
 # =============================================================================
-# Module Proxies for mx.geometry, mx.material, mx.colors access
+# Module Proxies for mx.types, mx.components, mx.geometry, etc.
 # =============================================================================
+
+class _TypesProxy:
+    """Proxy for mx.types module."""
+    Vector3 = Vector3
+    Vector4 = Vector4
+    Float = Float
+    Color = Color
+
+
+class _ComponentsProxy:
+    """Proxy for mx.components module."""
+    Transform = Transform
+    Mesh = Mesh
+    Material = Material
+    Colors = Colors
+
 
 class _GeometryProxy:
     """Proxy for mx.geometry module."""
@@ -51,6 +66,8 @@ class _ColorsProxy:
 
 
 # Create module instances
+types = _TypesProxy()
+components = _ComponentsProxy()
 geometry = _GeometryProxy()
 material = _MaterialProxy()
 colors = _ColorsProxy()
@@ -76,6 +93,8 @@ __all__ = [
     'phong',
     'standard',
     'component',
+    'types',
+    'components',
     'geometry',
     'material',
     'colors',
