@@ -22,3 +22,35 @@ entries:
     message: "refactor(pbr_demo): tweak camera framing parameters"
     files:
       - examples/pbr_demo.py
+  - timestamp: "2026-04-06T18:00:00Z"
+    type: commit
+    message: "fix: repair broken PBR demo and rendering pipeline"
+    files:
+      - src/manifoldx/resources.py
+      - src/manifoldx/renderer.py
+      - examples/pbr_demo.py
+  - timestamp: "2026-04-06T18:15:00Z"
+    type: commit
+    message: "fix: lay out PBR demo grid in XZ plane with proper camera framing"
+    files:
+      - examples/pbr_demo.py
+  - timestamp: "2026-04-06T18:30:00Z"
+    type: commit
+    message: "fix: add normals to sphere/plane geometry and fix sphere winding order"
+    files:
+      - src/manifoldx/resources.py
+  - timestamp: "2026-04-06T18:45:00Z"
+    type: commit
+    message: "fix: upload all transforms at once, use first_instance per batch"
+    files:
+      - src/manifoldx/renderer.py
+  - timestamp: "2026-04-06T19:00:00Z"
+    type: commit
+    message: "chore: project setup for release"
+    files:
+      - README.md
+      - pyproject.toml
+      - Makefile
+      - .github/workflows/
+      - tests/conftest.py
+      - .knowledge/project-analysis.md
