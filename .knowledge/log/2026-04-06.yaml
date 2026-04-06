@@ -117,3 +117,7 @@ entries:
   - timestamp: "2026-04-06T21:50:00Z"
     type: state
     message: "Ready for release: 16 commits ahead of origin/main, all tests passing"
+  - timestamp: "2026-04-06T22:00:00Z"
+    type: release
+    version: "0.2.0"
+    changelog: "N-body, ideal gas, and boids demos; camera far plane; engine quit fix; expanded documentation"
