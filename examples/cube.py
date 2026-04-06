@@ -29,7 +29,7 @@ def create_cubes():
 @engine.system
 def rotate(query: Query[Transform], dt: float):
     query[Transform].rot += Transform.rotation(x=0, y=dt * math.pi, z =0)
-    query[Transform].pos += (0,dt,0)
+    query[Transform].pos = (0,math.sin(engine.elapsed),0)
 
 
 engine.run()

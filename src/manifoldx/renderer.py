@@ -123,10 +123,12 @@ class TransformCache:
         matrices[:, 10] = (1 - 2*(xx + yy)) * sz
         # Row 3
         matrices[:, 15] = 1.0
-        # Translation (column 3)
-        matrices[:, 12] = positions[:, 0]
-        matrices[:, 13] = positions[:, 1]
-        matrices[:, 14] = positions[:, 2]
+        # Translation stored at ROW 0, COLUMN 3 (indices 3, 7, 11)
+        # This way, after transpose to column-major, it ends up at
+        # COLUMN 3 (indices 12, 13, 14) where WGSL expects it
+        matrices[:, 3] = positions[:, 0]
+        matrices[:, 7] = positions[:, 1]
+        matrices[:, 11] = positions[:, 2]
         
         # Validate computed matrices
         from manifoldx.ecs import ENABLE_VALIDATION

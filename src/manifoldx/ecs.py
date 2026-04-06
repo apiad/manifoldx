@@ -135,6 +135,24 @@ class _FieldView:
         self._field_name = field_name
         self._commands = commands
     
+    def __setattr__(self, name, value):
+        """Handle assignment: field_view.pos = (x, y, z) queues update command."""
+        # Let private attributes go through normally
+        if name.startswith('_'):
+            super().__setattr__(name, value)
+            return
+        
+        # For public attributes (like 'x', 'y', 'z' or vector fields), 
+        # convert to numpy array and call _set_data
+        # This handles both scalar assignments and tuple/array assignments
+        if self._col_start is not None and self._col_end is not None:
+            # Convert value to numpy array (handles tuples, lists, scalars)
+            value = np.asarray(value, dtype=np.float32)
+            self._set_data(value)
+        else:
+            # Fall back to normal attribute storage
+            super().__setattr__(name, value)
+    
     @property
     def data(self) -> np.ndarray:
         """Get current data."""
@@ -339,6 +357,20 @@ class ComponentAccessor:
         self._indices = indices
         self._component_class = None
         self._commands = None
+    
+    def __setattr__(self, name, value):
+        """Handle assignment: accessor.pos = (x, y, z) queues update command."""
+        if name.startswith('_'):
+            super().__setattr__(name, value)
+            return
+        
+        # If value is a _FieldView from += operation, ignore (it already queued its command)
+        if isinstance(value, _FieldView):
+            return
+        
+        # Create a temporary FieldView to resolve the field and set via command
+        field_view = self.__getattr__(name)
+        field_view._set_data(np.asarray(value, dtype=np.float32))
     
     def _queue_update(self, new_data):
         if self._commands is not None:

@@ -51,6 +51,8 @@ class Engine:
         self._use_fixed_dt = False
         self._fixed_dt_value = 1/60
         self._last_time = None
+        self._start_time = None
+        self.elapsed: float = 0.0
 
         # Register built-in components
         Transform.register(self.store)
@@ -125,10 +127,12 @@ class Engine:
         current_time = perf_counter_ns()
         if self._last_time is None:
             self._last_time = current_time
+            self._start_time = current_time
             return self._fixed_dt_value
 
         dt = (current_time - self._last_time) / 1_000_000_000
         self._last_time = current_time
+        self.elapsed = (current_time - self._start_time) / 1_000_000_000
         return dt
 
     # === Spawn & Destroy ===
@@ -309,7 +313,9 @@ class Engine:
         self._init_webgpu()
 
         self._running = True
-        self._last_time = perf_counter_ns()
+        self._start_time = perf_counter_ns()
+        self._last_time = self._start_time
+        self.elapsed = 0.0
 
         for callback in self._startup_callbacks:
             callback()
