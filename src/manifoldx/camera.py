@@ -111,5 +111,29 @@ class Camera:
         self.target = np.array(target, dtype=np.float32)
         self._compute_spherical()
 
+    def orbit(self, d_azimuth=0, d_elevation=0):
+        """Rotate camera around target by delta angles.
+        
+        Args:
+            d_azimuth: Delta azimuth angle in degrees (horizontal rotation)
+            d_elevation: Delta elevation angle in degrees (vertical rotation)
+        
+        Elevation clamped to ±89° to avoid gimbal lock.
+        """
+        self._azimuth += d_azimuth
+        self._elevation += d_elevation
+        self._elevation = np.clip(self._elevation, -89, 89)
+        
+        az_rad = np.radians(self._azimuth)
+        el_rad = np.radians(self._elevation)
+        
+        direction = np.array([
+            np.cos(az_rad) * np.cos(el_rad),
+            np.sin(el_rad),
+            np.sin(az_rad) * np.cos(el_rad)
+        ], dtype=np.float32)
+        
+        self.position = self.target + self._distance * direction
+
 
 __all__ = ['Camera']
