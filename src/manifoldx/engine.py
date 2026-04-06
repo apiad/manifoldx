@@ -38,6 +38,7 @@ class Engine:
         self._adapter = None
         self._device = None
         self._present_mode = "fifo"
+        self._texture_format = wgpu.TextureFormat.bgra8unorm
         self._startup_callbacks = []
         self._shutdown_callbacks = []
         self._update_callbacks = []
