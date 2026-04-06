@@ -253,6 +253,10 @@ class Engine:
 
     def _draw_frame(self):
         """Draw callback invoked by rendercanvas event loop each frame."""
+        # Check if we should stop
+        if not self._running:
+            return False  # Stop the event loop
+
         dt = self._compute_dt()
 
         # 1. Clear command buffer for this frame
