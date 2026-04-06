@@ -3,7 +3,7 @@ import wgpu
 import numpy as np
 from time import perf_counter_ns
 
-from rendercanvas.glfw import GlfwRenderCanvas
+from rendercanvas.glfw import GlfwRenderCanvas, loop as glfw_loop
 
 # Import ECS components
 from manifoldx.ecs import EntityStore
@@ -201,8 +201,23 @@ class Engine:
             format=wgpu.TextureFormat.bgra8unorm,
         )
 
-    def _render_frame(self):
-        """Render a single frame: acquire, encode, render, present."""
+    def _draw_frame(self):
+        """Draw callback invoked by rendercanvas event loop each frame."""
+        dt = self._compute_dt()
+        
+        # 1. Clear command buffer for this frame
+        self.commands.clear()
+        
+        # 2. Run all user systems (they emit commands)
+        self.systems.run_all(self, dt)
+        
+        # 3. Execute command buffer (apply all spawn/destroy/update)
+        self.commands.execute(self.store)
+        
+        # 4. RENDER PIPELINE (runs after commands)
+        self._render_pipeline.run(self, dt)
+        
+        # 5. Render frame to screen
         # Ensure render pipeline is initialized
         self._render_pipeline._ensure_pipeline(
             self._device, wgpu.TextureFormat.bgra8unorm
@@ -241,8 +256,8 @@ class Engine:
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
 
-        # Present the frame
-        self._render_canvas.force_draw()
+        # Request next frame
+        self._render_canvas.request_draw()
 
     def run(self):
         self._init_webgpu()
@@ -253,27 +268,9 @@ class Engine:
         for callback in self._startup_callbacks:
             callback()
 
-        while self._running:
-            dt = self._compute_dt()
-            
-            # 1. Clear command buffer for this frame
-            self.commands.clear()
-            
-            # 2. Run all user systems (they emit commands)
-            self.systems.run_all(self, dt)
-            
-            # 3. Execute command buffer (apply all spawn/destroy/update)
-            self.commands.execute(self.store)
-            
-            # 4. RENDER PIPELINE (runs after commands)
-            self._render_pipeline.run(self, dt)
-            
-            # 5. Render frame to screen
-            self._render_frame()
-
-            # Check if window should close
-            if self._render_canvas.get_closed():
-                self._running = False
+        # Register draw callback and run the canvas event loop
+        self._render_canvas.request_draw(self._draw_frame)
+        glfw_loop.run()
 
         for callback in self._shutdown_callbacks:
             callback()

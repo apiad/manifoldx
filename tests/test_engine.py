@@ -119,7 +119,7 @@ def test_engine_calls_update_callbacks():
 def test_engine_has_render_method():
     """Engine has method for rendering frames."""
     engine = Engine("Test")
-    assert hasattr(engine, "_render_frame") or hasattr(engine, "render_frame")
+    assert hasattr(engine, "_render_frame") or hasattr(engine, "render_frame") or hasattr(engine, "_draw_frame")
 
 
 def test_engine_uses_rendercanvas():
