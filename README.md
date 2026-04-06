@@ -171,7 +171,30 @@ The `examples/gas.py` demo shows the other side: **no gravity, all collisions**.
 
 > See `examples/gas.py` for the full implementation.
 
-## Examples
+### Boids Flocking Simulation
+
+The `examples/boids.py` demo shows **emergent behavior** from simple local rules: 300 boids with **separation**, **alignment**, **cohesion**, plus 4 wandering **predators** they flee from.
+
+**Flocking rules** (all vectorized):
+- **Separation** — boids repel neighbors weighted by 1/dist²
+- **Alignment** — match average velocity of nearby boids
+- **Cohesion** — steer toward center of mass of neighbors
+
+**Predator avoidance** — boids detect predators within 10 units and flee with 20x the force of any flocking rule. Fleeing boids get a speed boost (15 vs 10).
+
+**Spatial optimization** — uses squared distances to avoid `sqrt` in the hot path. All three rules computed via masked tensor sums over axis=1 of an `(N, N, 3)` difference tensor.
+
+> See `examples/boids.py` for the full implementation.
+
+### Three Demos, Three Vectorization Patterns
+
+| Demo | Entities | Physics Pattern | Operations/Frame |
+|------|----------|-----------------|------------------|
+| `nbody.py` | 500 | All-pairs gravity | N² = 250,000 force pairs |
+| `gas.py` | 500 | Pair collisions + walls | O(N²) pair checks + wall masks |
+| `boids.py` | 300 + 4 | Neighbor flocking + predator-flee | (N,N,3) tensor sums + (N,P,3) |
+
+All three use **pure numpy** — zero Python loops in the hot path. The ECS overhead is ~microseconds/frame; the bottleneck is GPU fill-rate, not CPU physics.
 
 | Example          | Description                                              |
 | ---------------- | -------------------------------------------------------- |
