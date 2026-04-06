@@ -1,0 +1,9 @@
+entries:
+  - timestamp: "2026-04-06T12:00:00Z"
+    type: commit
+    message: "fix(ecs): enable field assignment and fix translation distortion"
+    files:
+      - examples/cube.py
+      - src/manifoldx/ecs.py
+      - src/manifoldx/engine.py
+      - src/manifoldx/renderer.py

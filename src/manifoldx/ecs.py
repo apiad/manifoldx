@@ -231,11 +231,44 @@ class _FieldView:
         return self
     
     def __mul__(self, other):
-        """Multiply field data by other, return ndarray."""
+        """Multiply field data by other (scalar, array, or field_view)."""
+        if isinstance(other, _FieldView):
+            other = other._get_data()
         return self._get_data() * np.asarray(other, dtype=np.float32)
     
     def __rmul__(self, other):
+        """other * field_view (scalar, array, or field_view)."""
         return self.__mul__(other)
+    
+    def __add__(self, other):
+        """field_view + other (scalar, array, or field_view)."""
+        if isinstance(other, _FieldView):
+            other = other._get_data()
+        return self._get_data() + np.asarray(other, dtype=np.float32)
+    
+    def __sub__(self, other):
+        """field_view - other (scalar, array, or field_view)."""
+        if isinstance(other, _FieldView):
+            other = other._get_data()
+        return self._get_data() - np.asarray(other, dtype=np.float32)
+    
+    def __truediv__(self, other):
+        """field_view / other."""
+        return self._get_data() / np.asarray(other, dtype=np.float32)
+    
+    def __radd__(self, other):
+        """other + field_view (scalar, array, or field_view)."""
+        if isinstance(other, _FieldView):
+            other = other._get_data()
+        return np.asarray(other, dtype=np.float32) + self._get_data()
+    
+    def __rsub__(self, other):
+        """other - field_view (scalar or array)."""
+        return np.asarray(other, dtype=np.float32) - self._get_data()
+    
+    def __rtruediv__(self, other):
+        """other / field_view (scalar)."""
+        return np.asarray(other, dtype=np.float32) / self._get_data()
     
     def __le__(self, other):
         """Comparison returns absolute entity indices where condition is true."""

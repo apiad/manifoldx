@@ -111,7 +111,7 @@ class Camera:
         self.target = np.array(target, dtype=np.float32)
         self._compute_spherical()
 
-    def orbit(self, d_azimuth=0, d_elevation=0):
+    def orbit(self, d_azimuth=0.0, d_elevation=0.0):
         """Rotate camera around target by delta angles.
 
         Args:

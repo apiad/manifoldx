@@ -61,12 +61,25 @@ class Transform:
         return data
     
     @staticmethod
-    def rotation(x: float = 0, y: float = 0, z: float = 0) -> np.ndarray:
-        """Create a quaternion (x, y, z, w) from euler angles (radians).
+    def rotation(x=0, y=0, z=0, euler=None) -> np.ndarray:
+        """Create quaternion(s) (x, y, z, w) from euler angles (radians).
         
         Uses intrinsic Tait-Bryan angles: rotate around X, then Y, then Z.
-        Returns shape (4,) quaternion that can be used with += on .rot field.
+        
+        Accepts scalars or arrays:
+            Transform.rotation(x=0, y=0.5, z=0)          -> (4,) quaternion
+            Transform.rotation(euler=angular_vel * dt)     -> (N, 4) quaternions
+            Transform.rotation(x=np.array([...]), y=...) -> (N, 4) quaternions
+        
+        The `euler` parameter is an (N, 3) or (3,) array of [x, y, z] angles.
         """
+        if euler is not None:
+            euler = np.asarray(euler, dtype=np.float32)
+            if euler.ndim == 1:
+                x, y, z = euler[0], euler[1], euler[2]
+            else:
+                x, y, z = euler[:, 0], euler[:, 1], euler[:, 2]
+        
         cx, sx = np.cos(x / 2), np.sin(x / 2)
         cy, sy = np.cos(y / 2), np.sin(y / 2)
         cz, sz = np.cos(z / 2), np.sin(z / 2)
@@ -77,7 +90,7 @@ class Transform:
         qz = cx * cy * sz - sx * sy * cz
         qw = cx * cy * cz + sx * sy * sz
         
-        return np.array([qx, qy, qz, qw], dtype=np.float32)
+        return np.stack([qx, qy, qz, qw], axis=-1).astype(np.float32)
 
     @staticmethod
     def register(store):
