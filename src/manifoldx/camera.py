@@ -157,5 +157,35 @@ class Camera:
         self.target += displacement
         self.position += displacement
 
+    def get_distance(self) -> float:
+        """Get current distance from camera to target."""
+        return float(self._distance)
+
+    def zoom(self, factor):
+        """Zoom by dividing distance to target by factor.
+        
+        Args:
+            factor: Divisor for distance. >1 zooms in, <1 zooms out.
+        
+        Example: zoom(2.0) halves the distance to target (zooms in).
+        """
+        self._distance /= factor
+        self._distance = max(0.1, self._distance)
+        
+        forward = self.get_forward()
+        self.position = self.target - forward * self._distance
+
+    def dolly(self, distance):
+        """Move camera toward/away from target by distance.
+        
+        Args:
+            distance: World units to move toward (positive) or away (negative).
+        """
+        self._distance -= distance
+        self._distance = max(0.1, self._distance)
+        
+        forward = self.get_forward()
+        self.position = self.target - forward * self._distance
+
 
 __all__ = ['Camera']
