@@ -73,7 +73,7 @@ engine.spawn(
 
 # Animate lights
 @engine.system
-def animate_lights(dt: float):
+def animate_lights(query: mx.Query[Transform], dt: float):
     t = engine.elapsed
 
     # Orbit light1 around the scene
@@ -86,7 +86,7 @@ def animate_lights(dt: float):
 
 # Slow camera orbit
 @engine.system
-def camera_orbit(dt: float):
+def camera_orbit(query: mx.Query[Transform], dt: float):
     engine.camera.orbit(5 * dt, 0)
 
 

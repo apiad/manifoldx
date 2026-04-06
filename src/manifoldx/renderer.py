@@ -5,14 +5,14 @@ import wgpu
 
 
 # =============================================================================
-# WGSL Shaders
+# WGSL Shaders (default fallback - not used when materials provide shaders)
 # =============================================================================
 
 SHADER_SOURCE = """
 struct Globals {
     vp: mat4x4<f32>,
-    color: vec4<f32>,
-    light_dir: vec4<f32>,   // xyz = normalized direction, w = ambient intensity
+    camera_pos: vec3<f32>,
+    _pad: f32,
 };
 
 struct Transforms {
@@ -37,8 +37,8 @@ struct VertexOutput {
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     let model = transforms.models[in.instance];
-    let mvp = globals.vp * model;
-    out.position = mvp * vec4<f32>(in.position, 1.0);
+    let world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    out.position = globals.vp * vec4<f32>(world_pos, 1.0);
     // Transform normal by model matrix (ignore translation, assume uniform scale)
     out.world_normal = (model * vec4<f32>(in.normal, 0.0)).xyz;
     return out;
@@ -47,11 +47,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let normal = normalize(in.world_normal);
-    let light_dir = normalize(globals.light_dir.xyz);
-    let ambient = globals.light_dir.w;
+    let light_dir = normalize(vec3<f32>(0.5773, 0.5773, 0.5773));
     let diffuse = max(dot(normal, light_dir), 0.0);
-    let brightness = ambient + (1.0 - ambient) * diffuse;
-    return vec4<f32>(globals.color.rgb * brightness, globals.color.a);
+    let brightness = 0.3 + 0.7 * diffuse;
+    return vec4<f32>(vec3<f32>(0.8) * brightness, 1.0);
 }
 """
 
@@ -185,28 +184,22 @@ class RenderPipeline:
         self._pipeline_layouts = {}  # material_type -> layout
         self._bind_group_layouts = {}  # material_type -> bind group layout
         self._material_buffers = {}  # (geometry_id, material_type) -> buffer
-        self._globals_buffer = None  # VP matrix + camera_pos + light_count
+        self._globals_buffer = None  # VP matrix + camera_pos
         self._transform_buffer = None  # Storage buffer for model matrices
         self._transform_buffer_size = 0
         self._lights_buffer = None  # External lights uniform buffer
-        self._bind_group = None
         self._initialized = False
 
     def _ensure_pipeline(self, device, texture_format):
-        """Lazily create the WGPU render pipeline on first use."""
+        """Lazily initialize device and shared buffers on first use."""
         if self._initialized:
             return
 
         self._device = device
 
-        # Create shader module
-        shader_module = device.create_shader_module(code=SHADER_SOURCE)
-
-        # Create globals uniform buffer: mat4x4 VP + vec3 camera_pos + padding + light_count
-        # VP = 64 bytes, camera_pos = 12 bytes + 4 padding = 16, light_count = 4 bytes + 12 padding = 16
-        # Total = 64 + 16 + 16 = 96 bytes
+        # Create globals uniform buffer: mat4x4 VP (64) + vec3 camera_pos (12) + pad (4) = 80 bytes
         self._globals_buffer = device.create_buffer(
-            size=96,
+            size=80,
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
@@ -224,9 +217,25 @@ class RenderPipeline:
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
-        # Create bind group layout
-        self._bind_group_layout = device.create_bind_group_layout(
-            entries=[
+        self._initialized = True
+
+    def _get_or_create_pipeline(
+        self, device, texture_format, geometry_id, material, registry
+    ):
+        """Get or create a material-type specific pipeline."""
+        material_type = type(material).__name__
+        key = (geometry_id, material_type)
+
+        if key in self._pipelines:
+            return self._pipelines[key], self._bind_group_layouts.get(material_type)
+
+        shader_source = material._compile()
+        shader_module = device.create_shader_module(code=shader_source)
+
+        # Determine bind group layout based on shader bindings
+        needs_lights = "@binding(3)" in shader_source
+        if not needs_lights:
+            bind_group_entries = [
                 {
                     "binding": 0,
                     "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
@@ -237,19 +246,48 @@ class RenderPipeline:
                     "visibility": wgpu.ShaderStage.VERTEX,
                     "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
                 },
+                {
+                    "binding": 2,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                },
             ]
+        else:
+            # StandardMaterial: 4 bindings (globals, transforms, material, lights)
+            bind_group_entries = [
+                {
+                    "binding": 0,
+                    "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                },
+                {
+                    "binding": 1,
+                    "visibility": wgpu.ShaderStage.VERTEX,
+                    "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+                },
+                {
+                    "binding": 2,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                },
+                {
+                    "binding": 3,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                },
+            ]
+
+        bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
+        self._bind_group_layouts[material_type] = bind_group_layout
+
+        pipeline_layout = device.create_pipeline_layout(
+            bind_group_layouts=[bind_group_layout]
         )
+        self._pipeline_layouts[material_type] = pipeline_layout
 
-        self._create_bind_group()
-
-        # Create pipeline layout
-        self._pipeline_layout = device.create_pipeline_layout(
-            bind_group_layouts=[self._bind_group_layout]
-        )
-
-        # Create render pipeline
-        self._pipeline = device.create_render_pipeline(
-            layout=self._pipeline_layout,
+        # Always use 6-float stride (pos + normal) with both vertex attributes
+        pipeline = device.create_render_pipeline(
+            layout=pipeline_layout,
             vertex={
                 "module": shader_module,
                 "entry_point": "vs_main",
@@ -285,114 +323,6 @@ class RenderPipeline:
             fragment={
                 "module": shader_module,
                 "entry_point": "fs_main",
-                "targets": [
-                    {
-                        "format": texture_format,
-                    }
-                ],
-            },
-        )
-
-        self._initialized = True
-
-    def _get_or_create_pipeline(
-        self, device, texture_format, geometry_id, material, registry
-    ):
-        """Get or create a material-type specific pipeline."""
-        material_type = type(material).__name__
-        key = (geometry_id, material_type)
-
-        if key in self._pipelines:
-            return self._pipelines[key], self._bind_group_layouts.get(material_type)
-
-        shader_source = material._compile()
-        shader_module = device.create_shader_module(code=shader_source)
-
-        # Determine bind group layout based on material type
-        if material_type == "BasicMaterial":
-            bind_group_entries = [
-                {
-                    "binding": 0,
-                    "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
-                    "buffer": {"type": wgpu.BufferBindingType.uniform},
-                },
-                {
-                    "binding": 1,
-                    "visibility": wgpu.ShaderStage.VERTEX,
-                    "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
-                },
-                {
-                    "binding": 2,
-                    "visibility": wgpu.ShaderStage.FRAGMENT,
-                    "buffer": {"type": wgpu.BufferBindingType.uniform},
-                },
-            ]
-        else:
-            bind_group_entries = [
-                {
-                    "binding": 0,
-                    "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
-                    "buffer": {"type": wgpu.BufferBindingType.uniform},
-                },
-                {
-                    "binding": 1,
-                    "visibility": wgpu.ShaderStage.FRAGMENT,
-                    "buffer": {"type": wgpu.BufferBindingType.uniform},
-                },
-                {
-                    "binding": 2,
-                    "visibility": wgpu.ShaderStage.FRAGMENT,
-                    "buffer": {"type": wgpu.BufferBindingType.uniform},
-                },
-                {
-                    "binding": 3,
-                    "visibility": wgpu.ShaderStage.FRAGMENT,
-                    "buffer": {"type": wgpu.BufferBindingType.uniform},
-                },
-            ]
-
-        bind_group_layout = device.create_bind_group_layout(bind_group_entries)
-        self._bind_group_layouts[material_type] = bind_group_layout
-
-        pipeline_layout = device.create_pipeline_layout(
-            bind_group_layouts=[self._bind_group_layout, bind_group_layout]
-        )
-
-        # Parse shader to determine vertex input
-        has_normals = "world_normal: vec3<f32>" in shader_source
-
-        pipeline = device.create_render_pipeline(
-            layout=pipeline_layout,
-            vertex={
-                "module": shader_module,
-                "entry_point": "vs_main",
-                "buffers": [
-                    {
-                        "array_stride": 6 * 4 if has_normals else 3 * 4,
-                        "step_mode": wgpu.VertexStepMode.vertex,
-                        "attributes": [
-                            {
-                                "format": wgpu.VertexFormat.float32x3,
-                                "offset": 0,
-                                "shader_location": 0,
-                            },
-                        ],
-                    }
-                ],
-            },
-            primitive={
-                "topology": wgpu.PrimitiveTopology.triangle_list,
-                "front_face": wgpu.FrontFace.ccw,
-                "cull_mode": wgpu.CullMode.back,
-            },
-            depth_stencil={
-                "format": wgpu.TextureFormat.depth24plus,
-                "depth_write_enabled": True,
-                "depth_compare": wgpu.CompareFunction.less,
-            },
-            fragment={
-                "module": shader_module,
-                "entry_point": "fs_main",
                 "targets": [{"format": texture_format}],
             },
         )
@@ -400,10 +330,12 @@ class RenderPipeline:
         self._pipelines[key] = pipeline
 
         # Create material uniform buffer for this key
-        if material_type == "BasicMaterial":
-            buffer_size = 16  # vec4
+        if not needs_lights:
+            buffer_size = 16  # vec4 color
         else:
-            buffer_size = 24  # albedo(12) + roughness(4) + metallic(4) + ao(4)
+            buffer_size = (
+                32  # 8 floats: albedo(3) + roughness(1) + metallic(1) + ao(1) + pad(2)
+            )
 
         material_buffer = device.create_buffer(
             size=buffer_size,
@@ -412,30 +344,6 @@ class RenderPipeline:
         self._material_buffers[key] = material_buffer
 
         return pipeline, bind_group_layout
-
-    def _create_bind_group(self):
-        """Create or recreate bind group (needed when transform buffer changes)."""
-        self._bind_group = self._device.create_bind_group(
-            layout=self._bind_group_layout,
-            entries=[
-                {
-                    "binding": 0,
-                    "resource": {
-                        "buffer": self._globals_buffer,
-                        "offset": 0,
-                        "size": 96,
-                    },
-                },
-                {
-                    "binding": 1,
-                    "resource": {
-                        "buffer": self._transform_buffer,
-                        "offset": 0,
-                        "size": self._transform_buffer_size,
-                    },
-                },
-            ],
-        )
 
     def _ensure_transform_buffer(self, needed_bytes):
         """Grow transform storage buffer if needed."""
@@ -452,7 +360,6 @@ class RenderPipeline:
             usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
         )
         self._transform_buffer_size = new_size
-        self._create_bind_group()  # Recreate with new buffer
 
     def render(self, engine, render_pass):
         """Issue instanced draw calls into an active render pass."""
@@ -508,17 +415,15 @@ class RenderPipeline:
         if hasattr(camera, "position"):
             camera_pos = np.array(camera.position, dtype=np.float32)
 
-        # Upload globals (VP + camera_pos + light_dir)
-        light_dir = np.array([0.5773, 0.5773, 0.5773, 0.3], dtype=np.float32)
-
-        globals_data = np.zeros(96, dtype=np.uint8)
+        # Upload globals (VP + camera_pos + pad) = 80 bytes
+        globals_data = np.zeros(80, dtype=np.uint8)
         globals_data[0:64] = np.frombuffer(
             vp.astype(np.float32).tobytes(), dtype=np.uint8
         )
         globals_data[64:76] = np.frombuffer(
             camera_pos.astype(np.float32).tobytes(), dtype=np.uint8
         )
-        globals_data[80:96] = np.frombuffer(light_dir.tobytes(), dtype=np.uint8)
+        # bytes 76-79 are padding (already zero)
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 
         # Draw each batch
@@ -545,82 +450,16 @@ class RenderPipeline:
             )
             mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
 
-            if mat_obj is not None:
-                pipeline, bind_group_layout = self._get_or_create_pipeline(
-                    self._device,
-                    engine._texture_format,
-                    geom_id,
-                    mat_obj,
-                    engine._material_registry,
-                )
+            if mat_obj is None:
+                continue  # Skip entities without a material
 
-                # Get material data and upload to uniform buffer
-                mat_data = mat_obj.get_data(instance_count, engine._material_registry)
-                key = (geom_id, mat_type)
-                mat_buffer = self._material_buffers.get(key)
-                if mat_buffer is not None:
-                    self._device.queue.write_buffer(
-                        mat_buffer, 0, mat_data.astype(np.float32).tobytes()
-                    )
-
-                # Upload external lights data
-                lights = engine._lights
-                lights_data = np.zeros(128, dtype=np.float32)
-                for i, light in enumerate(lights[:4]):
-                    light_arr = light.get_data()
-                    offset = i * 32
-                    lights_data[offset : offset + len(light_arr)] = light_arr
-                self._device.queue.write_buffer(
-                    self._lights_buffer, 0, lights_data.tobytes()
-                )
-
-                # Create bind group with material uniforms and lights
-                bind_group_entries = [
-                    {
-                        "binding": 0,
-                        "resource": {
-                            "buffer": self._globals_buffer,
-                            "offset": 0,
-                            "size": 96,
-                        },
-                    },
-                    {
-                        "binding": 1,
-                        "resource": {
-                            "buffer": self._transform_buffer,
-                            "offset": 0,
-                            "size": self._transform_buffer_size,
-                        },
-                    },
-                    {
-                        "binding": 2,
-                        "resource": {
-                            "buffer": mat_buffer,
-                            "offset": 0,
-                            "size": 24 if mat_type == "StandardMaterial" else 16,
-                        },
-                    },
-                ]
-                if mat_type == "StandardMaterial":
-                    bind_group_entries.append(
-                        {
-                            "binding": 3,
-                            "resource": {
-                                "buffer": self._lights_buffer,
-                                "offset": 0,
-                                "size": 128,
-                            },
-                        }
-                    )
-                bind_group = self._device.create_bind_group(
-                    layout=bind_group_layout,
-                    entries=bind_group_entries,
-                )
-            else:
-                pipeline = self._pipeline
-                bind_group = self._bind_group
-
-            render_pass.set_pipeline(pipeline)
+            pipeline, bind_group_layout = self._get_or_create_pipeline(
+                self._device,
+                engine._texture_format,
+                geom_id,
+                mat_obj,
+                engine._material_registry,
+            )
 
             # Collect model matrices for this batch and transpose each for WGSL
             batch_matrices = model_matrices[local_indices]
@@ -635,8 +474,78 @@ class RenderPipeline:
             # Upload transforms
             self._device.queue.write_buffer(self._transform_buffer, 0, transform_bytes)
 
-            # Bind
-            render_pass.set_bind_group(0, self._bind_group)
+            # Get material data and upload to uniform buffer
+            mat_data = mat_obj.get_data(instance_count, engine._material_registry)
+            key = (geom_id, mat_type)
+            mat_buffer = self._material_buffers.get(key)
+            if mat_buffer is not None:
+                # Upload first instance's material data (shared uniform for the batch)
+                first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
+                self._device.queue.write_buffer(
+                    mat_buffer, 0, first_row.astype(np.float32).tobytes()
+                )
+
+            # Build bind group entries
+            needs_lights = "@binding(3)" in type(mat_obj)._compile()
+            mat_buffer_size = 32 if needs_lights else 16
+            bind_group_entries = [
+                {
+                    "binding": 0,
+                    "resource": {
+                        "buffer": self._globals_buffer,
+                        "offset": 0,
+                        "size": 80,
+                    },
+                },
+                {
+                    "binding": 1,
+                    "resource": {
+                        "buffer": self._transform_buffer,
+                        "offset": 0,
+                        "size": self._transform_buffer_size,
+                    },
+                },
+                {
+                    "binding": 2,
+                    "resource": {
+                        "buffer": mat_buffer,
+                        "offset": 0,
+                        "size": mat_buffer_size,
+                    },
+                },
+            ]
+
+            # Upload lights and add binding for PBR materials
+            if needs_lights:
+                lights = engine._lights
+                lights_data = np.zeros(32, dtype=np.float32)  # 32 floats = 128 bytes
+                for li, light in enumerate(lights[:4]):
+                    light_arr = light.get_data()
+                    offset = li * 8  # 8 floats per light
+                    lights_data[offset : offset + len(light_arr)] = light_arr
+                self._device.queue.write_buffer(
+                    self._lights_buffer, 0, lights_data.tobytes()
+                )
+
+                bind_group_entries.append(
+                    {
+                        "binding": 3,
+                        "resource": {
+                            "buffer": self._lights_buffer,
+                            "offset": 0,
+                            "size": 128,
+                        },
+                    }
+                )
+
+            # Create bind group per draw call (transforms change per batch)
+            bind_group = self._device.create_bind_group(
+                layout=bind_group_layout,
+                entries=bind_group_entries,
+            )
+
+            render_pass.set_pipeline(pipeline)
+            render_pass.set_bind_group(0, bind_group)
             render_pass.set_vertex_buffer(0, gpu_buffers["vertex_buffer"])
             render_pass.set_index_buffer(
                 gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32

@@ -29,55 +29,56 @@ class Material(ABC):
         pass
 
 
-_UNLIT_VERTEX_SHADER = """
+_BASICMATERIAL_SHADER = """
+struct Globals {
+    vp: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    _pad: f32,
+};
+
+struct Transforms {
+    models: array<mat4x4<f32>>,
+};
+
+struct BasicMaterialUniforms {
+    color: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> transforms: Transforms;
+@group(0) @binding(2) var<uniform> material: BasicMaterialUniforms;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
-}
+    @builtin(instance_index) instance: u32,
+};
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) world_pos: vec3<f32>,
-    @location(1) world_normal: vec3<f32>,
-}
-
-struct Uniforms {
-    viewProj: mat4x4<f32>,
-    model: mat4x4<f32>,
-}
-
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+    @location(0) world_normal: vec3<f32>,
+    @location(1) world_pos: vec3<f32>,
+};
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let world_pos = (uniforms.model * vec4<f32>(in.position, 1.0)).xyz;
-    out.position = uniforms.viewProj * vec4<f32>(world_pos, 1.0);
-    out.world_pos = world_pos;
-    out.world_normal = normalize((uniforms.model * vec4<f32>(in.normal, 0.0)).xyz);
+    let model = transforms.models[in.instance];
+    out.world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    out.position = globals.vp * vec4<f32>(out.world_pos, 1.0);
+    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
     return out;
 }
-"""
-
-_UNLIT_FRAGMENT_SHADER = """
-struct FragmentInput {
-    @location(0) world_pos: vec3<f32>,
-    @location(1) world_normal: vec3<f32>,
-}
-
-struct MaterialUniforms {
-    color: vec4<f32>,
-}
-
-@group(0) @binding(0) var<uniform> material: MaterialUniforms;
 
 @fragment
-fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
-    return material.color;
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let normal = normalize(in.world_normal);
+    let light_dir = normalize(vec3<f32>(0.5773, 0.5773, 0.5773));
+    let diffuse = max(dot(normal, light_dir), 0.0);
+    let brightness = 0.3 + 0.7 * diffuse;
+    return vec4<f32>(material.color.rgb * brightness, material.color.a);
 }
 """
-
-_BASICMATERIAL_SHADER = _UNLIT_VERTEX_SHADER + _UNLIT_FRAGMENT_SHADER
 
 
 class BasicMaterial(Material):
@@ -112,52 +113,39 @@ class BasicMaterial(Material):
 
 
 _STANDARDMATERIAL_SHADER = """
-struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-}
+struct Globals {
+    vp: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    _pad: f32,
+};
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) world_pos: vec3<f32>,
-    @location(1) world_normal: vec3<f32>,
-}
+struct Transforms {
+    models: array<mat4x4<f32>>,
+};
 
-struct Uniforms {
-    viewProj: mat4x4<f32>,
-    model: mat4x4<f32>,
-    cameraPos: vec3<f32>,
-    deltaTime: f32,
-}
+struct PBRMaterialUniforms {
+    albedo: vec3<f32>,
+    roughness: f32,
+    metallic: f32,
+    ao: f32,
+    _pad0: f32,
+    _pad1: f32,
+};
 
-struct PointLight {
+struct PointLightData {
     position: vec3<f32>,
-    padding0: f32,
+    _pad0: f32,
     color: vec3<f32>,
     intensity: f32,
-}
-
-struct SpotLight {
-    position: vec3<f32>,
-    padding0: f32,
-    color: vec3<f32>,
-    intensity: f32,
-    direction: vec3<f32>,
-    outer_angle: f32,
-}
-
-struct DirectionalLight {
-    direction: vec3<f32>,
-    padding0: f32,
-    color: vec3<f32>,
-    intensity: f32,
-}
+};
 
 struct LightData {
-    lights: array<PointLight, 4>,
-}
+    lights: array<PointLightData, 4>,
+};
 
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> transforms: Transforms;
+@group(0) @binding(2) var<uniform> material: PBRMaterialUniforms;
 @group(0) @binding(3) var<uniform> light_data: LightData;
 
 const PI: f32 = 3.14159265359;
@@ -168,8 +156,8 @@ fn distributionGGX(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
     let NdotH = max(dot(N, H), 0.0);
     let NdotH2 = NdotH * NdotH;
     let num = a2;
-    let denom = (NdotH2 * (a2 - 1.0) + 1.0);
-    let denom = PI * denom * denom;
+    let denom_base = (NdotH2 * (a2 - 1.0) + 1.0);
+    let denom = PI * denom_base * denom_base;
     return num / denom;
 }
 
@@ -193,13 +181,13 @@ fn fresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (vec3<f32>(1.0) - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
-fn calculateAttenuation(distance: f32, light: PointLight) -> f32 {
+fn calculateAttenuation(distance: f32, light: PointLightData) -> f32 {
     return light.intensity / (distance * distance);
 }
 
 fn calculatePointLight(N: vec3<f32>, V: vec3<f32>, worldPos: vec3<f32>,
                        F0: vec3<f32>, albedo: vec3<f32>, metallic: f32,
-                       roughness: f32, light: PointLight) -> vec3<f32> {
+                       roughness: f32, light: PointLightData) -> vec3<f32> {
     let L = normalize(light.position - worldPos);
     let H = normalize(V + L);
     let distance = length(light.position - worldPos);
@@ -221,31 +209,32 @@ fn calculatePointLight(N: vec3<f32>, V: vec3<f32>, worldPos: vec3<f32>,
     return (kD * albedo / PI + specular) * radiance * NdotL;
 }
 
-struct MaterialUniforms {
-    albedo: vec3<f32>,
-    padding0: f32,
-    roughness: f32,
-    metallic: f32,
-    ao: f32,
-    padding1: f32,
-}
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @builtin(instance_index) instance: u32,
+};
 
-@group(0) @binding(2) var<uniform> material: MaterialUniforms;
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) world_normal: vec3<f32>,
+    @location(1) world_pos: vec3<f32>,
+};
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let world_pos = (uniforms.model * vec4<f32>(in.position, 1.0)).xyz;
-    out.position = uniforms.viewProj * vec4<f32>(world_pos, 1.0);
-    out.world_pos = world_pos;
-    out.world_normal = normalize((uniforms.model * vec4<f32>(in.normal, 0.0)).xyz);
+    let model = transforms.models[in.instance];
+    out.world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    out.position = globals.vp * vec4<f32>(out.world_pos, 1.0);
+    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let N = normalize(in.world_normal);
-    let V = normalize(uniforms.cameraPos - in.world_pos);
+    let V = normalize(globals.camera_pos - in.world_pos);
 
     let F0 = mix(vec3<f32>(0.04), material.albedo, material.metallic);
 
@@ -296,7 +285,7 @@ class StandardMaterial(Material):
         }
 
     def get_data(self, n: int, registry) -> np.ndarray:
-        """Return material data as numpy array (albedo, roughness, metallic, ao)."""
+        """Return material data as numpy array (albedo, roughness, metallic, ao + padding)."""
         if isinstance(self.color, str):
             color_hex = self.color.lstrip("#")
             r = int(color_hex[0:2], 16) / 255.0
@@ -642,11 +631,11 @@ def basic(color):
     return BasicMaterial(color)
 
 
-class PhongMaterial:
-    """Phong shading material."""
+class PhongMaterial(BasicMaterial):
+    """Phong shading material (uses BasicMaterial shader for now)."""
 
     def __init__(self, color, shininess: float = 32.0):
-        self.color = color
+        super().__init__(color)
         self.shininess = shininess
 
 
