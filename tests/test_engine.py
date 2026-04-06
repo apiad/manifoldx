@@ -1,3 +1,4 @@
+import importlib.util
 import pytest
 from manifoldx import Engine
 
@@ -68,6 +69,7 @@ def test_engine_has_window_attribute():
     )
 
 
+@pytest.mark.skipif(importlib.util.find_spec("glfw") is None, reason="glfw not installed")
 def test_engine_has_glfw_init():
     """Engine has GLFW initialization in run()."""
     import glfw
