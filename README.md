@@ -11,14 +11,48 @@ A real-time 3D rendering engine built on pure [wgpu](https://github.com/gfx-rs/w
 
 ## Motivation
 
-Can Python + numpy reasonably power a modern real-time rendering pipeline? This project tests that question by building:
+Domain researchers need to run large-scale simulations (10⁴-10⁶ entities) and visualize results in 3D. **Currently they can't do both in pure Python.**
 
-- An ECS with Structure-of-Arrays (SoA) layout for cache-efficient data access
-- Instanced GPU rendering with material-specific pipelines
-- PBR (Physically Based Rendering) with GGX BRDF
-- A Pythonic API for 3D graphics
+| Tool | Simulation | Visualization | Language |
+|------|------------|---------------|----------|
+| Matplotlib/Plotly | ✅ | 2D only, slow at scale | Pure Python |
+| VisPy | ❌ | OpenGL, steep curve | Python + GLSL |
+| PyGfx | ❌ | Excellent rendering | Pure Python |
+| Game engines (PyGame) | ✅ | 2D mostly | Pure Python |
+| Specialized (OpenMM, SUMO) | ✅ | Data export only | Fortran/C++ |
 
-**Spoiler:** Python is surprisingly capable, but there are trade-offs. The ECS overhead is minimal (~microseconds per frame), but the rendering loop must be carefully optimized to avoid Python overhead.
+**The gap:** No Python tool combines data-driven simulation with accessible 3D visualization in one package.
+
+### The Vision
+
+ManifoldX gives researchers both:
+
+1. **Simulation in pure NumPy** — vectorized operations over entity arrays, no Python loops in the hot path
+2. **3D visualization without graphics knowledge** — spawn entities with meshes/materials, the engine handles GPU rendering
+
+```python
+# Write physics in pure numpy (data-driven, not OOP)
+@engine.system
+def nbody_physics(query, dt):
+    forces = compute_gravity_all_pairs(query[Transform].pos.data)
+    velocities += forces * dt
+    query[Transform].pos += velocities * dt
+
+# Engine handles GPU buffers, WGSL shaders, instanced draw calls
+# You get 3D visualization of your simulation instantly
+```
+
+**Target domains:** Astrophysics (galaxy formation), molecular dynamics (protein folding), epidemiology (disease spread), crowd science (evacuation flows), traffic engineering (vehicle flow), weather (particle advection).
+
+**Works in:** Jupyter notebooks, Quarto documents, Streamlit dashboards, standalone scripts.
+
+> ⚠️ **Spoiler:** Python is surprisingly capable at real-time 3D. The N-body demo runs 250 bodies with N² gravity at 60fps — 62,500 force pairs per frame in pure numpy.
+
+### Why Not PyGfx?
+
+[PyGfx](https://github.com/pygfx/pygfx) is an excellent rendering engine and has been a key source of inspiration — we've learned a lot from its WGSL patterns, material system, and API design. However, it's fundamentally a **scene graph** engine (object-oriented hierarchy of transforms), not a data-driven ECS. For large-scale simulations with vectorized physics, the OOP overhead of traversing a scene graph becomes a bottleneck. ManifoldX uses a flat SoA data layout where simulation logic operates directly on numpy arrays.
+
+**Technically this is a game engine** — the ECS + instanced rendering + PBR pipeline is exactly what you'd use for a game. But that's not the focus. The goal is making 3D visualization accessible to researchers who don't know anything about graphics.
 
 ## Installation
 
@@ -142,6 +176,7 @@ def nbody_physics(query: mx.Query[Transform], dt: float):
 | `nbody.py` | 250-body N-body simulation with pure-numpy physics |
 
 Run an example:
+
 ```bash
 python -m examples.nbody   # N-body gravitational simulation
 python -m examples.pbr_demo
