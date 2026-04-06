@@ -222,13 +222,10 @@ class Engine:
             format=wgpu.TextureFormat.bgra8unorm,
         )
 
-        # Create depth texture
-        self._depth_texture = self._device.create_texture(
-            size=(self.w, self.h, 1),
-            format=wgpu.TextureFormat.depth24plus,
-            usage=wgpu.TextureUsage.RENDER_ATTACHMENT,
-        )
-        self._depth_texture_view = self._depth_texture.create_view()
+        # Depth texture created lazily in _draw_frame to match canvas size
+        self._depth_texture = None
+        self._depth_texture_view = None
+        self._depth_texture_size = (0, 0)
 
     def _draw_frame(self):
         """Draw callback invoked by rendercanvas event loop each frame."""
@@ -259,6 +256,17 @@ class Engine:
         # Get the next frame's texture and create view
         texture = self._wgpu_context.get_current_texture()
         texture_view = texture.create_view()
+
+        # Recreate depth texture if canvas size changed
+        tex_size = (texture.size[0], texture.size[1])
+        if tex_size != self._depth_texture_size:
+            self._depth_texture = self._device.create_texture(
+                size=(tex_size[0], tex_size[1], 1),
+                format=wgpu.TextureFormat.depth24plus,
+                usage=wgpu.TextureUsage.RENDER_ATTACHMENT,
+            )
+            self._depth_texture_view = self._depth_texture.create_view()
+            self._depth_texture_size = tex_size
 
         # Create command encoder
         command_encoder = self._device.create_command_encoder()
