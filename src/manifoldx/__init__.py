@@ -1,3 +1,6 @@
+import numpy as np
+
+
 # Lazy import to avoid wgpu dependency for types-only imports
 def __getattr__(name):
     if name == 'Engine':
@@ -15,6 +18,42 @@ from manifoldx.ecs import EntityStore, ComponentView, component
 from manifoldx.systems import Query
 from manifoldx.components import Transform, Mesh, Material, Colors
 from manifoldx.resources import cube, sphere, plane, basic, phong, standard
+
+
+# =============================================================================
+# Module Proxies for mx.geometry, mx.material, mx.colors access
+# =============================================================================
+
+class _GeometryProxy:
+    """Proxy for mx.geometry module."""
+    def cube(self, w=1, h=1, d=1): return cube(w, h, d)
+    def sphere(self, r=1, segments=32): return sphere(r, segments)
+    def plane(self, w=1, h=1): return plane(w, h)
+
+
+class _MaterialProxy:
+    """Proxy for mx.material module."""
+    def basic(self, color): return basic(color)
+    def phong(self, color, shininess=32): return phong(color, shininess)
+    def standard(self, color, roughness=0.5, metallic=0): return standard(color, roughness, metallic)
+
+
+class _ColorsProxy:
+    """Proxy for mx.colors module."""
+    RED = "#ff0000"
+    GREEN = "#00ff00"
+    BLUE = "#0000ff"
+    WHITE = "#ffffff"
+    BLACK = "#000000"
+    YELLOW = "#ffff00"
+    CYAN = "#00ffff"
+    MAGENTA = "#ff00ff"
+
+
+# Create module instances
+geometry = _GeometryProxy()
+material = _MaterialProxy()
+colors = _ColorsProxy()
 
 
 __all__ = [
@@ -37,4 +76,7 @@ __all__ = [
     'phong',
     'standard',
     'component',
+    'geometry',
+    'material',
+    'colors',
 ]
