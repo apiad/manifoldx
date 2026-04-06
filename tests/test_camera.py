@@ -566,3 +566,17 @@ class TestCameraFitFrame:
             "fit_bounds should set target to center"
         # Distance should fit the largest extent
         assert camera._distance > 5, "Camera should be outside bounding box"
+
+
+class TestRendererCameraIntegration:
+    """Test renderer uses new camera methods."""
+    
+    def test_renderer_uses_view_projection_matrix(self):
+        """Renderer should use camera.get_view_projection_matrix()."""
+        # Read the renderer source
+        with open('src/manifoldx/renderer.py', 'r') as f:
+            source = f.read()
+        
+        # Check if renderer calls get_view_projection_matrix
+        assert 'get_view_projection_matrix' in source, \
+            "Renderer should use camera.get_view_projection_matrix() for VP matrix"
