@@ -90,5 +90,26 @@ class Camera:
         
         return proj
 
+    def move_to(self, position):
+        """Set camera world position."""
+        self.position = np.array(position, dtype=np.float32)
+        self._compute_spherical()
+
+    def move_by(self, delta):
+        """Move camera by delta in world space."""
+        self.position += np.array(delta, dtype=np.float32)
+        self._compute_spherical()
+
+    def look_at(self, target):
+        """Set the point the camera looks at."""
+        self.target = np.array(target, dtype=np.float32)
+        self._compute_spherical()
+
+    def set_pose(self, position, target):
+        """Set both position and target at once."""
+        self.position = np.array(position, dtype=np.float32)
+        self.target = np.array(target, dtype=np.float32)
+        self._compute_spherical()
+
 
 __all__ = ['Camera']

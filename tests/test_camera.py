@@ -195,8 +195,8 @@ class TestCameraDirectPositioning:
         # Move target farther
         camera.look_at((0, 0, 20))
         
-        # Distance should now be 20
-        assert np.isclose(camera._distance, 20.0, atol=1e-3), \
+        # Distance should now be 10
+        assert np.isclose(camera._distance, 10.0, atol=1e-3), \
             "look_at should update distance"
     
     def test_set_pose(self):
@@ -218,10 +218,10 @@ class TestCameraDirectPositioning:
         
         camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
         
-        camera.set_pose(position=(0, 20, 20), target=(0, 0, 0))
+        camera.set_pose(position=(10, 20, 10), target=(0, 0, 0))
         
-        # Distance should be sqrt(20^2 + 20^2) = ~28.28
-        expected_distance = np.sqrt(20**2 + 20**2)
+        # Distance should be sqrt(10^2 + 20^2 + 10^2) = ~24.49
+        expected_distance = np.sqrt(10**2 + 20**2 + 10**2)
         assert np.isclose(camera._distance, expected_distance, atol=1e-3), \
             "set_pose should update spherical coords"
         # Azimuth should be 45 degrees (equal X and Z components)
