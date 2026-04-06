@@ -65,6 +65,11 @@ class Engine:
         self._update_callbacks.append(func)
         return func
 
+    def system(self, func):
+        """Decorator to register a system function."""
+        self.systems.register(func)
+        return func
+
     def quit(self):
         self._running = False
     
