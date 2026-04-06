@@ -6,11 +6,15 @@ import numpy as np
 class Camera:
     """Camera with position, target, FOV and projection."""
 
-    def __init__(self, position=(0, 1, 2), target=(0, 0, 0), fov=60, up=(0, 1, 0)):
+    def __init__(
+        self, position=(0, 1, 2), target=(0, 0, 0), fov=60, up=(0, 1, 0), near=0.1, far=1000.0
+    ):
         self.position = np.array(position, dtype=np.float32)
         self.target = np.array(target, dtype=np.float32)
         self.fov = fov
         self.up = np.array(up, dtype=np.float32)
+        self.near = near
+        self.far = far
         self._compute_spherical()
 
     def _compute_spherical(self):
@@ -66,7 +70,7 @@ class Camera:
 
     def get_view_projection_matrix(self, aspect):
         view = self.get_view_matrix()
-        proj = self.get_projection_matrix(aspect)
+        proj = self.get_projection_matrix(aspect, near=self.near, far=self.far)
         return (proj @ view).T
 
     def get_azimuth_elevation(self):
