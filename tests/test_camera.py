@@ -128,3 +128,102 @@ class TestCameraSphericalCoords:
         
         assert isinstance(azimuth, (int, float)), "azimuth must be numeric"
         assert isinstance(elevation, (int, float)), "elevation must be numeric"
+
+
+class TestCameraDirectPositioning:
+    """Test direct positioning methods (Phase 2)."""
+    
+    def test_move_to(self):
+        """move_to() sets camera position."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        camera.move_to((5, 15, 25))
+        
+        assert np.allclose(camera.position, [5, 15, 25], atol=1e-6), \
+            "move_to should set position"
+        # Target unchanged
+        assert np.allclose(camera.target, [0, 0, 0], atol=1e-6), \
+            "move_to should not change target"
+    
+    def test_move_to_updates_spherical(self):
+        """move_to() updates spherical coordinates."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        # New position at different distance
+        camera.move_to((0, 5, 10))
+        
+        # Distance should be ~11.18 (sqrt(5^2 + 10^2))
+        expected_distance = np.sqrt(5**2 + 10**2)
+        assert np.isclose(camera._distance, expected_distance, atol=1e-3), \
+            "move_to should update distance"
+    
+    def test_move_by(self):
+        """move_by() adds delta to position."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        camera.move_by((1, 2, 3))
+        
+        assert np.allclose(camera.position, [1, 12, 23], atol=1e-6), \
+            "move_by should add delta to position"
+    
+    def test_look_at(self):
+        """look_at() sets the target point."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        camera.look_at((10, 5, 15))
+        
+        assert np.allclose(camera.target, [10, 5, 15], atol=1e-6), \
+            "look_at should set target"
+        # Position unchanged
+        assert np.allclose(camera.position, [0, 10, 20], atol=1e-6), \
+            "look_at should not change position"
+    
+    def test_look_at_updates_spherical(self):
+        """look_at() updates spherical coordinates."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 0, 10), target=(0, 0, 0))
+        
+        # Move target farther
+        camera.look_at((0, 0, 20))
+        
+        # Distance should now be 20
+        assert np.isclose(camera._distance, 20.0, atol=1e-3), \
+            "look_at should update distance"
+    
+    def test_set_pose(self):
+        """set_pose() sets both position and target atomically."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        camera.set_pose(position=(5, 15, 25), target=(1, 2, 3))
+        
+        assert np.allclose(camera.position, [5, 15, 25], atol=1e-6), \
+            "set_pose should set position"
+        assert np.allclose(camera.target, [1, 2, 3], atol=1e-6), \
+            "set_pose should set target"
+    
+    def test_set_pose_updates_spherical(self):
+        """set_pose() updates spherical coordinates."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        camera.set_pose(position=(0, 20, 20), target=(0, 0, 0))
+        
+        # Distance should be sqrt(20^2 + 20^2) = ~28.28
+        expected_distance = np.sqrt(20**2 + 20**2)
+        assert np.isclose(camera._distance, expected_distance, atol=1e-3), \
+            "set_pose should update spherical coords"
+        # Azimuth should be 45 degrees (equal X and Z components)
+        assert np.isclose(camera._azimuth, 45.0, atol=1.0), \
+            "set_pose should update azimuth"
