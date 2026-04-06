@@ -1,4 +1,16 @@
-"""PBR Demo: 3x2 grid of objects with three orbiting lights."""
+"""PBR Demo: 3x2 grid of objects with three orbiting lights.
+
+Layout (viewed from above):
+
+         col 0 (smooth)    col 1 (medium)    col 2 (rough)
+  back   ┌────────────────┬────────────────┬────────────────┐
+  row 0  │ Red metal cube │ Gold metal cube│ Copper met cube│
+         ├────────────────┼────────────────┼────────────────┤
+  front  │ Blue sphere    │ Green sphere   │ Purple sphere  │
+  row 1  └────────────────┴────────────────┴────────────────┘
+
+Grid is in the XZ plane (Y is up). Camera looks from above-front.
+"""
 
 import manifoldx as mx
 import numpy as np
@@ -7,8 +19,6 @@ from manifoldx.components import Transform, Mesh, Material
 from manifoldx.resources import StandardMaterial, PointLight, cube, sphere
 
 engine = mx.Engine("PBR Demo")
-engine.camera.zoom(0.08)
-engine.camera.orbit(20, 25)
 
 # ---------------------------------------------------------------------------
 # Geometries
@@ -17,54 +27,45 @@ cube_geo = cube(1, 1, 1)
 sphere_geo = sphere(0.7, 32)
 
 # ---------------------------------------------------------------------------
-# Materials – increasing roughness left→right, top row metallic, bottom row dielectric
+# Materials – increasing roughness left→right
 # ---------------------------------------------------------------------------
-#                  col 0 (smooth)      col 1 (medium)       col 2 (rough)
-# Row 0 (cubes)   red metallic        gold metallic        copper metallic
-# Row 1 (spheres) blue dielectric     green dielectric     purple dielectric
-
 materials = [
-    # Top row – metallic cubes
-    StandardMaterial(color="#ff3333", roughness=0.10, metallic=1.0),  # red smooth metal
-    StandardMaterial(
-        color="#ffdd33", roughness=0.45, metallic=1.0
-    ),  # gold medium metal
-    StandardMaterial(
-        color="#dd7744", roughness=0.85, metallic=1.0
-    ),  # copper rough metal
-    # Bottom row – dielectric spheres
-    StandardMaterial(
-        color="#3366ff", roughness=0.10, metallic=0.0
-    ),  # blue smooth plastic
-    StandardMaterial(
-        color="#33cc55", roughness=0.45, metallic=0.0
-    ),  # green medium plastic
-    StandardMaterial(
-        color="#8833ff", roughness=0.85, metallic=0.0
-    ),  # purple rough plastic
+    # Row 0 (back) – metallic cubes
+    StandardMaterial(color="#ff3333", roughness=0.10, metallic=1.0),
+    StandardMaterial(color="#ffdd33", roughness=0.45, metallic=1.0),
+    StandardMaterial(color="#dd7744", roughness=0.85, metallic=1.0),
+    # Row 1 (front) – dielectric spheres
+    StandardMaterial(color="#3366ff", roughness=0.10, metallic=0.0),
+    StandardMaterial(color="#33cc55", roughness=0.45, metallic=0.0),
+    StandardMaterial(color="#8833ff", roughness=0.85, metallic=0.0),
 ]
 
 # ---------------------------------------------------------------------------
-# 3 × 2 grid layout
+# 3 × 2 grid in the XZ plane (horizontal table), Y is up
 # ---------------------------------------------------------------------------
-spacing_x = 2.2
-spacing_y = 2.2
+spacing_x = 2.5
+spacing_z = 2.5
 cols, rows = 3, 2
 x_offset = -(cols - 1) * spacing_x / 2
-y_offset = -(rows - 1) * spacing_y / 2
+z_offset = -(rows - 1) * spacing_z / 2
 
 for row in range(rows):
     for col in range(cols):
         idx = row * cols + col
         geo = cube_geo if row == 0 else sphere_geo
         x = x_offset + col * spacing_x
-        y = y_offset + row * spacing_y
+        z = z_offset + row * spacing_z
         engine.spawn(
             Mesh(geo),
             Material(materials[idx]),
-            Transform(pos=(x, y, 0)),
+            Transform(pos=(x, 0, z)),
             n=1,
         )
+
+# ---------------------------------------------------------------------------
+# Camera: frame the scene from above-front
+# ---------------------------------------------------------------------------
+engine.camera.fit(radius=5.0, center=(0, 0, 0), azimuth=30, elevation=35)
 
 # ---------------------------------------------------------------------------
 # Three orbiting lights on different planes
@@ -89,21 +90,21 @@ engine.set_lights([light_equatorial, light_polar, light_sideways])
 def animate_lights(query: mx.Query[Transform], dt: float):
     t = engine.elapsed
 
-    # Equatorial orbit – rotates in the XZ plane (around Y axis)
+    # Equatorial – XZ plane (around Y axis)
     light_equatorial.position = (
         ORBIT_RADIUS * np.cos(t * 0.7),
-        0.0,
+        1.0,
         ORBIT_RADIUS * np.sin(t * 0.7),
     )
 
-    # Polar orbit – rotates in the XY plane (around Z axis)
+    # Polar – XY plane (around Z axis)
     light_polar.position = (
         ORBIT_RADIUS * np.cos(t * 0.5),
         ORBIT_RADIUS * np.sin(t * 0.5),
         0.0,
     )
 
-    # Sideways orbit – rotates in the YZ plane (around X axis)
+    # Sideways – YZ plane (around X axis)
     light_sideways.position = (
         0.0,
         ORBIT_RADIUS * np.sin(t * 0.6),

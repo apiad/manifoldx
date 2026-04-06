@@ -9,7 +9,7 @@ engine.camera.zoom(0.1)
 # These are all static things that are created
 # and stored in memory once
 cube_mesh = mx.geometry.sphere(1)
-cube_material = mx.material.standard(mx.colors.BLUE, metallic=0.8)
+cube_material = mx.material.phong(mx.colors.BLUE)
 
 
 # Custom component, gets registered in engine to keep track
