@@ -13,13 +13,13 @@ A real-time 3D rendering engine built on pure [wgpu](https://github.com/gfx-rs/w
 
 Domain researchers need to run large-scale simulations (10⁴-10⁶ entities) and visualize results in 3D. **Currently they can't do both in pure Python.**
 
-| Tool | Simulation | Visualization | Language |
-|------|------------|---------------|----------|
-| Matplotlib/Plotly | ✅ | 2D only, slow at scale | Pure Python |
-| VisPy | ❌ | OpenGL, steep curve | Python + GLSL |
-| PyGfx | ❌ | Excellent rendering | Pure Python |
-| Game engines (PyGame) | ✅ | 2D mostly | Pure Python |
-| Specialized (OpenMM, SUMO) | ✅ | Data export only | Fortran/C++ |
+| Tool                       | Simulation | Visualization          | Language      |
+| -------------------------- | ---------- | ---------------------- | ------------- |
+| Matplotlib/Plotly          | ✅          | 2D only, slow at scale | Pure Python   |
+| VisPy                      | ❌          | OpenGL, steep curve    | Python + GLSL |
+| PyGfx                      | ❌          | Excellent rendering    | Pure Python   |
+| Game engines (PyGame)      | ✅          | 2D mostly              | Pure Python   |
+| Specialized (OpenMM, SUMO) | ✅          | Data export only       | Fortran/C++   |
 
 **The gap:** No Python tool combines data-driven simulation with accessible 3D visualization in one package.
 
@@ -46,7 +46,7 @@ def nbody_physics(query, dt):
 
 **Works in:** Jupyter notebooks, Quarto documents, Streamlit dashboards, standalone scripts.
 
-> ⚠️ **Spoiler:** Python is surprisingly capable at real-time 3D. The N-body demo runs 250 bodies with N² gravity at 60fps — 62,500 force pairs per frame in pure numpy.
+> ⚠️ **Spoiler:** Python is surprisingly capable at real-time 3D. The N-body demo runs 500 bodies with N² gravity — 250,000 force pairs per frame in pure numpy.
 
 ### Why Not PyGfx?
 
@@ -131,9 +131,9 @@ python my_scene.py
 
 ## N-Body Simulation
 
-A pure-numpy gravitational simulation with elastic collisions, running 250 bodies in real-time at a single draw call (instanced rendering).
+A pure-numpy gravitational simulation running 500 bodies in real-time at a single draw call (instanced rendering).
 
-**Physics:** All pairwise forces are computed with a single vectorized numpy expression — no Python loops in the hot path. For N bodies this means N² = 62,500 force computations per frame, each a 3-component vector.
+**Physics:** All pairwise forces are computed with a single vectorized numpy expression — no Python loops in the hot path. For N bodies this means N² = 250,000 force computations per frame, each a 3-component vector.
 
 ```python
 @engine.system
@@ -161,24 +161,32 @@ def nbody_physics(query: mx.Query[Transform], dt: float):
     query[Transform].pos += velocities * dt
 ```
 
-**Collisions** use the same pattern: find overlapping pairs with a vectorized comparison, filter with `np.where(np.triu(...))`, then resolve impulse and separation with `np.add.at` for safe accumulation.
+> See `examples/nbody.py` for the full implementation with velocity damping and speed clamping.
 
-> See `examples/nbody.py` for the full implementation including elastic collision response, velocity damping, and speed clamping.
+### Ideal Gas Simulation
+
+The `examples/gas.py` demo shows the other side: **no gravity, all collisions**. 500 particles bounce inside an invisible box with elastic collisions and wall reflections — a kinetic theory simulation in pure numpy.
+
+**Collisions** find overlapping pairs with a vectorized comparison, filter with `np.where(np.triu(...))`, then resolve impulse with `np.add.at` for safe accumulation. **Wall reflections** are a single vectorized mask: `velocities[next_pos < wall] = np.abs(...)`.
+
+> See `examples/gas.py` for the full implementation.
 
 ## Examples
 
-| Example | Description |
-|---------|-------------|
-| `hello_world.py` | Minimal empty window |
-| `cube.py` | Rotating cube with Phong material |
-| `pbr_demo.py` | 3×2 grid demonstrating PBR materials + 3 orbiting lights |
-| `spheres.py` | Many spheres with physics-like behavior |
-| `nbody.py` | 250-body N-body simulation with pure-numpy physics |
+| Example          | Description                                              |
+| ---------------- | -------------------------------------------------------- |
+| `hello_world.py` | Minimal empty window                                     |
+| `cube.py`        | Rotating cube with Phong material                        |
+| `pbr_demo.py`    | 3×2 grid demonstrating PBR materials + 3 orbiting lights |
+| `spheres.py`     | Many spheres with physics-like behavior                  |
+| `nbody.py`       | 500-body gravitational simulation with pure-numpy physics |
+| `gas.py`         | 500-particle ideal gas with collisions and virtual walls  |
 
 Run an example:
 
 ```bash
 python -m examples.nbody   # N-body gravitational simulation
+python -m examples.gas     # Ideal gas with elastic collisions
 python -m examples.pbr_demo
 ```
 
@@ -218,7 +226,7 @@ python -m examples.pbr_demo
 
 The ECS uses numpy arrays for all component data. When you call `query[Transform].pos += velocity * dt`, it's a single vectorized numpy operation spanning thousands of entities.
 
-**Real-world example:** The N-body demo (`examples/nbody.py`) simulates 250 bodies with 62,500 pairwise gravitational force computations per frame — all in pure numpy with zero Python loops. The ECS overhead is ~microseconds per frame; the bottleneck is GPU fill-rate, not CPU physics.
+**Real-world examples:** The N-body demo (`examples/nbody.py`) simulates 500 bodies with 250,000 pairwise gravitational force computations per frame. The ideal gas demo (`examples/gas.py`) runs 500 particles with elastic collisions and wall reflections. Both are pure numpy with zero Python loops.
 
 ## Limitations (Known)
 
