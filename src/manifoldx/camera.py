@@ -1,4 +1,5 @@
 """Camera class for 3D rendering."""
+
 import numpy as np
 
 
@@ -16,7 +17,9 @@ class Camera:
         direction = self.position - self.target
         self._distance = np.linalg.norm(direction)
         direction_normalized = direction / self._distance
-        self._azimuth = float(np.degrees(np.arctan2(direction_normalized[0], direction_normalized[2])))
+        self._azimuth = float(
+            np.degrees(np.arctan2(direction_normalized[0], direction_normalized[2]))
+        )
         self._elevation = float(np.degrees(np.arcsin(direction_normalized[1])))
 
     def get_view_matrix(self):
@@ -127,11 +130,10 @@ class Camera:
         az_rad = np.radians(self._azimuth)
         el_rad = np.radians(self._elevation)
 
-        direction = np.array([
-            np.cos(az_rad) * np.cos(el_rad),
-            np.sin(el_rad),
-            np.sin(az_rad) * np.cos(el_rad)
-        ], dtype=np.float32)
+        direction = np.array(
+            [np.cos(az_rad) * np.cos(el_rad), np.sin(el_rad), np.sin(az_rad) * np.cos(el_rad)],
+            dtype=np.float32,
+        )
 
         self.position = self.target + self._distance * direction
 
@@ -207,11 +209,10 @@ class Camera:
         az_rad = np.radians(self._azimuth)
         el_rad = np.radians(self._elevation)
 
-        direction = np.array([
-            np.cos(az_rad) * np.cos(el_rad),
-            np.sin(el_rad),
-            np.sin(az_rad) * np.cos(el_rad)
-        ], dtype=np.float32)
+        direction = np.array(
+            [np.cos(az_rad) * np.cos(el_rad), np.sin(el_rad), np.sin(az_rad) * np.cos(el_rad)],
+            dtype=np.float32,
+        )
 
         self.position = self.target + self._distance * direction
 
@@ -242,4 +243,4 @@ class Camera:
         self.fit(radius=radius, center=center, margin=margin, azimuth=azimuth, elevation=elevation)
 
 
-__all__ = ['Camera']
+__all__ = ["Camera"]

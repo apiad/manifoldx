@@ -168,9 +168,7 @@ class Engine:
 
         for name, value in kwargs.items():
             # Check if it's a custom component class (has _component_registry)
-            if hasattr(value, "_component_registry") and hasattr(
-                value, "_component_fields"
-            ):
+            if hasattr(value, "_component_registry") and hasattr(value, "_component_fields"):
                 # It's a custom component class like Cube
                 # Register the component name immediately (not in command)
                 if name not in self.store._components:
@@ -239,9 +237,7 @@ class Engine:
         self._wgpu_context = self._render_canvas.get_wgpu_context()
 
         # Request adapter and device (use sync API to avoid deprecation warnings)
-        self._adapter = wgpu.gpu.request_adapter_sync(
-            power_preference="high-performance"
-        )
+        self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
         self._device = self._adapter.request_device_sync()
 
         # Configure the swap chain
@@ -273,9 +269,7 @@ class Engine:
 
         # 5. Render frame to screen
         # Ensure render pipeline is initialized
-        self._render_pipeline._ensure_pipeline(
-            self._device, wgpu.TextureFormat.bgra8unorm
-        )
+        self._render_pipeline._ensure_pipeline(self._device, wgpu.TextureFormat.bgra8unorm)
 
         # Also update registries with device reference
         self._geometry_registry._device = self._device

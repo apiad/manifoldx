@@ -138,15 +138,11 @@ class TransformCache:
             if np.any(np.isnan(matrices)):
                 import warnings
 
-                warnings.warn(
-                    f"⚠️ NaN in transform matrices for {len(indices)} entities"
-                )
+                warnings.warn(f"⚠️ NaN in transform matrices for {len(indices)} entities")
             if np.any(np.isinf(matrices)):
                 import warnings
 
-                warnings.warn(
-                    f"⚠️ Inf in transform matrices for {len(indices)} entities"
-                )
+                warnings.warn(f"⚠️ Inf in transform matrices for {len(indices)} entities")
 
         self._matrix_cache[indices] = matrices
         self._dirty[indices] = False
@@ -219,9 +215,7 @@ class RenderPipeline:
 
         self._initialized = True
 
-    def _get_or_create_pipeline(
-        self, device, texture_format, geometry_id, material, registry
-    ):
+    def _get_or_create_pipeline(self, device, texture_format, geometry_id, material, registry):
         """Get or create a material-type specific pipeline."""
         material_type = type(material).__name__
         key = (geometry_id, material_type)
@@ -280,9 +274,7 @@ class RenderPipeline:
         bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
         self._bind_group_layouts[material_type] = bind_group_layout
 
-        pipeline_layout = device.create_pipeline_layout(
-            bind_group_layouts=[bind_group_layout]
-        )
+        pipeline_layout = device.create_pipeline_layout(bind_group_layouts=[bind_group_layout])
         self._pipeline_layouts[material_type] = pipeline_layout
 
         # Always use 6-float stride (pos + normal) with both vertex attributes
@@ -333,9 +325,7 @@ class RenderPipeline:
         if not needs_lights:
             buffer_size = 16  # vec4 color
         else:
-            buffer_size = (
-                32  # 8 floats: albedo(3) + roughness(1) + metallic(1) + ao(1) + pad(2)
-            )
+            buffer_size = 32  # 8 floats: albedo(3) + roughness(1) + metallic(1) + ao(1) + pad(2)
 
         material_buffer = device.create_buffer(
             size=buffer_size,
@@ -384,9 +374,7 @@ class RenderPipeline:
 
         # Get transform data
         self._transform_cache.mark_dirty(alive_indices)
-        model_matrices = self._transform_cache.get_transforms(
-            self._store, alive_indices
-        )
+        model_matrices = self._transform_cache.get_transforms(self._store, alive_indices)
 
         # Get mesh and material IDs
         mesh_data = self._store.get_component_data("Mesh", alive_indices)
@@ -417,12 +405,8 @@ class RenderPipeline:
 
         # Upload globals (VP + camera_pos + pad) = 80 bytes
         globals_data = np.zeros(80, dtype=np.uint8)
-        globals_data[0:64] = np.frombuffer(
-            vp.astype(np.float32).tobytes(), dtype=np.uint8
-        )
-        globals_data[64:76] = np.frombuffer(
-            camera_pos.astype(np.float32).tobytes(), dtype=np.uint8
-        )
+        globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
+        globals_data[64:76] = np.frombuffer(camera_pos.astype(np.float32).tobytes(), dtype=np.uint8)
         # bytes 76-79 are padding (already zero)
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 
@@ -448,9 +432,7 @@ class RenderPipeline:
 
         # Transpose all matrices for WGSL column-major layout and upload once
         all_matrices = model_matrices[all_local_indices]  # (total_instances, 16)
-        all_matrices_t = (
-            all_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
-        )
+        all_matrices_t = all_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
         transform_bytes = all_matrices_t.astype(np.float32).tobytes()
         self._ensure_transform_buffer(len(transform_bytes))
         self._device.queue.write_buffer(self._transform_buffer, 0, transform_bytes)
@@ -484,11 +466,7 @@ class RenderPipeline:
                     continue
 
             # Get material and create/fetch pipeline
-            mat_id = (
-                int(material_data[local_indices[0], 0])
-                if material_data is not None
-                else 0
-            )
+            mat_id = int(material_data[local_indices[0], 0]) if material_data is not None else 0
             mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
 
             if mat_obj is None:
@@ -562,9 +540,7 @@ class RenderPipeline:
             render_pass.set_pipeline(pipeline)
             render_pass.set_bind_group(0, bind_group)
             render_pass.set_vertex_buffer(0, gpu_buffers["vertex_buffer"])
-            render_pass.set_index_buffer(
-                gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32
-            )
+            render_pass.set_index_buffer(gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32)
 
             # first_instance offsets into the shared transform buffer
             render_pass.draw_indexed(

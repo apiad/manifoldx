@@ -17,3 +17,8 @@ entries:
       - tests/test_ecs.py
       - src/manifoldx/camera.py
       - tests/test_camera.py
+  - timestamp: "2026-04-06T17:50:00Z"
+    type: commit
+    message: "refactor(pbr_demo): tweak camera framing parameters"
+    files:
+      - examples/pbr_demo.py
