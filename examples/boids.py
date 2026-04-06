@@ -15,12 +15,13 @@ from manifoldx.resources import sphere, PhongMaterial
 NUM_BOIDS = 300
 NUM_PREDATORS = 4
 PERCEPTION_SQ = 4.0**2  # squared boid perception radius
-FEAR_RADIUS_SQ = 6.0**2  # predator detection range (larger than flock perception)
+FEAR_RADIUS_SQ = 10.0**2  # predator detection range (very wide)
 SEP_W = 1.5  # separation weight
 ALI_W = 1.0  # alignment weight
 COH_W = 0.8  # cohesion weight
-FEAR_W = 4.0  # predator avoidance (strongest force)
+FEAR_W = 20.0  # predator avoidance (dominates all other forces)
 MAX_SPEED = 10.0  # boid speed cap
+PANIC_SPEED = 15.0  # fleeing boids get a speed boost
 MIN_SPEED = 4.0  # prevents hovering
 BOUND_RADIUS = 12.0  # soft boundary
 PULL_STRENGTH = 0.02  # gentle central attraction
@@ -107,15 +108,16 @@ def boids_physics(query: mx.Query[Transform], dt: float):
     # ── Predator avoidance ──────────────────────────────────────
     # diff from each boid to each predator: (N, P, 3)
     pred_diff = pos[:, np.newaxis, :] - pred_pos[np.newaxis, :, :]  # away from predator
-    pred_dsq = (pred_diff * pred_diff).sum(axis=2)  # (N, P)
+    pred_dist = np.linalg.norm(pred_diff, axis=2)  # (N, P) — actual distance (not squared)
 
     # Boids within fear radius of any predator
-    scared = pred_dsq < FEAR_RADIUS_SQ  # (N, P)
-    inv_pred_dsq = np.zeros_like(pred_dsq)
-    inv_pred_dsq[scared] = 1.0 / pred_dsq[scared]
+    scared = pred_dist < np.sqrt(FEAR_RADIUS_SQ)  # (N, P)
+    scared_any = scared.any(axis=1)  # (N,) — which boids are scared
 
-    # Flee force: sum of (away from predator) weighted by 1/dist²
-    fear = (pred_diff * (scared[:, :, np.newaxis] * inv_pred_dsq[:, :, np.newaxis])).sum(axis=1)
+    # Flee force: use 1/dist (linear) instead of 1/dist² — wider, stronger
+    inv_dist = np.zeros_like(pred_dist)
+    inv_dist[scared] = 1.0 / pred_dist[scared]
+    fear = (pred_diff * (scared[:, :, np.newaxis] * inv_dist[:, :, np.newaxis])).sum(axis=1)
 
     # ── Soft boundary + central pull ────────────────────────────
     dist_center = np.linalg.norm(pos, axis=1, keepdims=True)
@@ -128,12 +130,15 @@ def boids_physics(query: mx.Query[Transform], dt: float):
     accel = SEP_W * sep + ALI_W * ali + COH_W * coh + FEAR_W * fear + pull + bound
     boid_vel += accel * dt
 
-    # Speed clamping
+    # Speed clamping with panic boost
     speed = np.linalg.norm(boid_vel, axis=1, keepdims=True)
-    boid_vel = np.where(speed > MAX_SPEED, boid_vel * MAX_SPEED / speed, boid_vel)
+    # Fleeing boids can go faster
+    max_s = np.where(scared_any[:, np.newaxis], PANIC_SPEED, MAX_SPEED)
+    min_s = np.where(scared_any[:, np.newaxis], MIN_SPEED * 1.5, MIN_SPEED)
+    boid_vel = np.where(speed > max_s, boid_vel * max_s / speed, boid_vel)
     boid_vel = np.where(
-        (speed < MIN_SPEED) & (speed > 1e-6),
-        boid_vel * MIN_SPEED / speed,
+        (speed < min_s) & (speed > 1e-6),
+        boid_vel * min_s / speed,
         boid_vel,
     )
 
