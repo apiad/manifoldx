@@ -1,8 +1,8 @@
 """Boids flocking simulation demo.
 
 300 boids with separation, alignment, cohesion, and a soft boundary.
+3 predators wander randomly — boids flee from them on sight.
 Pure-numpy vectorized — no Python loops in the hot path.
-Boids orbit a central attractor so the flock stays visible.
 """
 
 import manifoldx as mx
@@ -13,100 +13,153 @@ from manifoldx.resources import sphere, PhongMaterial
 
 # ── Simulation parameters ───────────────────────────────────────
 NUM_BOIDS = 300
-PERCEPTION_SQ = 4.0**2  # squared perception radius (avoids sqrt)
-SEP_W = 1.5  # separation weight (strongest — avoid crowding)
-ALI_W = 1.0  # alignment weight (match neighbor heading)
-COH_W = 0.8  # cohesion weight (steer toward group center)
-MAX_SPEED = 10.0  # speed cap
+NUM_PREDATORS = 4
+PERCEPTION_SQ = 4.0**2  # squared boid perception radius
+FEAR_RADIUS_SQ = 6.0**2  # predator detection range (larger than flock perception)
+SEP_W = 1.5  # separation weight
+ALI_W = 1.0  # alignment weight
+COH_W = 0.8  # cohesion weight
+FEAR_W = 4.0  # predator avoidance (strongest force)
+MAX_SPEED = 10.0  # boid speed cap
 MIN_SPEED = 4.0  # prevents hovering
-BOUND_RADIUS = 12.0  # soft boundary — strong push beyond this
-PULL_STRENGTH = 0.02  # gentle always-on central attraction
+BOUND_RADIUS = 12.0  # soft boundary
+PULL_STRENGTH = 0.02  # gentle central attraction
+
+# Predator parameters
+PRED_SPEED = 3.0  # predators are slower than boids
+PRED_TURN_RATE = 1.0  # how fast predators change direction
 
 # ── Engine setup ────────────────────────────────────────────────
-engine = mx.Engine("Boids Flocking")
+engine = mx.Engine("Boids & Predators")
 engine.camera.fit(BOUND_RADIUS * 1.2)
 
-# ── Initial conditions ──────────────────────────────────────────
-# Spawn in a cloud around the origin
-positions = np.random.normal(0, 5, (NUM_BOIDS, 3)).astype(np.float32)
+# ── Boid initial conditions ─────────────────────────────────────
+boid_pos = np.random.normal(0, 5, (NUM_BOIDS, 3)).astype(np.float32)
 
-# Tangential initial velocity → swirling start instead of random chaos
+# Tangential initial velocity → swirling start
 axis = np.array([0.2, 1.0, 0.3], dtype=np.float32)
 axis /= np.linalg.norm(axis)
-tangent = np.cross(positions, axis)
+tangent = np.cross(boid_pos, axis)
 norms = np.linalg.norm(tangent, axis=1, keepdims=True)
 tangent = np.where(
     norms > 1e-6,
     tangent / norms,
     np.random.randn(NUM_BOIDS, 3).astype(np.float32),
 )
-velocities = (tangent * 6.0).astype(np.float32)
+boid_vel = (tangent * 6.0).astype(np.float32)
 
-# ── Spawn all boids at once (instanced rendering) ──────────────
+# ── Predator initial conditions ─────────────────────────────────
+pred_pos = np.random.uniform(-BOUND_RADIUS * 0.5, BOUND_RADIUS * 0.5, (NUM_PREDATORS, 3)).astype(
+    np.float32
+)
+pred_dir = np.random.randn(NUM_PREDATORS, 3).astype(np.float32)
+pred_dir /= np.linalg.norm(pred_dir, axis=1, keepdims=True)
+
+# ── Spawn boids (instanced — single draw call) ─────────────────
 engine.spawn(
     Mesh(sphere(0.15, 6)),
     Material(PhongMaterial("#33ddaa")),
-    Transform(pos=positions),
+    Transform(pos=boid_pos),
     n=NUM_BOIDS,
+)
+
+# ── Spawn predators (separate batch — different mesh/material) ──
+engine.spawn(
+    Mesh(sphere(0.8, 12)),
+    Material(PhongMaterial("#ff3333")),
+    Transform(pos=pred_pos),
+    n=NUM_PREDATORS,
 )
 
 
 @engine.system
 def boids_physics(query: mx.Query[Transform], dt: float):
-    global velocities
+    global boid_vel, pred_pos, pred_dir
 
-    pos = query[Transform].pos.data  # (N, 3) copy
+    # Read all positions: first NUM_BOIDS are boids, last NUM_PREDATORS are predators
+    all_pos = query[Transform].pos.data  # (N+P, 3)
+    pos = all_pos[:NUM_BOIDS]  # (N, 3)
+    pred_pos = all_pos[NUM_BOIDS:]  # (P, 3)
 
-    # ── All-pairs squared distances (avoids sqrt) ───────────────
+    # ── Boid-boid interactions ──────────────────────────────────
     diff = pos[np.newaxis, :, :] - pos[:, np.newaxis, :]  # (N, N, 3)
     dist_sq = (diff * diff).sum(axis=2)  # (N, N)
 
-    # Neighbor mask (within perception, exclude self)
-    neighbors = (dist_sq < PERCEPTION_SQ) & (dist_sq > 1e-6)  # (N, N)
+    neighbors = (dist_sq < PERCEPTION_SQ) & (dist_sq > 1e-6)
     n_count = neighbors.sum(axis=1, keepdims=True).astype(np.float32)
     safe_count = np.maximum(n_count, 1.0)
 
-    # ── Separation: steer away from close neighbors ─────────────
-    # Weight by 1/dist² — closer neighbors repel much more strongly
+    # Separation
     inv_dsq = np.zeros_like(dist_sq)
     inv_dsq[neighbors] = 1.0 / dist_sq[neighbors]
     sep = (-diff * (neighbors[:, :, np.newaxis] * inv_dsq[:, :, np.newaxis])).sum(axis=1)
 
-    # ── Alignment: match average neighbor velocity ──────────────
-    avg_vel = (velocities[np.newaxis, :, :] * neighbors[:, :, np.newaxis]).sum(axis=1)
+    # Alignment
+    avg_vel = (boid_vel[np.newaxis, :, :] * neighbors[:, :, np.newaxis]).sum(axis=1)
     avg_vel /= safe_count
-    ali = avg_vel - velocities
+    ali = avg_vel - boid_vel
 
-    # ── Cohesion: steer toward neighbor center of mass ──────────
+    # Cohesion
     center = (pos[np.newaxis, :, :] * neighbors[:, :, np.newaxis]).sum(axis=1)
     center /= safe_count
     coh = center - pos
 
-    # ── Soft boundary: strong inward push outside BOUND_RADIUS ──
+    # ── Predator avoidance ──────────────────────────────────────
+    # diff from each boid to each predator: (N, P, 3)
+    pred_diff = pos[:, np.newaxis, :] - pred_pos[np.newaxis, :, :]  # away from predator
+    pred_dsq = (pred_diff * pred_diff).sum(axis=2)  # (N, P)
+
+    # Boids within fear radius of any predator
+    scared = pred_dsq < FEAR_RADIUS_SQ  # (N, P)
+    inv_pred_dsq = np.zeros_like(pred_dsq)
+    inv_pred_dsq[scared] = 1.0 / pred_dsq[scared]
+
+    # Flee force: sum of (away from predator) weighted by 1/dist²
+    fear = (pred_diff * (scared[:, :, np.newaxis] * inv_pred_dsq[:, :, np.newaxis])).sum(axis=1)
+
+    # ── Soft boundary + central pull ────────────────────────────
     dist_center = np.linalg.norm(pos, axis=1, keepdims=True)
     overshoot = np.maximum(dist_center - BOUND_RADIUS, 0.0)
     inward_dir = -pos / np.maximum(dist_center, 1e-6)
     bound = inward_dir * overshoot * 3.0
-
-    # ── Gentle central pull (keeps flock orbiting) ──────────────
     pull = -pos * PULL_STRENGTH
 
-    # ── Combine forces and integrate ────────────────────────────
-    accel = SEP_W * sep + ALI_W * ali + COH_W * coh + pull + bound
-    velocities += accel * dt
+    # ── Combine and integrate boid velocities ───────────────────
+    accel = SEP_W * sep + ALI_W * ali + COH_W * coh + FEAR_W * fear + pull + bound
+    boid_vel += accel * dt
 
-    # Speed clamping (min + max keeps boids energetic)
-    speed = np.linalg.norm(velocities, axis=1, keepdims=True)
-    velocities = np.where(speed > MAX_SPEED, velocities * MAX_SPEED / speed, velocities)
-    velocities = np.where(
+    # Speed clamping
+    speed = np.linalg.norm(boid_vel, axis=1, keepdims=True)
+    boid_vel = np.where(speed > MAX_SPEED, boid_vel * MAX_SPEED / speed, boid_vel)
+    boid_vel = np.where(
         (speed < MIN_SPEED) & (speed > 1e-6),
-        velocities * MIN_SPEED / speed,
-        velocities,
+        boid_vel * MIN_SPEED / speed,
+        boid_vel,
     )
 
-    # Write back
-    query[Transform].pos += velocities * dt
+    # ── Predator movement (random wandering inside boundary) ────
+    # Slowly rotate direction with random perturbation
+    pred_dir_local = pred_dir.copy()
+    pred_dir_local += np.random.randn(NUM_PREDATORS, 3).astype(np.float32) * PRED_TURN_RATE * dt
+    norms = np.linalg.norm(pred_dir_local, axis=1, keepdims=True)
+    pred_dir_local = pred_dir_local / np.maximum(norms, 1e-6)
+    pred_dir[:] = pred_dir_local
+
+    # Predator boundary: steer inward when outside
+    pred_dist = np.linalg.norm(pred_pos, axis=1, keepdims=True)
+    pred_over = np.maximum(pred_dist - BOUND_RADIUS * 0.8, 0.0)
+    pred_inward = -pred_pos / np.maximum(pred_dist, 1e-6) * pred_over * 0.5
+    pred_vel = pred_dir * PRED_SPEED + pred_inward
+
+    # ── Write back all positions ────────────────────────────────
+    # Boid displacement
+    boid_delta = boid_vel * dt  # (N, 3)
+    # Predator displacement
+    pred_delta = pred_vel * dt  # (P, 3)
+    # Combined
+    delta = np.concatenate([boid_delta, pred_delta], axis=0)  # (N+P, 3)
+    query[Transform].pos += delta
 
 
-print(f"Boids: {NUM_BOIDS} agents with flocking + soft boundary")
+print(f"Boids: {NUM_BOIDS} agents + {NUM_PREDATORS} predators")
 engine.run()
