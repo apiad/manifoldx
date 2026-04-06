@@ -70,6 +70,12 @@ class Engine:
         self.systems.register(func)
         return func
 
+    def component(self, cls):
+        """Decorator to register a component class with this engine."""
+        print(f"DEBUG engine.component called with: {cls.__name__}")
+        from manifoldx.ecs import _make_component_class
+        return _make_component_class(cls, self)
+
     def quit(self):
         self._running = False
     
@@ -99,10 +105,39 @@ class Engine:
     
     # === Spawn & Destroy ===
     def spawn(self, *args, n: int, **kwargs):
-        """Spawn entities by emitting SPAWN command."""
+        """Spawn entities - register components immediately, then emit SPAWN command."""
         # Handle Mesh, Material, and Transform component objects
         processed_kwargs = {}
+        
         for name, value in kwargs.items():
+            # Check if it's a custom component class (has _component_registry)
+            if hasattr(value, '_component_registry') and hasattr(value, '_component_fields'):
+                # It's a custom component class like Cube
+                # Register the component name immediately (not in command)
+                if name not in self.store._components:
+                    # Calculate total size of all fields
+                    total_cols = 0
+                    for field_name in value._component_fields:
+                        comp_def = value._component_registry.get(field_name)
+                        if comp_def:
+                            shape = comp_def.shape
+                            total_cols += int(np.prod(shape)) if shape else 1
+                    
+                    # Register as single component
+                    self.store.register_component(name, np.dtype('f4'), (total_cols,))
+                    # Store field info for later access
+                    value._component_name = name
+                    value._component_start_idx = {}
+                    
+                    col_idx = 0
+                    for field_name in value._component_fields:
+                        comp_def = value._component_registry.get(field_name)
+                        if comp_def:
+                            shape = comp_def.shape
+                            size = int(np.prod(shape)) if shape else 1
+                            value._component_start_idx[field_name] = (col_idx, size)
+                            col_idx += size
+            
             if hasattr(value, 'get_data'):
                 # It's a component object (Mesh, Material, Transform) - get data from it
                 processed_kwargs[name] = value.get_data(n, self._geometry_registry)
@@ -112,11 +147,12 @@ class Engine:
             else:
                 processed_kwargs[name] = value
                 
-        # Emit SPAWN command
-        self.commands.append(Command(
-            CommandType.SPAWN,
-            {'n': n, 'components': processed_kwargs}
-        ))
+        # Also register built-in Transform component if not already
+        if 'Transform' not in self.store._components:
+            Transform.register(self.store)
+        
+        # NOW spawn the entities immediately (not deferred)
+        self.store.spawn(n, **processed_kwargs)
         
     def destroy(self, indices):
         """Destroy entities matching condition by emitting DESTROY command."""

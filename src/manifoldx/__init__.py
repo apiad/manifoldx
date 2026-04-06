@@ -13,10 +13,27 @@ def hello() -> str:
 
 # Export core modules and types
 from manifoldx.types import Vector3, Vector4, Float, Color
-from manifoldx.ecs import EntityStore, ComponentView, component
+from manifoldx.ecs import EntityStore, ComponentView
 from manifoldx.systems import Query
 from manifoldx.components import Transform, Mesh, Material, Colors
 from manifoldx.resources import cube, sphere, plane, basic, phong, standard
+
+
+# =============================================================================
+# Global engine reference for component registration
+# =============================================================================
+_engine_instance = None
+
+def set_engine(engine):
+    """Set the global engine instance for component registration."""
+    global _engine_instance
+    _engine_instance = engine
+
+
+def component(cls):
+    """Component decorator that registers with Engine's store."""
+    from manifoldx.ecs import _make_component_class
+    return _make_component_class(cls, _engine_instance)
 
 
 # =============================================================================

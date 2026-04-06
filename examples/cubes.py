@@ -11,7 +11,7 @@ cube_material = mx.material.phong(mx.colors.RED)
 
 # Custom component, gets registered in engine to keep track
 # Only used for reflection on the values
-@mx.component
+@engine.component
 class Cube:
     velocity: mx.types.Vector3
     life: mx.types.Float # alternatively can be just `float`
