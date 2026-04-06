@@ -96,6 +96,20 @@ class BasicMaterial(Material):
     def uniform_type(cls) -> Dict[str, str]:
         return {"color": "vec4<f32>"}
 
+    def get_data(self, n: int, registry) -> np.ndarray:
+        """Return material data as numpy array (color as vec4)."""
+        if isinstance(self.color, str):
+            color_hex = self.color.lstrip("#")
+            r = int(color_hex[0:2], 16) / 255.0
+            g = int(color_hex[2:4], 16) / 255.0
+            b = int(color_hex[4:6], 16) / 255.0
+            color = np.array([r, g, b, 1.0], dtype=np.float32)
+        else:
+            color = np.array(self.color, dtype=np.float32)
+            if len(color) == 3:
+                color = np.append(color, 1.0)
+        return np.tile(color, (n, 1))
+
 
 _STANDARDMATERIAL_SHADER = """
 struct VertexInput {
@@ -260,6 +274,25 @@ class StandardMaterial(Material):
             "metallic": "f32",
             "ao": "f32",
         }
+
+    def get_data(self, n: int, registry) -> np.ndarray:
+        """Return material data as numpy array (albedo, roughness, metallic, ao)."""
+        if isinstance(self.color, str):
+            color_hex = self.color.lstrip("#")
+            r = int(color_hex[0:2], 16) / 255.0
+            g = int(color_hex[2:4], 16) / 255.0
+            b = int(color_hex[4:6], 16) / 255.0
+            albedo = np.array([r, g, b], dtype=np.float32)
+        else:
+            albedo = np.array(self.color[:3], dtype=np.float32)
+
+        data = np.zeros((n, 8), dtype=np.float32)
+        data[:, 0:3] = albedo
+        data[:, 3] = self.roughness
+        data[:, 4] = self.metallic
+        data[:, 5] = self.ao
+
+        return data
 
 
 # =============================================================================
