@@ -23,11 +23,9 @@ Can Python + numpy reasonably power a modern real-time rendering pipeline? This 
 ## Installation
 
 ```bash
-# Install from PyPI
 pip install manifold-gfx
-
-# Or install from source
-pip install manifold-gfx
+# or
+uv add manifold-gfx
 ```
 
 **Requirements:**
