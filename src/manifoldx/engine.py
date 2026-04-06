@@ -156,10 +156,18 @@ class Engine:
         
     def destroy(self, indices):
         """Destroy entities matching condition by emitting DESTROY command."""
+        if indices is None:
+            return
+        
+        # If boolean array, convert to indices
+        indices = np.asarray(indices)
+        if indices.dtype == np.bool_:
+            indices = np.where(indices)[0]
+        
         if hasattr(indices, '__len__') and len(indices) > 0:
             self.commands.append(Command(
                 CommandType.DESTROY,
-                {'indices': np.asarray(indices)}
+                {'indices': indices}
             ))
 
     def _init_webgpu(self):

@@ -136,9 +136,24 @@ class ComponentView:
         for idx in self._indices:
             yield idx
     
-    def __getitem__(self, component_name: str) -> 'ComponentAccessor':
-        """Get accessor for reading/writing component data."""
-        return ComponentAccessor(self._store, component_name, self._indices)
+    def __getitem__(self, component_name) -> 'ComponentAccessor':
+        """Get accessor for reading/writing component data.
+        
+        Supports string name ('Cube') or class type (Cube)."""
+        # Convert class to string name if needed
+        if not isinstance(component_name, str):
+            component_name = component_name.__name__
+        
+        accessor = ComponentAccessor(self._store, component_name, self._indices)
+        
+        # Try to find the component class for field lookup
+        from manifoldx.ecs import _COMPONENT_REGISTRY
+        if component_name in _COMPONENT_REGISTRY:
+            comp_class = _COMPONENT_REGISTRY.get(component_name)
+            if comp_class and hasattr(comp_class, '_component_start_idx'):
+                accessor._component_class = comp_class
+        
+        return accessor
     
     def get_component_data(self, component_name: str) -> np.ndarray:
         """Get component data for all entities in this view."""
@@ -162,6 +177,33 @@ class ComponentAccessor:
         self._store = store
         self._component_name = component_name
         self._indices = indices
+        self._component_class = None  # For field lookup
+    
+    def __getattr__(self, name: str):
+        """Access component fields by name: .position, .life, .velocity."""
+        from manifoldx.ecs import _COMPONENT_REGISTRY
+        
+        # Get full data for component
+        data = self._store.get_component_data(self._component_name, self._indices)
+        
+        # Check if it's Transform with built-in fields
+        if self._component_name == 'Transform':
+            if name == 'position':
+                return data[:, 0:3]
+            elif name == 'rotation':
+                return data[:, 3:7]
+            elif name == 'scale':
+                return data[:, 7:10]
+        
+        # Check if component class has field positions
+        comp_class = _COMPONENT_REGISTRY.get(self._component_name)
+        if comp_class and hasattr(comp_class, '_component_start_idx'):
+            field_info = comp_class._component_start_idx.get(name)
+            if field_info:
+                col, size = field_info
+                return data[:, col:col+size]
+        
+        raise AttributeError(f"No field '{name}' in component '{self._component_name}'")
         
     def __getitem__(self, key):
         """Read: returns current data for entities at indices."""
@@ -264,6 +306,72 @@ def _infer_shape_from_type(tp) -> tuple:
         return (4,)
     else:
         return ()  # Default to scalar
+
+
+def _make_component_class(cls: type, engine) -> type:
+    """Create a constructable component class that registers with engine's store."""
+    from manifoldx.types import Float, Vector3, Vector4
+    
+    annotations = cls.__annotations__
+    field_names = list(annotations.keys())
+    field_shapes = {name: _infer_shape_from_type(annotations[name]) for name in field_names}
+    
+    # Register the component in engine's store
+    if engine and engine.store:
+        total_cols = sum(int(np.prod(s) if s else 1) for s in field_shapes.values())
+        engine.store.register_component(cls.__name__, np.dtype('f4'), (total_cols,))
+    
+    # Also register in global registry for field lookup
+    _COMPONENT_REGISTRY[cls.__name__] = cls
+    
+    # Create field position index
+    _component_start_idx = {}
+    col_offset = 0
+    for field_name in field_names:
+        shape = field_shapes.get(field_name, ())
+        size = int(np.prod(shape)) if shape else 1
+        _component_start_idx[field_name] = (col_offset, size)
+        col_offset += size
+    
+    def __init__(self, **kwargs):
+        self._field_values = kwargs
+    
+    def get_data(self, n: int, registry=None):
+        total_size = sum(int(np.prod(field_shapes.get(f, (1,)))) for f in field_names)
+        data = np.zeros((n, total_size), dtype=np.float32)
+        
+        col_offset = 0
+        for field_name in field_names:
+            value = self._field_values.get(field_name)
+            shape = field_shapes.get(field_name, ())
+            size = int(np.prod(shape)) if shape else 1
+            
+            if value is not None:
+                value = np.asarray(value, dtype=np.float32)
+                if value.shape == ():
+                    # Scalar: broadcast to all n rows
+                    data[:, col_offset] = value.item()
+                elif len(value.shape) == 1 and value.shape[0] == size:
+                    # 1D array matching size: broadcast to n rows
+                    data[:, col_offset:col_offset+size] = value
+                elif value.shape[0] == n:
+                    # Already (n, size): use as-is
+                    data[:, col_offset:col_offset+size] = value
+                else:
+                    # Other: flatten and hope for best
+                    data[:, col_offset:col_offset+size] = value.flatten()[:size]
+            
+            col_offset += size
+        
+        return data
+    
+    cls.__init__ = __init__
+    cls.get_data = get_data
+    cls._component_name = cls.__name__
+    cls._component_fields = field_names
+    cls._component_start_idx = _component_start_idx
+    
+    return cls
 
 
 __all__ = [

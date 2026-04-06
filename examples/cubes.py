@@ -68,7 +68,7 @@ def cube_life(query: mx.Query[Cube, mx.components.Transform], dt: float):
     # Now we create extra cubes
     # Since ~100 cubes die every second (there were 1000 with average life = 10 seconds)
     # We need to replace the same amount
-    n_new = 100 * dt
+    n_new = int(100 * dt)
 
     engine.spawn(
         mx.components.Mesh(cube_mesh),
