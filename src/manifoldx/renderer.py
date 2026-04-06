@@ -426,9 +426,50 @@ class RenderPipeline:
         # bytes 76-79 are padding (already zero)
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 
-        # Draw each batch
+        # ---------------------------------------------------------------
+        # Upload ALL transforms at once (queue.write_buffer happens
+        # before GPU processes the command buffer, so per-batch writes
+        # would be overwritten by the last batch).
+        # ---------------------------------------------------------------
+
+        # Flatten batch order and record (first_instance, instance_count) per batch
+        all_local_indices = []  # ordered list of local indices across all batches
+        batch_draw_info = {}  # key -> (first_instance, instance_count)
+        instance_offset = 0
+
+        for key, local_indices in batches.items():
+            count = len(local_indices)
+            batch_draw_info[key] = (instance_offset, count)
+            all_local_indices.extend(local_indices)
+            instance_offset += count
+
+        if not all_local_indices:
+            return
+
+        # Transpose all matrices for WGSL column-major layout and upload once
+        all_matrices = model_matrices[all_local_indices]  # (total_instances, 16)
+        all_matrices_t = (
+            all_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
+        )
+        transform_bytes = all_matrices_t.astype(np.float32).tobytes()
+        self._ensure_transform_buffer(len(transform_bytes))
+        self._device.queue.write_buffer(self._transform_buffer, 0, transform_bytes)
+
+        # Upload lights once (shared across all PBR draws)
+        lights = getattr(engine, "_lights", [])
+        lights_data = np.zeros(32, dtype=np.float32)  # 32 floats = 128 bytes
+        for li, light in enumerate(lights[:4]):
+            light_arr = light.get_data()
+            offset = li * 8  # 8 floats per light
+            lights_data[offset : offset + len(light_arr)] = light_arr
+        self._device.queue.write_buffer(self._lights_buffer, 0, lights_data.tobytes())
+
+        # ---------------------------------------------------------------
+        # Draw each batch using first_instance to index into the
+        # shared transform buffer.
+        # ---------------------------------------------------------------
         for (geom_id, mat_type), local_indices in batches.items():
-            instance_count = len(local_indices)
+            first_instance, instance_count = batch_draw_info[(geom_id, mat_type)]
 
             # Get GPU buffers for geometry
             gpu_buffers = engine._geometry_registry.get_gpu_buffers(geom_id)
@@ -451,7 +492,7 @@ class RenderPipeline:
             mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
 
             if mat_obj is None:
-                continue  # Skip entities without a material
+                continue
 
             pipeline, bind_group_layout = self._get_or_create_pipeline(
                 self._device,
@@ -461,31 +502,17 @@ class RenderPipeline:
                 engine._material_registry,
             )
 
-            # Collect model matrices for this batch and transpose each for WGSL
-            batch_matrices = model_matrices[local_indices]
-            batch_matrices_t = (
-                batch_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
-            )
-            transform_bytes = batch_matrices_t.astype(np.float32).tobytes()
-
-            # Ensure buffer is big enough
-            self._ensure_transform_buffer(len(transform_bytes))
-
-            # Upload transforms
-            self._device.queue.write_buffer(self._transform_buffer, 0, transform_bytes)
-
-            # Get material data and upload to uniform buffer
+            # Upload material uniforms for this batch
             mat_data = mat_obj.get_data(instance_count, engine._material_registry)
-            key = (geom_id, mat_type)
-            mat_buffer = self._material_buffers.get(key)
+            bkey = (geom_id, mat_type)
+            mat_buffer = self._material_buffers.get(bkey)
             if mat_buffer is not None:
-                # Upload first instance's material data (shared uniform for the batch)
                 first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
                 self._device.queue.write_buffer(
                     mat_buffer, 0, first_row.astype(np.float32).tobytes()
                 )
 
-            # Build bind group entries
+            # Build bind group
             needs_lights = "@binding(3)" in type(mat_obj)._compile()
             mat_buffer_size = 32 if needs_lights else 16
             bind_group_entries = [
@@ -515,18 +542,7 @@ class RenderPipeline:
                 },
             ]
 
-            # Upload lights and add binding for PBR materials
             if needs_lights:
-                lights = engine._lights
-                lights_data = np.zeros(32, dtype=np.float32)  # 32 floats = 128 bytes
-                for li, light in enumerate(lights[:4]):
-                    light_arr = light.get_data()
-                    offset = li * 8  # 8 floats per light
-                    lights_data[offset : offset + len(light_arr)] = light_arr
-                self._device.queue.write_buffer(
-                    self._lights_buffer, 0, lights_data.tobytes()
-                )
-
                 bind_group_entries.append(
                     {
                         "binding": 3,
@@ -538,7 +554,6 @@ class RenderPipeline:
                     }
                 )
 
-            # Create bind group per draw call (transforms change per batch)
             bind_group = self._device.create_bind_group(
                 layout=bind_group_layout,
                 entries=bind_group_entries,
@@ -551,7 +566,14 @@ class RenderPipeline:
                 gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32
             )
 
-            render_pass.draw_indexed(gpu_buffers["index_count"], instance_count)
+            # first_instance offsets into the shared transform buffer
+            render_pass.draw_indexed(
+                gpu_buffers["index_count"],
+                instance_count,
+                first_index=0,
+                base_vertex=0,
+                first_instance=first_instance,
+            )
 
     def run(self, engine, dt: float):
         """Execute full render pipeline (CPU-side prep)."""

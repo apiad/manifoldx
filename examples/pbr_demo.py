@@ -31,13 +31,13 @@ sphere_geo = sphere(0.7, 32)
 # ---------------------------------------------------------------------------
 materials = [
     # Row 0 (back) – metallic cubes
-    StandardMaterial(color="#ff3333", roughness=0.10, metallic=1.0),
-    StandardMaterial(color="#ffdd33", roughness=0.45, metallic=1.0),
-    StandardMaterial(color="#dd7744", roughness=0.85, metallic=1.0),
+    StandardMaterial(color="#ff3333", roughness=0.10, metallic=0.8),
+    StandardMaterial(color="#ffdd33", roughness=0.45, metallic=0.8),
+    StandardMaterial(color="#dd7744", roughness=0.85, metallic=0.8),
     # Row 1 (front) – dielectric spheres
-    StandardMaterial(color="#3366ff", roughness=0.10, metallic=0.0),
-    StandardMaterial(color="#33cc55", roughness=0.45, metallic=0.0),
-    StandardMaterial(color="#8833ff", roughness=0.85, metallic=0.0),
+    StandardMaterial(color="#3366ff", roughness=0.10, metallic=0.2),
+    StandardMaterial(color="#33cc55", roughness=0.45, metallic=0.2),
+    StandardMaterial(color="#8833ff", roughness=0.85, metallic=0.2),
 ]
 
 # ---------------------------------------------------------------------------
