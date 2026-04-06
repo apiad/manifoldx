@@ -17,8 +17,15 @@ from manifoldx.camera import Camera
 
 
 class Engine:
-    def __init__(self, name: str, h: int = 600, w: int = 800, fullscreen: bool = False,
-                 max_entities: int = 100_000, check: bool = True):
+    def __init__(
+        self,
+        name: str,
+        h: int = 600,
+        w: int = 800,
+        fullscreen: bool = False,
+        max_entities: int = 100_000,
+        check: bool = True,
+    ):
         self.name = name
         self.h = h
         self.w = w
@@ -49,7 +56,7 @@ class Engine:
 
         # Configurable timestep
         self._use_fixed_dt = False
-        self._fixed_dt_value = 1/60
+        self._fixed_dt_value = 1 / 60
         self._last_time = None
         self._start_time = None
         self.elapsed: float = 0.0
@@ -62,6 +69,9 @@ class Engine:
         # Camera for MVP matrices
         self._camera = Camera()
         self.camera = self._camera
+
+        # External lights (not in ECS)
+        self._lights = []
 
     def startup(self, func):
         self._startup_callbacks.append(func)
@@ -95,7 +105,7 @@ class Engine:
                 for c in comps:
                     if isinstance(c, str):
                         component_names.append(c)
-                    elif hasattr(c, '__name__'):
+                    elif hasattr(c, "__name__"):
                         component_names.append(c.__name__)
 
         self.systems.register(func, component_names)
@@ -104,7 +114,16 @@ class Engine:
     def component(self, cls):
         """Decorator to register a component class with this engine."""
         from manifoldx.ecs import _make_component_class
+
         return _make_component_class(cls, self)
+
+    def set_lights(self, lights: list):
+        """Set external lights (passed to renderer, not in ECS)."""
+        self._lights = lights
+
+    def add_light(self, light):
+        """Add a single light to the external lights list."""
+        self._lights.append(light)
 
     def quit(self):
         self._running = False
@@ -148,7 +167,9 @@ class Engine:
 
         for name, value in kwargs.items():
             # Check if it's a custom component class (has _component_registry)
-            if hasattr(value, '_component_registry') and hasattr(value, '_component_fields'):
+            if hasattr(value, "_component_registry") and hasattr(
+                value, "_component_fields"
+            ):
                 # It's a custom component class like Cube
                 # Register the component name immediately (not in command)
                 if name not in self.store._components:
@@ -161,7 +182,7 @@ class Engine:
                             total_cols += int(np.prod(shape)) if shape else 1
 
                     # Register as single component
-                    self.store.register_component(name, np.dtype('f4'), (total_cols,))
+                    self.store.register_component(name, np.dtype("f4"), (total_cols,))
                     # Store field info for later access
                     value._component_name = name
                     value._component_start_idx = {}
@@ -175,10 +196,10 @@ class Engine:
                             value._component_start_idx[field_name] = (col_idx, size)
                             col_idx += size
 
-            if hasattr(value, 'get_data'):
+            if hasattr(value, "get_data"):
                 # It's a component object (Mesh, Material, Transform) - get data from it
                 # Pass appropriate registry based on component type
-                if name == 'Material':
+                if name == "Material":
                     processed_kwargs[name] = value.get_data(n, self._material_registry)
                 else:
                     processed_kwargs[name] = value.get_data(n, self._geometry_registry)
@@ -189,7 +210,7 @@ class Engine:
                 processed_kwargs[name] = value
 
         # Also register built-in Transform component if not already
-        if 'Transform' not in self.store._components:
+        if "Transform" not in self.store._components:
             Transform.register(self.store)
 
         # NOW spawn the entities immediately (not deferred)
@@ -206,11 +227,8 @@ class Engine:
         if indices.dtype == np.bool_:
             indices = np.where(indices)[0]
 
-        if hasattr(indices, '__len__') and len(indices) > 0:
-            self.commands.append(Command(
-                CommandType.DESTROY,
-                {'indices': indices}
-            ))
+        if hasattr(indices, "__len__") and len(indices) > 0:
+            self.commands.append(Command(CommandType.DESTROY, {"indices": indices}))
 
     def _init_webgpu(self):
         # Use rendercanvas's GlfwRenderCanvas
@@ -220,7 +238,9 @@ class Engine:
         self._wgpu_context = self._render_canvas.get_wgpu_context()
 
         # Request adapter and device (use sync API to avoid deprecation warnings)
-        self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+        self._adapter = wgpu.gpu.request_adapter_sync(
+            power_preference="high-performance"
+        )
         self._device = self._adapter.request_device_sync()
 
         # Configure the swap chain

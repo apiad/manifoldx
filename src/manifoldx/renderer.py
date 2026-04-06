@@ -188,6 +188,7 @@ class RenderPipeline:
         self._globals_buffer = None  # VP matrix + camera_pos + light_count
         self._transform_buffer = None  # Storage buffer for model matrices
         self._transform_buffer_size = 0
+        self._lights_buffer = None  # External lights uniform buffer
         self._bind_group = None
         self._initialized = False
 
@@ -216,6 +217,12 @@ class RenderPipeline:
             usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
         )
         self._transform_buffer_size = initial_size
+
+        # Create lights uniform buffer (up to 4 lights, 32 bytes each = 128 bytes max)
+        self._lights_buffer = device.create_buffer(
+            size=128,
+            usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+        )
 
         # Create bind group layout
         self._bind_group_layout = device.create_bind_group_layout(
@@ -334,6 +341,11 @@ class RenderPipeline:
                 },
                 {
                     "binding": 2,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                },
+                {
+                    "binding": 3,
                     "visibility": wgpu.ShaderStage.FRAGMENT,
                     "buffer": {"type": wgpu.BufferBindingType.uniform},
                 },
@@ -551,35 +563,58 @@ class RenderPipeline:
                         mat_buffer, 0, mat_data.astype(np.float32).tobytes()
                     )
 
-                # Create bind group with material uniforms
+                # Upload external lights data
+                lights = engine._lights
+                lights_data = np.zeros(128, dtype=np.float32)
+                for i, light in enumerate(lights[:4]):
+                    light_arr = light.get_data()
+                    offset = i * 32
+                    lights_data[offset : offset + len(light_arr)] = light_arr
+                self._device.queue.write_buffer(
+                    self._lights_buffer, 0, lights_data.tobytes()
+                )
+
+                # Create bind group with material uniforms and lights
+                bind_group_entries = [
+                    {
+                        "binding": 0,
+                        "resource": {
+                            "buffer": self._globals_buffer,
+                            "offset": 0,
+                            "size": 96,
+                        },
+                    },
+                    {
+                        "binding": 1,
+                        "resource": {
+                            "buffer": self._transform_buffer,
+                            "offset": 0,
+                            "size": self._transform_buffer_size,
+                        },
+                    },
+                    {
+                        "binding": 2,
+                        "resource": {
+                            "buffer": mat_buffer,
+                            "offset": 0,
+                            "size": 24 if mat_type == "StandardMaterial" else 16,
+                        },
+                    },
+                ]
+                if mat_type == "StandardMaterial":
+                    bind_group_entries.append(
+                        {
+                            "binding": 3,
+                            "resource": {
+                                "buffer": self._lights_buffer,
+                                "offset": 0,
+                                "size": 128,
+                            },
+                        }
+                    )
                 bind_group = self._device.create_bind_group(
                     layout=bind_group_layout,
-                    entries=[
-                        {
-                            "binding": 0,
-                            "resource": {
-                                "buffer": self._globals_buffer,
-                                "offset": 0,
-                                "size": 96,
-                            },
-                        },
-                        {
-                            "binding": 1,
-                            "resource": {
-                                "buffer": self._transform_buffer,
-                                "offset": 0,
-                                "size": self._transform_buffer_size,
-                            },
-                        },
-                        {
-                            "binding": 2,
-                            "resource": {
-                                "buffer": mat_buffer,
-                                "offset": 0,
-                                "size": 24 if mat_type == "StandardMaterial" else 16,
-                            },
-                        },
-                    ],
+                    entries=bind_group_entries,
                 )
             else:
                 pipeline = self._pipeline

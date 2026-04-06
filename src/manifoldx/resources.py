@@ -137,8 +137,28 @@ struct PointLight {
     intensity: f32,
 }
 
+struct SpotLight {
+    position: vec3<f32>,
+    padding0: f32,
+    color: vec3<f32>,
+    intensity: f32,
+    direction: vec3<f32>,
+    outer_angle: f32,
+}
+
+struct DirectionalLight {
+    direction: vec3<f32>,
+    padding0: f32,
+    color: vec3<f32>,
+    intensity: f32,
+}
+
+struct LightData {
+    lights: array<PointLight, 4>,
+}
+
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var<uniform> lights: array<PointLight, 4>;
+@group(0) @binding(3) var<uniform> light_data: LightData;
 
 const PI: f32 = 3.14159265359;
 
@@ -232,7 +252,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var Lo = vec3<f32>(0.0);
 
     for (var i = 0u; i < 4u; i++) {
-        let light = lights[i];
+        let light = light_data.lights[i];
         if (light.intensity > 0.0) {
             Lo += calculatePointLight(N, V, in.world_pos, F0,
                                        material.albedo, material.metallic,
@@ -640,6 +660,125 @@ def standard(color, roughness: float = 0.5, metallic: float = 0.0) -> StandardMa
     return StandardMaterial(color, roughness, metallic)
 
 
+# =============================================================================
+# Light Classes
+# =============================================================================
+
+
+class PointLight:
+    """Point light for GPU."""
+
+    def __init__(self, color, intensity, position, distance=0, decay=2):
+        self.color = color
+        self.intensity = intensity
+        self.position = position
+        self.distance = distance
+        self.decay = decay
+
+    @classmethod
+    def uniform_type(cls) -> dict:
+        return {
+            "position": "vec3<f32>",
+            "padding0": "f32",
+            "color": "vec3<f32>",
+            "intensity": "f32",
+        }
+
+    def get_data(self) -> np.ndarray:
+        """Return light data as numpy array for GPU upload."""
+        color_hex = self.color.lstrip("#")
+        r = int(color_hex[0:2], 16) / 255.0
+        g = int(color_hex[2:4], 16) / 255.0
+        b = int(color_hex[4:6], 16) / 255.0
+
+        data = np.zeros(8, dtype=np.float32)
+        data[0:3] = self.position
+        data[4:7] = [r, g, b]
+        data[7] = self.intensity
+        return data
+
+
+class SpotLight:
+    """Spot light for GPU."""
+
+    def __init__(
+        self,
+        color,
+        intensity,
+        position,
+        direction,
+        inner_angle,
+        outer_angle,
+        distance=0,
+        decay=2,
+    ):
+        self.color = color
+        self.intensity = intensity
+        self.position = position
+        self.direction = direction
+        self.inner_angle = inner_angle
+        self.outer_angle = outer_angle
+        self.distance = distance
+        self.decay = decay
+
+    @classmethod
+    def uniform_type(cls) -> dict:
+        return {
+            "position": "vec3<f32>",
+            "padding0": "f32",
+            "color": "vec3<f32>",
+            "intensity": "f32",
+            "direction": "vec3<f32>",
+            "inner_angle": "f32",
+        }
+
+    def get_data(self) -> np.ndarray:
+        """Return light data as numpy array for GPU upload."""
+        color_hex = self.color.lstrip("#")
+        r = int(color_hex[0:2], 16) / 255.0
+        g = int(color_hex[2:4], 16) / 255.0
+        b = int(color_hex[4:6], 16) / 255.0
+
+        data = np.zeros(12, dtype=np.float32)
+        data[0:3] = self.position
+        data[4:7] = [r, g, b]
+        data[7] = self.intensity
+        data[8:11] = self.direction
+        data[11] = self.outer_angle
+        return data
+
+
+class DirectionalLight:
+    """Directional light for GPU."""
+
+    def __init__(self, color, intensity, direction):
+        self.color = color
+        self.intensity = intensity
+        self.direction = direction
+
+    @classmethod
+    def uniform_type(cls) -> dict:
+        return {
+            "direction": "vec3<f32>",
+            "padding0": "f32",
+            "color": "vec3<f32>",
+            "intensity": "f32",
+        }
+
+    def get_data(self) -> np.ndarray:
+        """Return light data as numpy array for GPU upload."""
+        color_hex = self.color.lstrip("#")
+        r = int(color_hex[0:2], 16) / 255.0
+        g = int(color_hex[2:4], 16) / 255.0
+        b = int(color_hex[4:6], 16) / 255.0
+
+        data = np.zeros(8, dtype=np.float32)
+        data[0:3] = self.direction
+        data[4:7] = [r, g, b]
+        data[7] = self.intensity
+        return data
+
+
 __all__ = [
     "Material",
     "BasicMaterial",
@@ -652,4 +791,7 @@ __all__ = [
     "basic",
     "phong",
     "standard",
+    "PointLight",
+    "SpotLight",
+    "DirectionalLight",
 ]
