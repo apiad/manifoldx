@@ -1,11 +1,22 @@
 import asyncio
 import wgpu
+import numpy as np
+from time import perf_counter_ns
 
 from rendercanvas.glfw import GlfwRenderCanvas
 
+# Import ECS components
+from manifoldx.ecs import EntityStore
+from manifoldx.commands import CommandBuffer, Command, CommandType
+from manifoldx.systems import SystemRegistry
+from manifoldx.resources import GeometryRegistry, MaterialRegistry
+from manifoldx.renderer import RenderPipeline
+from manifoldx.components import Transform, Mesh, Material
+
 
 class Engine:
-    def __init__(self, name: str, h: int = 600, w: int = 800, fullscreen: bool = False):
+    def __init__(self, name: str, h: int = 600, w: int = 800, fullscreen: bool = False,
+                 max_entities: int = 100_000):
         self.name = name
         self.h = h
         self.w = w
@@ -19,6 +30,28 @@ class Engine:
         self._startup_callbacks = []
         self._shutdown_callbacks = []
         self._update_callbacks = []
+        
+        # === ECS Infrastructure ===
+        self.store = EntityStore(max_entities)
+        self.commands = CommandBuffer()
+        self.systems = SystemRegistry()
+        
+        # Resource registries
+        self._geometry_registry = GeometryRegistry(self._device)
+        self._material_registry = MaterialRegistry(self._device)
+        
+        # Render pipeline
+        self._render_pipeline = RenderPipeline(self.store, self._device)
+        
+        # Configurable timestep
+        self._use_fixed_dt = False
+        self._fixed_dt_value = 1/60
+        self._last_time = None
+        
+        # Register built-in components
+        Transform.register(self.store)
+        Mesh.register(self.store)
+        Material.register(self.store)
 
     def startup(self, func):
         self._startup_callbacks.append(func)
@@ -34,6 +67,52 @@ class Engine:
 
     def quit(self):
         self._running = False
+    
+    # === Timestep Configuration ===
+    def set_fixed_timestep(self, dt: float):
+        """Use fixed timestep for deterministic simulations."""
+        self._use_fixed_dt = True
+        self._fixed_dt_value = dt
+        
+    def use_wall_clock(self):
+        """Use actual elapsed time (default for animations)."""
+        self._use_fixed_dt = False
+        
+    def _compute_dt(self):
+        """Compute delta time based on configuration."""
+        if self._use_fixed_dt:
+            return self._fixed_dt_value
+        
+        current_time = perf_counter_ns()
+        if self._last_time is None:
+            self._last_time = current_time
+            return self._fixed_dt_value
+            
+        dt = (current_time - self._last_time) / 1_000_000_000
+        self._last_time = current_time
+        return dt
+    
+    # === Spawn & Destroy ===
+    def spawn(self, *args, n: int, **kwargs):
+        """Spawn entities by emitting SPAWN command."""
+        # Broadcast scalars to arrays
+        for name, value in kwargs.items():
+            if np.isscalar(value):
+                kwargs[name] = np.full((n,), value, dtype=np.float32)
+                
+        # Emit SPAWN command
+        self.commands.append(Command(
+            CommandType.SPAWN,
+            {'n': n, 'components': kwargs}
+        ))
+        
+    def destroy(self, indices):
+        """Destroy entities matching condition by emitting DESTROY command."""
+        if hasattr(indices, '__len__') and len(indices) > 0:
+            self.commands.append(Command(
+                CommandType.DESTROY,
+                {'indices': np.asarray(indices)}
+            ))
 
     def _init_webgpu(self):
         # Use rendercanvas's GlfwRenderCanvas
@@ -86,15 +165,27 @@ class Engine:
         self._init_webgpu()
 
         self._running = True
+        self._last_time = perf_counter_ns()
+        
         for callback in self._startup_callbacks:
             callback()
 
         while self._running:
-            # Call update callbacks
-            for callback in self._update_callbacks:
-                callback()
-
-            # Render frame
+            dt = self._compute_dt()
+            
+            # 1. Clear command buffer for this frame
+            self.commands.clear()
+            
+            # 2. Run all user systems (they emit commands)
+            self.systems.run_all(self, dt)
+            
+            # 3. Execute command buffer (apply all spawn/destroy/update)
+            self.commands.execute(self.store)
+            
+            # 4. RENDER PIPELINE (runs after commands)
+            self._render_pipeline.run(self, dt)
+            
+            # 5. Render frame to screen
             self._render_frame()
 
             # Check if window should close
