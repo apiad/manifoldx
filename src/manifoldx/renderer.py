@@ -317,9 +317,7 @@ class RenderPipeline:
         # Compute view-projection matrix from camera
         camera = engine._camera
         aspect = engine.w / engine.h
-        view = camera.get_view_matrix()
-        proj = camera.get_projection_matrix(aspect)
-        vp = (proj @ view).T  # Transpose for WGSL column-major layout
+        vp = camera.get_view_projection_matrix(aspect)
         
         # Get transform data
         self._transform_cache.mark_dirty(alive_indices)
