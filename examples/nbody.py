@@ -1,4 +1,5 @@
 """N-Body gravitational simulation demo."""
+
 import manifoldx as mx
 import numpy as np
 
@@ -9,14 +10,24 @@ NUM_BODIES = 100
 G = 50.0
 
 engine = mx.Engine("N-Body Simulation")
-engine.camera.far = 1000.0
+engine.camera.fit(30)
 
-# Random positions
-positions = np.random.uniform(-15, 15, (NUM_BODIES, 3)).astype(np.float32)
+# Random positions on sphere surface
+theta = np.random.uniform(0, 2 * np.pi, NUM_BODIES)
+phi = np.arccos(2 * np.random.uniform(0, 1, NUM_BODIES) - 1)
+radius = 15.0
+
+positions = np.column_stack(
+    [
+        radius * np.sin(phi) * np.cos(theta),
+        radius * np.sin(phi) * np.sin(theta),
+        radius * np.cos(phi),
+    ]
+).astype(np.float32)
 
 # Random masses and compute scales (cubic law)
 masses = np.random.uniform(0.5, 3.0, NUM_BODIES).astype(np.float32)
-scales = (masses ** (1/3) * 5.0).reshape(-1, 1)
+scales = (masses ** (1 / 3) * 10.0).reshape(-1, 1)
 
 # Spawn all at once
 engine.spawn(
@@ -42,7 +53,7 @@ def nbody_physics(query: mx.Query[Transform], dt: float):
     dist = np.maximum(dist, 0.5)
 
     mass_prod = masses[None, :] * masses[:, None]
-    force_mag = G * mass_prod / (dist ** 3)
+    force_mag = G * mass_prod / (dist**3)
     force_mag = force_mag[:, :, np.newaxis]
 
     forces = force_mag * diff

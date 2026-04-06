@@ -2,7 +2,7 @@
 id: nbody-simulation-demo
 created: 2026-04-06
 type: plan
-status: active
+status: done
 expires: 2026-04-13
 phases:
   - name: phase-1-spawn-with-scales
