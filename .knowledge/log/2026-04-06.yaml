@@ -54,3 +54,53 @@ entries:
       - .github/workflows/
       - tests/conftest.py
       - .knowledge/project-analysis.md
+  - timestamp: "2026-04-06T19:30:00Z"
+    type: commit
+    message: "feat: add N-body demo with pure-numpy physics and showcase in README"
+    files:
+      - README.md
+      - examples/nbody.py
+  - timestamp: "2026-04-06T19:45:00Z"
+    type: commit
+    message: "docs: simplify install instructions with pip + uv commands"
+    files:
+      - README.md
+  - timestamp: "2026-04-06T20:00:00Z"
+    type: commit
+    message: "docs: expand motivation with simulation use cases, PyGfx comparison, and game engine note"
+    files:
+      - README.md
+  - timestamp: "2026-04-06T20:15:00Z"
+    type: commit
+    message: "feat: split demos — gravity-only nbody + ideal gas with collisions and virtual walls"
+    files:
+      - examples/nbody.py
+      - examples/gas.py
+      - README.md
+  - timestamp: "2026-04-06T20:30:00Z"
+    type: commit
+    message: "feat: add boids flocking demo with separation, alignment, cohesion"
+    files:
+      - examples/boids.py
+      - README.md
+  - timestamp: "2026-04-06T20:45:00Z"
+    type: commit
+    message: "feat: add predators to boids demo — 4 red wandering spheres that scatter the flock"
+    files:
+      - examples/boids.py
+  - timestamp: "2026-04-06T21:00:00Z"
+    type: commit
+    message: "fix: make boids much more scared of predators"
+    files:
+      - examples/boids.py
+  - timestamp: "2026-04-06T21:15:00Z"
+    type: commit
+    message: "docs: add detailed showcase of three complex demos in README"
+    files:
+      - README.md
+  - timestamp: "2026-04-06T21:30:00Z"
+    type: commit
+    message: "refactor(demos): tune boids/gas parameters for better visual balance"
+    files:
+      - examples/boids.py
+      - examples/gas.py
