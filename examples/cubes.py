@@ -1,6 +1,8 @@
 import manifoldx as mx
 import numpy as np
 
+from manifoldx.components import Transform, Mesh, Material
+
 engine = mx.Engine("Cubes")
 
 # These are all static things that are created
@@ -13,8 +15,8 @@ cube_material = mx.material.phong(mx.colors.RED)
 # Only used for reflection on the values
 @engine.component
 class Cube:
-    velocity: mx.types.Vector3
-    life: mx.types.Float # alternatively can be just `float`
+    velocity: mx.Vector3
+    life: mx.Float # alternatively can be just `float`
 
 
 # This method gets executed at startup
@@ -24,11 +26,11 @@ def create_cubes():
     # This creates a drawing group bound to Mesh/Material
     engine.spawn(
         # These components just store indices to resources
-        mx.components.Mesh(cube_mesh),
-        mx.components.Material(cube_material),
+        Mesh(cube_mesh),
+        Material(cube_material),
         # Components like Transform and Cube store data per instance
         # Their parameters are broadcast if scalar
-        mx.components.Transform(pos=(0,0,0), scale=(1,1,1)),
+        Transform(pos=(0,0,0), scale=(1,1,1)),
         # Vectorial components must match the instancing size
         # First dimension is n-instance, second dimension matches vector size
         Cube(velocity=np.random.rand(1000, 3), life=np.random.rand(1000) * 20),
@@ -41,7 +43,7 @@ def create_cubes():
 # a Cube and a Transform component,
 # and are alive
 @engine.system
-def cube_life(query: mx.Query[Cube, mx.components.Transform], dt: float):
+def cube_life(query: mx.Query[Cube, Transform], dt: float):
     # Here `query` is an EntitySet which contains a view to
     # all alive entities with the corresponding components
 
@@ -55,7 +57,7 @@ def cube_life(query: mx.Query[Cube, mx.components.Transform], dt: float):
     # ...
     # query[Data].life -= np.asarray([dt for _ in len(query)])
 
-    query[mx.components.Transform].position += query[Cube].velocity * dt
+    query[Transform].position += query[Cube].velocity * dt
     # This is a single vectorial operation, where velocity * dt is computed
     # during the system execution, but the actual addition is enqueued
     # as an Update command that will write to the appropriate buffer

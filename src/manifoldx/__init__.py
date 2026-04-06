@@ -1,39 +1,12 @@
 import numpy as np
 
-# Lazy import to avoid wgpu dependency for types-only imports
-def __getattr__(name):
-    if name == 'Engine':
-        from manifoldx.engine import Engine
-        return Engine
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-def hello() -> str:
-    return "Hello from manifoldx!"
-
-
 # Export core modules and types
+from manifoldx.engine import Engine
 from manifoldx.types import Vector3, Vector4, Float, Color
 from manifoldx.ecs import EntityStore, ComponentView
 from manifoldx.systems import Query
 from manifoldx.components import Transform, Mesh, Material, Colors
 from manifoldx.resources import cube, sphere, plane, basic, phong, standard
-
-
-# =============================================================================
-# Global engine reference for component registration
-# =============================================================================
-_engine_instance = None
-
-def set_engine(engine):
-    """Set the global engine instance for component registration."""
-    global _engine_instance
-    _engine_instance = engine
-
-
-def component(cls):
-    """Component decorator that registers with Engine's store."""
-    from manifoldx.ecs import _make_component_class
-    return _make_component_class(cls, _engine_instance)
 
 
 # =============================================================================
@@ -92,9 +65,9 @@ colors = _ColorsProxy()
 
 __all__ = [
     'Engine',
-    'Vector3', 
+    'Vector3',
     'Vector4',
-    'Float', 
+    'Float',
     'Color',
     'EntityStore',
     'ComponentView',

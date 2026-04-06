@@ -7,7 +7,11 @@ authors = [
     { name = "Alejandro Piad", email = "apiad@apiad.net" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "numpy>=2.4.4",
+    "rendercanvas>=2.6.3",
+    "wgpu>=0.31.0",
+]
 
 [build-system]
 requires = ["hatchling"]
