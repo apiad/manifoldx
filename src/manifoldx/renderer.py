@@ -11,6 +11,7 @@ SHADER_SOURCE = """
 struct Globals {
     vp: mat4x4<f32>,
     color: vec4<f32>,
+    light_dir: vec4<f32>,   // xyz = normalized direction, w = ambient intensity
 };
 
 struct Transforms {
@@ -22,24 +23,34 @@ struct Transforms {
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
     @builtin(instance_index) instance: u32,
 };
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
+    @location(0) world_normal: vec3<f32>,
 };
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let mvp = globals.vp * transforms.models[in.instance];
+    let model = transforms.models[in.instance];
+    let mvp = globals.vp * model;
     out.position = mvp * vec4<f32>(in.position, 1.0);
+    // Transform normal by model matrix (ignore translation, assume uniform scale)
+    out.world_normal = (model * vec4<f32>(in.normal, 0.0)).xyz;
     return out;
 }
 
 @fragment
-fn fs_main() -> @location(0) vec4<f32> {
-    return globals.color;
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let normal = normalize(in.world_normal);
+    let light_dir = normalize(globals.light_dir.xyz);
+    let ambient = globals.light_dir.w;
+    let diffuse = max(dot(normal, light_dir), 0.0);
+    let brightness = ambient + (1.0 - ambient) * diffuse;
+    return vec4<f32>(globals.color.rgb * brightness, globals.color.a);
 }
 """
 
@@ -166,9 +177,9 @@ class RenderPipeline:
         # Create shader module
         shader_module = device.create_shader_module(code=SHADER_SOURCE)
         
-        # Create globals uniform buffer (mat4x4 VP + vec4 color = 64 + 16 = 80 bytes)
+        # Create globals uniform buffer (mat4x4 VP + vec4 color + vec4 light_dir = 64 + 16 + 16 = 96 bytes)
         self._globals_buffer = device.create_buffer(
-            size=80,
+            size=96,
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
         
@@ -211,14 +222,19 @@ class RenderPipeline:
                 "entry_point": "vs_main",
                 "buffers": [
                     {
-                        "array_stride": 3 * 4,  # 3 floats * 4 bytes
+                        "array_stride": 6 * 4,  # 6 floats * 4 bytes (pos + normal)
                         "step_mode": wgpu.VertexStepMode.vertex,
                         "attributes": [
                             {
                                 "format": wgpu.VertexFormat.float32x3,
                                 "offset": 0,
-                                "shader_location": 0,
-                            }
+                                "shader_location": 0,  # position
+                            },
+                            {
+                                "format": wgpu.VertexFormat.float32x3,
+                                "offset": 3 * 4,
+                                "shader_location": 1,  # normal
+                            },
                         ],
                     }
                 ],
@@ -251,7 +267,7 @@ class RenderPipeline:
                     "resource": {
                         "buffer": self._globals_buffer,
                         "offset": 0,
-                        "size": 80,
+                        "size": 96,
                     },
                 },
                 {
@@ -354,10 +370,14 @@ class RenderPipeline:
                     if isinstance(mat_obj.color, str):
                         color = _color_hex_to_vec4(mat_obj.color)
             
-            # Upload globals (VP + color)
-            globals_data = np.zeros(80, dtype=np.uint8)
+            # Upload globals (VP + color + light_dir)
+            # Light direction: from upper-right, w = ambient intensity
+            light_dir = np.array([0.5773, 0.5773, 0.5773, 0.3], dtype=np.float32)  # normalized (1,1,1), ambient=0.3
+            
+            globals_data = np.zeros(96, dtype=np.uint8)
             globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
             globals_data[64:80] = np.frombuffer(color.tobytes(), dtype=np.uint8)
+            globals_data[80:96] = np.frombuffer(light_dir.tobytes(), dtype=np.uint8)
             self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
             
             # Collect model matrices for this batch and transpose each for WGSL

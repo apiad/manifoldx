@@ -23,16 +23,34 @@ class GeometryRegistry:
         self._gpu_buffers: Dict[int, dict] = {}  # id -> {vertex_buffer, index_buffer}
         
     def create_buffers(self, geometry_id: int, geometry_obj: dict, queue):
-        """Create GPU buffers for geometry."""
+        """Create GPU buffers for geometry.
+        
+        Creates interleaved vertex buffer: [pos.x, pos.y, pos.z, norm.x, norm.y, norm.z] per vertex.
+        Falls back to position-only if no normals.
+        """
         if self._device is None or queue is None:
             return None
             
         buffers = {}
         
-        # Create vertex buffer for positions
         if 'positions' in geometry_obj:
-            positions = geometry_obj['positions']
-            data = positions.astype(np.float32).tobytes()
+            positions = geometry_obj['positions'].astype(np.float32)
+            has_normals = 'normals' in geometry_obj
+            
+            if has_normals:
+                normals = geometry_obj['normals'].astype(np.float32)
+                # Interleave: [px, py, pz, nx, ny, nz] per vertex
+                n_verts = len(positions)
+                interleaved = np.zeros((n_verts, 6), dtype=np.float32)
+                interleaved[:, 0:3] = positions
+                interleaved[:, 3:6] = normals
+                data = interleaved.tobytes()
+                buffers['stride'] = 6 * 4  # 6 floats * 4 bytes
+                buffers['has_normals'] = True
+            else:
+                data = positions.tobytes()
+                buffers['stride'] = 3 * 4
+                buffers['has_normals'] = False
             
             vertex_buffer = self._device.create_buffer(
                 size=len(data),
@@ -115,35 +133,55 @@ class MaterialRegistry:
 
 def cube(width: float, height: float, depth: float) -> dict:
     """
-    Create cube geometry.
+    Create cube geometry with per-face vertices and normals for flat shading.
     
-    Returns dict with 'positions' and 'indices' arrays.
+    Returns dict with 'positions', 'normals', and 'indices' arrays.
+    24 vertices (4 per face), 36 indices.
     """
     w, h, d = width / 2, height / 2, depth / 2
     
-    # 8 vertices of cube
+    # 6 faces × 4 vertices each = 24 vertices (unshared for flat normals)
     positions = np.array([
-        [-w, -h,  d], [ w, -h,  d], [ w,  h,  d], [-w,  h,  d],  # front
-        [-w, -h, -d], [ w, -h, -d], [ w,  h, -d], [-w,  h, -d],  # back
+        # Front face (z+)
+        [-w, -h,  d], [ w, -h,  d], [ w,  h,  d], [-w,  h,  d],
+        # Back face (z-)
+        [ w, -h, -d], [-w, -h, -d], [-w,  h, -d], [ w,  h, -d],
+        # Right face (x+)
+        [ w, -h,  d], [ w, -h, -d], [ w,  h, -d], [ w,  h,  d],
+        # Left face (x-)
+        [-w, -h, -d], [-w, -h,  d], [-w,  h,  d], [-w,  h, -d],
+        # Top face (y+)
+        [-w,  h,  d], [ w,  h,  d], [ w,  h, -d], [-w,  h, -d],
+        # Bottom face (y-)
+        [-w, -h, -d], [ w, -h, -d], [ w, -h,  d], [-w, -h,  d],
     ], dtype=np.float32)
     
-    # 12 triangles (36 indices)
+    normals = np.array([
+        # Front
+        [0, 0, 1], [0, 0, 1], [0, 0, 1], [0, 0, 1],
+        # Back
+        [0, 0, -1], [0, 0, -1], [0, 0, -1], [0, 0, -1],
+        # Right
+        [1, 0, 0], [1, 0, 0], [1, 0, 0], [1, 0, 0],
+        # Left
+        [-1, 0, 0], [-1, 0, 0], [-1, 0, 0], [-1, 0, 0],
+        # Top
+        [0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 1, 0],
+        # Bottom
+        [0, -1, 0], [0, -1, 0], [0, -1, 0], [0, -1, 0],
+    ], dtype=np.float32)
+    
+    # 6 faces × 2 triangles × 3 indices = 36
     indices = np.array([
-        # front
-        0, 1, 2, 0, 2, 3,
-        # right
-        1, 5, 6, 1, 6, 2,
-        # back
-        5, 4, 7, 5, 7, 6,
-        # left
-        4, 0, 3, 4, 3, 7,
-        # top
-        3, 2, 6, 3, 6, 7,
-        # bottom
-        4, 5, 1, 4, 1, 0,
+        0, 1, 2, 0, 2, 3,       # front
+        4, 5, 6, 4, 6, 7,       # back
+        8, 9, 10, 8, 10, 11,    # right
+        12, 13, 14, 12, 14, 15, # left
+        16, 17, 18, 16, 18, 19, # top
+        20, 21, 22, 20, 22, 23, # bottom
     ], dtype=np.uint32)
     
-    return {'positions': positions, 'indices': indices}
+    return {'positions': positions, 'normals': normals, 'indices': indices}
 
 
 def sphere(radius: float, segments: int = 32) -> dict:

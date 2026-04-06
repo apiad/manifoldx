@@ -5,7 +5,7 @@ import numpy as np
 class Camera:
     """Camera with position, target, FOV and projection."""
     
-    def __init__(self, position=(0, 0, 5), target=(0, 0, 0), fov=60, up=(0, 1, 0)):
+    def __init__(self, position=(0, 10, 20), target=(0, 0, 0), fov=60, up=(0, 1, 0)):
         self.position = np.array(position, dtype=np.float32)
         self.target = np.array(target, dtype=np.float32)
         self.fov = fov

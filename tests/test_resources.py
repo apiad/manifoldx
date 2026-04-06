@@ -57,8 +57,10 @@ def test_cube_geometry():
     
     assert 'positions' in geo
     assert 'indices' in geo
-    # Cube should have 8 vertices
-    assert geo['positions'].shape[0] == 8
+    assert 'normals' in geo
+    # Cube has 24 vertices (4 per face for flat shading normals)
+    assert geo['positions'].shape[0] == 24
+    assert geo['normals'].shape[0] == 24
     # Cube should have 12 triangles (36 indices)
     assert geo['indices'].shape[0] == 36
 
