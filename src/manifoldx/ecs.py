@@ -111,6 +111,76 @@ class EntityStore:
 
 
 # =============================================================================
+# TransformFieldView - Writable view into a Transform sub-field
+# =============================================================================
+
+class _TransformFieldView:
+    """View into a sub-field of the Transform component (position, rotation, scale).
+    
+    Supports += for in-place updates. For rotation, += composes quaternions.
+    """
+    
+    def __init__(self, store: 'EntityStore', indices: np.ndarray, field_name: str, col_start: int, col_end: int):
+        self._store = store
+        self._indices = indices
+        self._field_name = field_name
+        self._col_start = col_start
+        self._col_end = col_end
+    
+    @property
+    def data(self) -> np.ndarray:
+        """Get current data as a writable slice."""
+        return self._store._components['Transform'][np.ix_(self._indices, range(self._col_start, self._col_end))]
+    
+    def __iadd__(self, other):
+        """In-place add. For rotation, composes quaternions."""
+        other = np.asarray(other, dtype=np.float32)
+        
+        if self._field_name == 'rotation':
+            # Quaternion composition: q_new = other * q_current
+            current = self._store._components['Transform'][np.ix_(self._indices, range(3, 7))].copy()
+            result = _quat_multiply(other, current)
+            self._store._components['Transform'][np.ix_(self._indices, range(3, 7))] = result
+        else:
+            # Simple addition for position/scale
+            self._store._components['Transform'][np.ix_(self._indices, range(self._col_start, self._col_end))] += other
+        return self
+    
+    def __isub__(self, other):
+        other = np.asarray(other, dtype=np.float32)
+        self._store._components['Transform'][np.ix_(self._indices, range(self._col_start, self._col_end))] -= other
+        return self
+    
+    def __repr__(self):
+        return f"_TransformFieldView({self._field_name}, {len(self._indices)} entities)"
+
+
+def _quat_multiply(q1, q2):
+    """Multiply quaternions q1 * q2. Format: (x, y, z, w).
+    
+    Supports broadcasting: q1 can be (4,) and q2 can be (N, 4).
+    """
+    q1 = np.atleast_2d(q1)
+    q2 = np.atleast_2d(q2)
+    
+    x1, y1, z1, w1 = q1[:, 0], q1[:, 1], q1[:, 2], q1[:, 3]
+    x2, y2, z2, w2 = q2[:, 0], q2[:, 1], q2[:, 2], q2[:, 3]
+    
+    result = np.empty_like(q2)
+    result[:, 0] = w1*x2 + x1*w2 + y1*z2 - z1*y2  # x
+    result[:, 1] = w1*y2 - x1*z2 + y1*w2 + z1*x2  # y
+    result[:, 2] = w1*z2 + x1*y2 - y1*x2 + z1*w2  # z
+    result[:, 3] = w1*w2 - x1*x2 - y1*y2 - z1*z2  # w
+    
+    # Normalize to avoid drift
+    norms = np.linalg.norm(result, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    result /= norms
+    
+    return result
+
+
+# =============================================================================
 # ComponentView - View into entity store for specific components
 # =============================================================================
 
@@ -188,12 +258,12 @@ class ComponentAccessor:
         
         # Check if it's Transform with built-in fields
         if self._component_name == 'Transform':
-            if name == 'position':
-                return data[:, 0:3]
-            elif name == 'rotation':
-                return data[:, 3:7]
+            if name in ('position', 'pos'):
+                return _TransformFieldView(self._store, self._indices, 'position', 0, 3)
+            elif name in ('rotation', 'rot'):
+                return _TransformFieldView(self._store, self._indices, 'rotation', 3, 7)
             elif name == 'scale':
-                return data[:, 7:10]
+                return _TransformFieldView(self._store, self._indices, 'scale', 7, 10)
         
         # Check if component class has field positions
         comp_class = _COMPONENT_REGISTRY.get(self._component_name)

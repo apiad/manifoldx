@@ -71,13 +71,33 @@ class Engine:
         return func
 
     def system(self, func):
-        """Decorator to register a system function."""
-        self.systems.register(func)
+        """Decorator to register a system function.
+        
+        Parses Query type hints to determine which components to query.
+        """
+        import inspect
+        from manifoldx.systems import Query
+        
+        # Parse type hints to extract component names
+        component_names = []
+        hints = func.__annotations__
+        for param_name, hint in hints.items():
+            if isinstance(hint, Query):
+                # Query[Transform] -> Query with components tuple
+                comps = hint.components
+                if not isinstance(comps, tuple):
+                    comps = (comps,)
+                for c in comps:
+                    if isinstance(c, str):
+                        component_names.append(c)
+                    elif hasattr(c, '__name__'):
+                        component_names.append(c.__name__)
+        
+        self.systems.register(func, component_names)
         return func
 
     def component(self, cls):
         """Decorator to register a component class with this engine."""
-        print(f"DEBUG engine.component called with: {cls.__name__}")
         from manifoldx.ecs import _make_component_class
         return _make_component_class(cls, self)
 

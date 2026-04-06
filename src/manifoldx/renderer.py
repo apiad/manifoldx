@@ -75,20 +75,51 @@ class TransformCache:
             
         transform_data = store.get_component_data('Transform', indices)
         
-        positions = transform_data[:, 0:3]  # (N, 3)
-        scales = transform_data[:, 7:10]  # (N, 3)
+        positions = transform_data[:, 0:3]   # (N, 3)
+        quats = transform_data[:, 3:7]        # (N, 4) - quaternion (x, y, z, w)
+        scales = transform_data[:, 7:10]      # (N, 3)
         
-        # Build model matrix: scale + translation (no rotation for now)
-        matrices = np.zeros((len(indices), 16), dtype=np.float32)
-        matrices[:, 0] = scales[:, 0]   # scale X
-        matrices[:, 5] = scales[:, 1]   # scale Y
-        matrices[:, 10] = scales[:, 2]  # scale Z
-        matrices[:, 15] = 1.0           # w
+        n = len(indices)
+        matrices = np.zeros((n, 16), dtype=np.float32)
         
-        # Set positions in matrix (column-major translation)
-        matrices[:, 12] = positions[:, 0]  # translate X
-        matrices[:, 13] = positions[:, 1]  # translate Y
-        matrices[:, 14] = positions[:, 2]  # translate Z
+        # Extract quaternion components
+        qx, qy, qz, qw = quats[:, 0], quats[:, 1], quats[:, 2], quats[:, 3]
+        
+        # Rotation matrix from quaternion (row-major, 4x4 flattened)
+        # R = [[1-2(yy+zz), 2(xy-wz), 2(xz+wy), 0],
+        #      [2(xy+wz), 1-2(xx+zz), 2(yz-wx), 0],
+        #      [2(xz-wy), 2(yz+wx), 1-2(xx+yy), 0],
+        #      [0, 0, 0, 1]]
+        # Then multiply by scale and add translation
+        
+        xx, yy, zz = qx*qx, qy*qy, qz*qz
+        xy, xz, yz = qx*qy, qx*qz, qy*qz
+        wx, wy, wz = qw*qx, qw*qy, qw*qz
+        
+        sx, sy, sz = scales[:, 0], scales[:, 1], scales[:, 2]
+        
+        # Row 0 (scaled)
+        matrices[:, 0] = (1 - 2*(yy + zz)) * sx
+        matrices[:, 1] = 2*(xy - wz) * sy
+        matrices[:, 2] = 2*(xz + wy) * sz
+        
+        # Row 1 (scaled)
+        matrices[:, 4] = 2*(xy + wz) * sx
+        matrices[:, 5] = (1 - 2*(xx + zz)) * sy
+        matrices[:, 6] = 2*(yz - wx) * sz
+        
+        # Row 2 (scaled)
+        matrices[:, 8] = 2*(xz - wy) * sx
+        matrices[:, 9] = 2*(yz + wx) * sy
+        matrices[:, 10] = (1 - 2*(xx + yy)) * sz
+        
+        # Row 3
+        matrices[:, 15] = 1.0
+        
+        # Translation (column 3)
+        matrices[:, 12] = positions[:, 0]
+        matrices[:, 13] = positions[:, 1]
+        matrices[:, 14] = positions[:, 2]
         
         self._matrix_cache[indices] = matrices
         self._dirty[indices] = False

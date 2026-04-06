@@ -1,7 +1,9 @@
+import math
 import manifoldx as mx
 import numpy as np
 
 from manifoldx.components import Transform, Mesh, Material
+from manifoldx.systems import Query
 
 engine = mx.Engine("Cubes")
 
@@ -27,5 +29,11 @@ def create_cubes():
         # First dimension is n-instance, second dimension matches vector size
         n=1,
     )
+
+
+@engine.system
+def rotate(query: Query[Transform], dt: float):
+    query[Transform].rot += Transform.rotation(x=0, y=dt * math.pi, z =0)
+
 
 engine.run()

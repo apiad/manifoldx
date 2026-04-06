@@ -61,6 +61,25 @@ class Transform:
         return data
     
     @staticmethod
+    def rotation(x: float = 0, y: float = 0, z: float = 0) -> np.ndarray:
+        """Create a quaternion (x, y, z, w) from euler angles (radians).
+        
+        Uses intrinsic Tait-Bryan angles: rotate around X, then Y, then Z.
+        Returns shape (4,) quaternion that can be used with += on .rot field.
+        """
+        cx, sx = np.cos(x / 2), np.sin(x / 2)
+        cy, sy = np.cos(y / 2), np.sin(y / 2)
+        cz, sz = np.cos(z / 2), np.sin(z / 2)
+        
+        # Quaternion from euler (XYZ order)
+        qx = sx * cy * cz - cx * sy * sz
+        qy = cx * sy * cz + sx * cy * sz
+        qz = cx * cy * sz - sx * sy * cz
+        qw = cx * cy * cz + sx * sy * sz
+        
+        return np.array([qx, qy, qz, qw], dtype=np.float32)
+
+    @staticmethod
     def register(store):
         """Register Transform component in entity store."""
         store.register_component("Transform", np.dtype('f4'), shape=(10,))
