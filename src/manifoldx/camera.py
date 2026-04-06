@@ -187,5 +187,59 @@ class Camera:
         forward = self.get_forward()
         self.position = self.target - forward * self._distance
 
+    def fit(self, radius, center=(0, 0, 0), margin=0.8, azimuth=45, elevation=30):
+        """Position camera to frame a sphere.
+        
+        Args:
+            radius: Radius of sphere to fit in view
+            center: Center of sphere in world space
+            margin: Fraction of viewport height sphere should occupy (0.8 = 80%)
+            azimuth: Camera azimuth angle in degrees
+            elevation: Camera elevation angle in degrees
+        """
+        self.target = np.array(center, dtype=np.float32)
+        self._azimuth = azimuth
+        self._elevation = elevation
+        
+        fov_rad = np.radians(self.fov)
+        self._distance = radius / np.sin((margin * fov_rad) / 2)
+        
+        az_rad = np.radians(self._azimuth)
+        el_rad = np.radians(self._elevation)
+        
+        direction = np.array([
+            np.cos(az_rad) * np.cos(el_rad),
+            np.sin(el_rad),
+            np.sin(az_rad) * np.cos(el_rad)
+        ], dtype=np.float32)
+        
+        self.position = self.target + self._distance * direction
+
+    def fit_bounds(self, center, extent, margin=0.8, azimuth=45, elevation=30):
+        """Position camera to frame an axis-aligned bounding box.
+        
+        Args:
+            center: Center of bounding box
+            extent: Half-extents (half-widths) of bounding box
+            margin: Fraction of viewport to leave as padding
+            azimuth: Camera azimuth angle in degrees
+            elevation: Camera elevation angle in degrees
+        
+        extent can be:
+          - float: cube with given half-extent
+          - tuple(n,): uniform box (nx, ny, nz) all equal
+          - tuple(3,): non-uniform box (hx, hy, hz)
+        """
+        if isinstance(extent, (int, float)):
+            half_extents = np.array([extent, extent, extent], dtype=np.float32)
+        elif len(extent) == 1:
+            half_extents = np.array([extent[0], extent[0], extent[0]], dtype=np.float32)
+        else:
+            half_extents = np.array(extent[:3], dtype=np.float32)
+        
+        radius = np.linalg.norm(half_extents)
+        
+        self.fit(radius=radius, center=center, margin=margin, azimuth=azimuth, elevation=elevation)
+
 
 __all__ = ['Camera']
