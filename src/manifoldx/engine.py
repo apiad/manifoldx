@@ -35,6 +35,7 @@ class Engine:
         self._wgpu_context = None
         self._adapter = None
         self._device = None
+        self._event_loop = None
         self._present_mode = "fifo"
         self._texture_format = wgpu.TextureFormat.bgra8unorm
         self._startup_callbacks = []
@@ -126,6 +127,15 @@ class Engine:
 
     def quit(self):
         self._running = False
+        # Stop the event loop
+        if hasattr(self, "_event_loop") and self._event_loop is not None:
+            self._event_loop.stop()
+        # Also close the canvas
+        if self._render_canvas is not None:
+            try:
+                self._render_canvas.close()
+            except Exception:
+                pass
 
     # === Timestep Configuration ===
     def set_fixed_timestep(self, dt: float):
@@ -253,9 +263,16 @@ class Engine:
 
     def _draw_frame(self):
         """Draw callback invoked by rendercanvas event loop each frame."""
-        # Check if we should stop
+        # Check if we should stop - must be FIRST to avoid crashes
         if not self._running:
             return False  # Stop the event loop
+
+        # Double-check canvas state
+        try:
+            if self._render_canvas.get_closed():
+                return False
+        except Exception:
+            return False
 
         dt = self._compute_dt()
 
@@ -325,8 +342,9 @@ class Engine:
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
 
-        # Request next frame
-        self._render_canvas.request_draw()
+        # Request next frame only if still running
+        if self._running:
+            self._render_canvas.request_draw()
 
     def run(self):
         self._init_webgpu()
@@ -342,8 +360,12 @@ class Engine:
         # Register draw callback and run the canvas event loop
         from rendercanvas.glfw import loop as glfw_loop
 
+        self._event_loop = glfw_loop
         self._render_canvas.request_draw(self._draw_frame)
-        glfw_loop.run()
-
-        for callback in self._shutdown_callbacks:
-            callback()
+        try:
+            glfw_loop.run()
+        except Exception as e:
+            print(f"Event loop error: {e}")
+        finally:
+            for callback in self._shutdown_callbacks:
+                callback()
