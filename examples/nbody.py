@@ -37,6 +37,9 @@ engine.spawn(
     n=NUM_BODIES,
 )
 
+# Radii from scales (scale = mass^(1/3) * 10, so radius = scale / 10)
+radii = (scales.squeeze() / 10).astype(np.float32)
+
 # Velocities for physics
 velocities = np.zeros((NUM_BODIES, 3), dtype=np.float32)
 
@@ -48,8 +51,8 @@ def nbody_physics(query: mx.Query[Transform], dt: float):
     pos = query[Transform].pos.data
 
     # Vectorized all-pairs gravity
-    diff = pos[None, :] - pos[:, None]
-    dist = np.linalg.norm(diff, axis=2)
+    diff = pos[None, :] - pos[:, None]  # (N, N, 3)
+    dist = np.linalg.norm(diff, axis=2)  # (N, N)
     dist = np.maximum(dist, 0.5)
 
     mass_prod = masses[None, :] * masses[:, None]
@@ -61,6 +64,51 @@ def nbody_physics(query: mx.Query[Transform], dt: float):
 
     velocities += (net_force / masses[:, None]) * dt
     query[Transform].pos += velocities * dt
+
+    # Simple collision detection and response
+    radii_sum = radii[None, :] + radii[:, None]  # (N, N)
+    collision_mask = dist < radii_sum
+
+    # Get collision normals
+    normal = diff / dist[:, :, np.newaxis]
+    normal = np.nan_to_num(normal, 0)
+
+    # Relative velocity
+    rel_vel = velocities[None, :] - velocities[:, :]  # (N, N, 3)
+
+    # Velocity along collision normal
+    vel_along_normal = np.sum(rel_vel * normal, axis=2)  # (N, N)
+
+    # Only resolve if velocities are approaching
+    approaching = vel_along_normal < 0
+
+    # Combine masks
+    resolve_mask = (
+        collision_mask & approaching & (np.triu(np.ones((NUM_BODIES, NUM_BODIES), dtype=bool), k=1))
+    )
+
+    # For each collision pair, reflect velocities
+    damping = 0.8
+    for i, j in zip(*np.where(resolve_mask)):
+        v1 = velocities[i]
+        v2 = velocities[j]
+        n = normal[i, j]
+
+        # Reflect velocities
+        v1_new = v1 - 2 * np.dot(v1, n) * n
+        v2_new = v2 - 2 * np.dot(v2, n) * n
+
+        velocities[i] = v1_new * damping
+        velocities[j] = v2_new * damping
+
+        # Separate bodies to avoid overlap
+        overlap = (radii[i] + radii[j]) - dist[i, j]
+        if overlap > 0:
+            sep = n * (overlap / 2 + 0.01)
+            pos[i] += sep
+            pos[j] -= sep
+
+    query[Transform].pos = pos
 
 
 light = PointLight(color="#ffffff", intensity=20.0, position=(20, 20, 20))
