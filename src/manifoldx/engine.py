@@ -100,15 +100,22 @@ class Engine:
     # === Spawn & Destroy ===
     def spawn(self, *args, n: int, **kwargs):
         """Spawn entities by emitting SPAWN command."""
-        # Broadcast scalars to arrays
+        # Handle Mesh, Material, and Transform component objects
+        processed_kwargs = {}
         for name, value in kwargs.items():
-            if np.isscalar(value):
-                kwargs[name] = np.full((n,), value, dtype=np.float32)
+            if hasattr(value, 'get_data'):
+                # It's a component object (Mesh, Material, Transform) - get data from it
+                processed_kwargs[name] = value.get_data(n, self._geometry_registry)
+            elif np.isscalar(value):
+                # Broadcast scalars to arrays
+                processed_kwargs[name] = np.full((n,), value, dtype=np.float32)
+            else:
+                processed_kwargs[name] = value
                 
         # Emit SPAWN command
         self.commands.append(Command(
             CommandType.SPAWN,
-            {'n': n, 'components': kwargs}
+            {'n': n, 'components': processed_kwargs}
         ))
         
     def destroy(self, indices):
