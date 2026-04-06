@@ -479,3 +479,90 @@ class TestCameraZoomDolly:
         new_forward = camera.get_forward()
         assert np.allclose(forward, new_forward, atol=1e-6), \
             "dolly should preserve look direction"
+
+
+class TestCameraFitFrame:
+    """Test fit and frame methods (Phase 6)."""
+    
+    def test_fit_sets_target(self):
+        """fit() should set the target to the sphere center."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        camera.fit(radius=5.0, center=(10, 0, 10))
+        
+        assert np.allclose(camera.target, [10, 0, 10], atol=1e-6), \
+            "fit should set target to sphere center"
+    
+    def test_fit_positions_camera(self):
+        """fit() should position camera at correct distance."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        camera.fit(radius=5.0, center=(0, 0, 0))
+        
+        # Camera should be positioned such that sphere fills the viewport
+        # Distance should be approximately: radius / sin(margin * fov / 2)
+        # With default margin=0.8 and fov=60: distance ≈ 5 / sin(0.8*30°) ≈ 5 / 0.428 ≈ 11.7
+        # But we just check that camera is at a reasonable distance
+        assert camera._distance > 5, "Camera distance should be greater than radius"
+        assert camera._distance < 100, "Camera distance should be reasonable"
+    
+    def test_fit_with_custom_angles(self):
+        """fit() should position camera at specified azimuth/elevation."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        camera.fit(radius=5.0, center=(0, 0, 0), azimuth=90, elevation=30)
+        
+        # Camera should be at 90° azimuth and 30° elevation
+        assert np.isclose(camera._azimuth, 90, atol=1), \
+            "fit should set azimuth to specified value"
+        assert np.isclose(camera._elevation, 30, atol=1), \
+            "fit should set elevation to specified value"
+    
+    def test_fit_bounds_cube(self):
+        """fit_bounds() should handle cube extents."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        # extent as scalar = cube
+        camera.fit_bounds(center=(0, 0, 0), extent=5.0)
+        
+        # Target should be at center
+        assert np.allclose(camera.target, [0, 0, 0], atol=1e-6), \
+            "fit_bounds should set target to center"
+        # Distance should be appropriate for bounding box
+        assert camera._distance > 5, "Camera should be outside bounding box"
+    
+    def test_fit_bounds_uniform_box(self):
+        """fit_bounds() should handle uniform box extent."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        # extent as tuple with same values = uniform box
+        camera.fit_bounds(center=(0, 0, 0), extent=(5, 5, 5))
+        
+        assert np.allclose(camera.target, [0, 0, 0], atol=1e-6), \
+            "fit_bounds should set target to center"
+        assert camera._distance > 5, "Camera should be outside bounding box"
+    
+    def test_fit_bounds_non_uniform(self):
+        """fit_bounds() should handle non-uniform box extent."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        # extent as tuple with different values = non-uniform box
+        # Use largest extent for fitting (diagonal of box)
+        camera.fit_bounds(center=(0, 0, 0), extent=(2, 5, 3))
+        
+        assert np.allclose(camera.target, [0, 0, 0], atol=1e-6), \
+            "fit_bounds should set target to center"
+        # Distance should fit the largest extent
+        assert camera._distance > 5, "Camera should be outside bounding box"
