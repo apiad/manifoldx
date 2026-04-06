@@ -227,3 +227,88 @@ class TestCameraDirectPositioning:
         # Azimuth should be 45 degrees (equal X and Z components)
         assert np.isclose(camera._azimuth, 45.0, atol=1.0), \
             "set_pose should update azimuth"
+
+
+class TestCameraOrbitControls:
+    """Test orbit controls (Phase 3)."""
+    
+    def test_orbit_horizontal(self):
+        """orbit() rotates camera horizontally around target."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_azimuth = camera._azimuth
+        camera.orbit(d_azimuth=45)
+        
+        assert np.isclose(camera._azimuth, initial_azimuth + 45, atol=1e-3), \
+            "orbit should change azimuth by 45 degrees"
+        # Position should have changed
+        assert not np.allclose(camera.position, [0, 10, 20], atol=1e-3), \
+            "orbit should change camera position"
+    
+    def test_orbit_vertical(self):
+        """orbit() rotates camera vertically around target."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_elevation = camera._elevation
+        camera.orbit(d_elevation=10)
+        
+        assert np.isclose(camera._elevation, initial_elevation + 10, atol=1e-3), \
+            "orbit should change elevation by 10 degrees"
+    
+    def test_orbit_preserves_distance(self):
+        """orbit() should preserve distance to target."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_distance = camera._distance
+        camera.orbit(d_azimuth=90, d_elevation=45)
+        
+        assert np.isclose(camera._distance, initial_distance, atol=1e-3), \
+            "orbit should preserve distance"
+    
+    def test_orbit_elevation_clamped(self):
+        """orbit() clamps elevation to prevent gimbal lock."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 1, 10), target=(0, 0, 0))
+        
+        # Try to orbit past the pole
+        camera.orbit(d_elevation=95)
+        
+        # Elevation should be clamped to ~89
+        assert camera._elevation < 90, "Elevation should be clamped below 90"
+    
+    def test_orbit_combined(self):
+        """orbit() handles combined horizontal and vertical rotation."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(10, 0, 0), target=(0, 0, 0))
+        
+        camera.orbit(d_azimuth=90, d_elevation=0)
+        
+        # After 90 degree azimuth orbit, camera should be at +Z
+        # Allow some tolerance
+        assert camera.position[2] > 0, "Camera should be at +Z after 90 azimuth"
+    
+    def test_orbit_both_axes(self):
+        """orbit() rotates around both axes simultaneously."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_pos = camera.position.copy()
+        initial_target = camera.target.copy()
+        
+        camera.orbit(d_azimuth=30, d_elevation=15)
+        
+        # Position should change
+        assert not np.allclose(camera.position, initial_pos, atol=1e-3), \
+            "orbit should change position"
+        # Target should remain fixed
+        assert np.allclose(camera.target, initial_target, atol=1e-6), \
+            "orbit should not change target"
