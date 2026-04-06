@@ -1,5 +1,10 @@
 # ManifoldX
 
+[![PyPI version](https://img.shields.io/pypi/v/manifold-gfx)](https://pypi.org/project/manifold-gfx/)
+[![Python versions](https://img.shields.io/pypi/pyversions/manifold-gfx)](https://pypi.org/project/manifold-gfx/)
+[![License](https://img.shields.io/pypi/l/manifold-gfx)](LICENSE)
+[![Tests](https://github.com/apiad/manifoldx/actions/workflows/test.yml/badge.svg)](https://github.com/apiad/manifoldx/actions/workflows/test.yml)
+
 A real-time 3D rendering engine built on pure [wgpu](https://github.com/gfx-rs/wgpu) with an Entity Component System (ECS) architecture. Written in Python with numpy for high-performance data handling.
 
 > ⚠️ **Beta / Academic Project** — This is an experimental proof-of-concept exploring the extent to which Python can be used for high-performance graphics via wgpu. Not recommended for production use. Expect bugs, breaking changes, and missing features.
