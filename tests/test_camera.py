@@ -312,3 +312,75 @@ class TestCameraOrbitControls:
         # Target should remain fixed
         assert np.allclose(camera.target, initial_target, atol=1e-6), \
             "orbit should not change target"
+
+
+class TestCameraPanControls:
+    """Test pan controls (Phase 4)."""
+    
+    def test_pan_moves_target(self):
+        """pan() moves the target point in camera's local plane."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_target = camera.target.copy()
+        camera.pan(0.1, 0.0)
+        
+        assert not np.allclose(camera.target, initial_target, atol=1e-4), \
+            "pan should move target"
+        # Position should move with target
+        assert not np.allclose(camera.position, [0, 10, 20], atol=1e-4), \
+            "pan should move camera position with target"
+    
+    def test_pan_relative_to_viewport(self):
+        """pan() with relative_to_viewport=True uses normalized coords."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        camera.pan(0.1, 0.1, relative_to_viewport=True)
+        
+        # Target should move in camera's right and up directions
+        # The amount depends on distance, but should definitely change
+        assert not np.allclose(camera.target, [0, 0, 0], atol=1e-4), \
+            "pan should move target"
+    
+    def test_pan_world_units(self):
+        """pan() with relative_to_viewport=False uses world units."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        camera.pan(1.0, 0.0, relative_to_viewport=False)
+        
+        # Target should move by approximately 1 unit in camera's right direction
+        right = camera.get_right()
+        expected = right * 1.0
+        actual = camera.target - np.array([0, 0, 0], dtype=np.float32)
+        assert np.allclose(actual, expected, atol=1e-3), \
+            "pan in world units should move target by that amount in camera's right direction"
+    
+    def test_pan_does_not_change_distance(self):
+        """pan() should not change distance to target."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_distance = camera._distance
+        camera.pan(0.5, 0.5)
+        
+        assert np.isclose(camera._distance, initial_distance, atol=1e-3), \
+            "pan should not change distance to target"
+    
+    def test_pan_combined(self):
+        """pan() moves target in camera's local X and Y."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_target = camera.target.copy()
+        camera.pan(0.1, 0.1)
+        
+        # Both components should change
+        assert camera.target[0] != initial_target[0] or camera.target[1] != initial_target[1], \
+            "pan should move target in both X and Y"
