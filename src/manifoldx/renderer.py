@@ -198,7 +198,7 @@ class RenderPipeline:
             primitive={
                 "topology": wgpu.PrimitiveTopology.triangle_list,
                 "front_face": wgpu.FrontFace.ccw,
-                "cull_mode": wgpu.CullMode.back,
+                "cull_mode": wgpu.CullMode.none,  # Disable culling for now
             },
             fragment={
                 "module": shader_module,

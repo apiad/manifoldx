@@ -12,39 +12,49 @@ class Camera:
         self.up = np.array(up, dtype=np.float32)
     
     def get_view_matrix(self):
-        """Compute view matrix using look-at formula."""
-        # Forward (z-axis): normalize(target - position)
-        z = self.target - self.position
-        z = z / np.linalg.norm(z)
+        """Compute view matrix using look-at formula.
         
-        # Right (x-axis): normalize(cross(up, z))
-        x = np.cross(self.up, z)
-        x = x / np.linalg.norm(x)
+        Convention: camera looks down -Z in view space (standard OpenGL/WebGPU).
+        """
+        # Forward direction (from camera toward target)
+        forward = self.target - self.position
+        forward = forward / np.linalg.norm(forward)
         
-        # Up (y-axis): cross(z, x)
-        y = np.cross(z, x)
+        # Right (x-axis): cross(forward, up)
+        right = np.cross(forward, self.up)
+        right = right / np.linalg.norm(right)
         
-        # Build view matrix (inverse of camera transform)
+        # True up: cross(right, forward)
+        up = np.cross(right, forward)
+        
+        # Build view matrix: rotation part uses -forward for Z (camera looks down -Z)
         view = np.eye(4, dtype=np.float32)
-        view[0, 0:3] = x
-        view[1, 0:3] = y
-        view[2, 0:3] = z
-        view[0, 3] = -np.dot(x, self.position)
-        view[1, 3] = -np.dot(y, self.position)
-        view[2, 3] = -np.dot(z, self.position)
+        view[0, 0:3] = right
+        view[1, 0:3] = up
+        view[2, 0:3] = -forward  # Negate: camera looks down -Z
+        view[0, 3] = -np.dot(right, self.position)
+        view[1, 3] = -np.dot(up, self.position)
+        view[2, 3] = np.dot(forward, self.position)  # Note: no negate since forward already negated
         
         return view
     
     def get_projection_matrix(self, aspect_ratio, near=0.1, far=100.0):
-        """Compute perspective projection matrix."""
+        """Compute perspective projection matrix for WebGPU.
+        
+        WebGPU NDC: x,y in [-1,1], z in [0,1].
+        Uses the same formula as pylinalg mat_perspective with depth_range=(0,1).
+        """
         fov_rad = np.radians(self.fov)
         f = 1.0 / np.tan(fov_rad / 2.0)
         
         proj = np.zeros((4, 4), dtype=np.float32)
         proj[0, 0] = f / aspect_ratio
         proj[1, 1] = f
-        proj[2, 2] = (far + near) / (near - far)
-        proj[2, 3] = (2 * far * near) / (near - far)
+        # WebGPU depth range [0, 1]:
+        # c = -(far*1 - near*0) / (far - near) = -far / (far - near)
+        # d = -(far * near * (1 - 0)) / (far - near) = -far*near / (far - near)
+        proj[2, 2] = -far / (far - near)
+        proj[2, 3] = -(far * near) / (far - near)
         proj[3, 2] = -1.0
         
         return proj
