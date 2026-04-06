@@ -65,13 +65,13 @@ for row in range(rows):
 # ---------------------------------------------------------------------------
 # Camera: frame the scene from above-front
 # ---------------------------------------------------------------------------
-engine.camera.fit(radius=5.0, center=(0, 0, 0), azimuth=30, elevation=35)
+engine.camera.fit(radius=3.0, center=(0, 0, 0), azimuth=30, elevation=35)
 
 # ---------------------------------------------------------------------------
 # Three orbiting lights on different planes
 # ---------------------------------------------------------------------------
 ORBIT_RADIUS = 5.0
-LIGHT_INTENSITY = 15.0
+LIGHT_INTENSITY = 35.0
 
 light_equatorial = PointLight(
     color="#ffffff", intensity=LIGHT_INTENSITY, position=(ORBIT_RADIUS, 0, 0)
