@@ -384,3 +384,98 @@ class TestCameraPanControls:
         # Both components should change
         assert camera.target[0] != initial_target[0] or camera.target[1] != initial_target[1], \
             "pan should move target in both X and Y"
+
+
+class TestCameraZoomDolly:
+    """Test zoom and dolly controls (Phase 5)."""
+    
+    def test_get_distance(self):
+        """get_distance() returns distance from camera to target."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        distance = camera.get_distance()
+        
+        # Distance should be sqrt(10^2 + 20^2) = ~22.36
+        expected_distance = np.sqrt(10**2 + 20**2)
+        assert np.isclose(distance, expected_distance, atol=1e-3), \
+            "get_distance should return distance to target"
+    
+    def test_zoom_in(self):
+        """zoom(factor > 1) moves camera closer to target."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_distance = camera._distance
+        camera.zoom(2.0)  # 2x closer
+        
+        assert np.isclose(camera._distance, initial_distance / 2, atol=1e-3), \
+            "zoom(2.0) should halve the distance"
+    
+    def test_zoom_out(self):
+        """zoom(factor < 1) moves camera farther from target."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_distance = camera._distance
+        camera.zoom(0.5)  # 2x farther
+        
+        assert np.isclose(camera._distance, initial_distance * 2, atol=1e-3), \
+            "zoom(0.5) should double the distance"
+    
+    def test_dolly_forward(self):
+        """dolly(positive) moves camera toward target."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_distance = camera._distance
+        camera.dolly(5.0)  # move 5 units closer
+        
+        assert np.isclose(camera._distance, initial_distance - 5.0, atol=1e-3), \
+            "dolly(5.0) should reduce distance by 5"
+    
+    def test_dolly_backward(self):
+        """dolly(negative) moves camera away from target."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        initial_distance = camera._distance
+        camera.dolly(-5.0)  # move 5 units farther
+        
+        assert np.isclose(camera._distance, initial_distance + 5.0, atol=1e-3), \
+            "dolly(-5.0) should increase distance by 5"
+    
+    def test_zoom_preserves_look_direction(self):
+        """zoom() should preserve where camera is looking."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        # Record forward direction
+        forward = camera.get_forward().copy()
+        
+        camera.zoom(2.0)
+        
+        # Forward direction should be unchanged
+        new_forward = camera.get_forward()
+        assert np.allclose(forward, new_forward, atol=1e-6), \
+            "zoom should preserve look direction"
+    
+    def test_dolly_preserves_look_direction(self):
+        """dolly() should preserve where camera is looking."""
+        from manifoldx.camera import Camera
+        
+        camera = Camera(position=(0, 10, 20), target=(0, 0, 0))
+        
+        forward = camera.get_forward().copy()
+        
+        camera.dolly(5.0)
+        
+        new_forward = camera.get_forward()
+        assert np.allclose(forward, new_forward, atol=1e-6), \
+            "dolly should preserve look direction"
