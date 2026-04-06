@@ -128,6 +128,16 @@ class TransformCache:
         matrices[:, 13] = positions[:, 1]
         matrices[:, 14] = positions[:, 2]
         
+        # Validate computed matrices
+        from manifoldx.ecs import ENABLE_VALIDATION
+        if ENABLE_VALIDATION:
+            if np.any(np.isnan(matrices)):
+                import warnings
+                warnings.warn(f"⚠️ NaN in transform matrices for {len(indices)} entities")
+            if np.any(np.isinf(matrices)):
+                import warnings
+                warnings.warn(f"⚠️ Inf in transform matrices for {len(indices)} entities")
+        
         self._matrix_cache[indices] = matrices
         self._dirty[indices] = False
 

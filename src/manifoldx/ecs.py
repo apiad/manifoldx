@@ -7,6 +7,10 @@ if TYPE_CHECKING:
     from manifoldx.commands import CommandBuffer
 
 
+# Global validation flag - set to False in production to disable warnings
+ENABLE_VALIDATION = True
+
+
 # =============================================================================
 # EntityStore - Central storage for all entity data (SoA layout)
 # =============================================================================
@@ -143,6 +147,34 @@ class _FieldView:
         ]
     
     def _set_data(self, value):
+        # Validate data before writing
+        value = np.asarray(value, dtype=np.float32)
+        
+        if ENABLE_VALIDATION:
+            if np.any(np.isnan(value)):
+                import warnings
+                warnings.warn(
+                    f"⚠️ NaN detected in {self._component_name}.{self._field_name} "
+                    f"for {len(self._indices)} entities"
+                )
+            
+            if np.any(np.isinf(value)):
+                import warnings
+                warnings.warn(
+                    f"⚠️ Inf detected in {self._component_name}.{self._field_name} "
+                    f"for {len(self._indices)} entities"
+                )
+            
+            # Check for invalid rotation (zero quaternion)
+            if self._field_name == 'rotation' and self._component_name == 'Transform':
+                rot_magnitude = np.linalg.norm(value.reshape(-1, 4), axis=1)
+                if np.any(rot_magnitude < 0.01):
+                    import warnings
+                    warnings.warn(
+                        f"⚠️ Near-zero rotation detected in Transform.rotation "
+                        f"for {(rot_magnitude < 0.01).sum()} entities"
+                    )
+        
         self._store._components[self._component_name][
             np.ix_(self._indices, range(self._col_start, self._col_end))
         ] = value

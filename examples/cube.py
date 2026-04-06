@@ -21,13 +21,15 @@ def create_cubes():
         # These components just store indices to resources
         Mesh(cube_mesh),
         Material(cube_material),
-        Transform(pos=(0,0,0), scale=(1,1,1)),
+        Transform(pos=(0,0,0)),
+        n=1,
     )
 
 
 @engine.system
 def rotate(query: Query[Transform], dt: float):
     query[Transform].rot += Transform.rotation(x=0, y=dt * math.pi, z =0)
+    query[Transform].pos += (0,dt,0)
 
 
 engine.run()

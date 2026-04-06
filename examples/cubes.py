@@ -4,6 +4,7 @@ import numpy as np
 from manifoldx.components import Transform, Mesh, Material
 
 engine = mx.Engine("Cubes")
+engine.camera.fit(100)
 
 # These are all static things that are created
 # and stored in memory once

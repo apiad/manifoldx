@@ -20,21 +20,21 @@ This is a sophisticated architecture requiring careful analysis.
 │                      UPDATE LOOP                            │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐       │
-│   │Physics │  │Animation│  │ Culling │  │ Render  │       │
-│   │ System │  │ System  │  │ System  │  │ System  │       │
-│   └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘       │
-│        │           │           │           │               │
-│        ▼           ▼           ▼           ▼               │
+│   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐        │
+│   │Physics  │  │Animation│  │ Culling │  │ Render  │        │
+│   │ System  │  │ System  │  │ System  │  │ System  │        │
+│   └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘        │
+│        │            │            │            │             │
+│        ▼            ▼            ▼            ▼             │
 │   ┌─────────────────────────────────────────────────┐       │
-│   │           READ-ONLY ENTITY STATE               │       │
-│   │   (Transform, Mesh, Material components)       │       │
+│   │           READ-ONLY ENTITY STATE                │       │
+│   │   (Transform, Mesh, Material components)        │       │
 │   └─────────────────────────────────────────────────┘       │
 │                          │                                  │
 │                          ▼                                  │
 │   ┌─────────────────────────────────────────────────┐       │
-│   │           COMMAND BUFFER ACCUMULATION          │       │
-│   │   (Systems append commands, not execute)       │       │
+│   │           COMMAND BUFFER ACCUMULATION           │       │
+│   │   (Systems append commands, not execute)        │       │
 │   └─────────────────────────────────────────────────┘       │
 │                          │                                  │
 │                          ▼                                  │
@@ -78,21 +78,21 @@ SetFramebuffer(target)
 class CommandBuffer:
     # Pre-allocated ring buffer for commands
     _commands: np.ndarray  # Structured array with command data
-    
+
     # Command types encoded as integers
     DRAW_MESH = 0
     SET_PIPELINE = 1
     SET_UNIFORM = 2
     SET_VIEWPORT = 3
     # etc.
-    
+
     def append_draw_mesh(self, geometry_id, material_id, transform):
         # Write to pre-allocated buffer (lock-free if atomic)
         pass
-    
+
     def append_set_pipeline(self, pipeline_id):
         pass
-    
+
     def execute(self, device, queue):
         # Iterate and execute all commands
         pass
@@ -125,7 +125,7 @@ Following the performance plan's guidance on WGSL alignment:
 # Per-instance data structure (16-byte aligned for WGSL)
 InstanceData = np.dtype([
     ('transform', 'f4', (4, 4)),  # 64 bytes, naturally aligned
-    ('color', 'f4', (4,)),        # 16 bytes  
+    ('color', 'f4', (4,)),        # 16 bytes
     # Total: 80 bytes per instance
 ])
 
@@ -143,7 +143,7 @@ For each unique (Geometry + Material) pair:
     1. Collect all visible instances
     2. Pack transforms into instance buffer
     3. Emit single draw_instanced call
-    
+
     Example:
     - 500 red cubes (BoxGeometry + RedMaterial) → 1 draw call
     - 300 blue spheres (SphereGeometry + BlueMaterial) → 1 draw call
@@ -182,11 +182,11 @@ class EntityState:
     transforms: np.ndarray  # (N, 4, 4) float32
     positions: np.ndarray   # (N, 3) float32
     velocities: np.ndarray  # (N, 3) float32
-    
+
     # Component presence masks
     mesh_mask: np.ndarray   # (N,) bool
     light_mask: np.ndarray # (N,) bool
-    
+
     def get_visible_meshes(self) -> np.ndarray:
         """Return indices of meshes that pass frustum culling."""
         pass
@@ -253,15 +253,15 @@ COMMAND_SIZE = 64  # bytes
 ```python
 class BatchManager:
     """Groups renderable objects by geometry + material."""
-    
+
     def __init__(self):
         self._batches: dict[tuple[int, int], list[int]] = {}
         # key: (geometry_id, material_id)
         # value: list of entity IDs
-    
+
     def add_entity(self, entity_id: int, geometry_id: int, material_id: int):
         self._batches.setdefault((geometry_id, material_id), []).append(entity_id)
-    
+
     def get_batches(self) -> list[tuple[int, int, np.ndarray]]:
         """Return (geometry_id, material_id, instance_transforms) tuples."""
         pass
@@ -274,7 +274,7 @@ import threading
 
 class ThreadLocalCommandBuffer:
     _local = threading.local()
-    
+
     @classmethod
     def get_buffer(cls) -> CommandBuffer:
         if not hasattr(cls._local, 'buffer'):
@@ -292,16 +292,16 @@ class ThreadLocalCommandBuffer:
 1. MAIN THREAD: Dispatch all systems in parallel
    - Each system reads EntityState (immutable during update)
    - Each system writes to its ThreadLocalCommandBuffer
-   
+
 2. MAIN THREAD: Barrier - wait for all systems to complete
-   
+
 3. MAIN THREAD: Merge command buffers
    - Concatenate all ThreadLocal buffers into GlobalCommandBuffer
-   
+
 4. MAIN THREAD: Execute command buffer
    - Iterate through commands
    - Call actual wgpu-py methods
-   
+
 5. MAIN THREAD: Present frame
    - queue.submit()
    - context.present()

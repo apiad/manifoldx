@@ -6,6 +6,7 @@ from time import perf_counter_ns
 from rendercanvas.glfw import GlfwRenderCanvas, loop as glfw_loop
 
 # Import ECS components
+import manifoldx.ecs as ecs
 from manifoldx.ecs import EntityStore
 from manifoldx.commands import CommandBuffer, Command, CommandType
 from manifoldx.systems import SystemRegistry
@@ -17,11 +18,13 @@ from manifoldx.camera import Camera
 
 class Engine:
     def __init__(self, name: str, h: int = 600, w: int = 800, fullscreen: bool = False,
-                 max_entities: int = 100_000):
+                 max_entities: int = 100_000, check: bool = True):
         self.name = name
         self.h = h
         self.w = w
         self.fullscreen = fullscreen
+        self.check = check  # Enable/disable validation warnings
+        ecs.ENABLE_VALIDATION = check  # Set global flag for ECS validation
         self._running = False
         self._render_canvas = None
         self._wgpu_context = None
