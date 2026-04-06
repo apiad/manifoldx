@@ -3,8 +3,6 @@ import wgpu
 import numpy as np
 from time import perf_counter_ns
 
-from rendercanvas.glfw import GlfwRenderCanvas, loop as glfw_loop
-
 # Import ECS components
 import manifoldx.ecs as ecs
 from manifoldx.ecs import EntityStore
@@ -230,7 +228,9 @@ class Engine:
             self.commands.append(Command(CommandType.DESTROY, {"indices": indices}))
 
     def _init_webgpu(self):
-        # Use rendercanvas's GlfwRenderCanvas
+        # Use rendercanvas's GlfwRenderCanvas - lazy import to avoid CI issues
+        from rendercanvas.glfw import GlfwRenderCanvas
+
         self._render_canvas = GlfwRenderCanvas()
 
         # Get the wgpu context from the canvas
@@ -336,6 +336,8 @@ class Engine:
             callback()
 
         # Register draw callback and run the canvas event loop
+        from rendercanvas.glfw import loop as glfw_loop
+
         self._render_canvas.request_draw(self._draw_frame)
         glfw_loop.run()
 
