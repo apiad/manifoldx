@@ -181,12 +181,14 @@ The `examples/gas.py` demo shows the other side: **no gravity, all collisions**.
 | `spheres.py`     | Many spheres with physics-like behavior                  |
 | `nbody.py`       | 500-body gravitational simulation with pure-numpy physics |
 | `gas.py`         | 500-particle ideal gas with collisions and virtual walls  |
+| `boids.py`       | 300-agent flocking simulation with emergent swarm behavior |
 
 Run an example:
 
 ```bash
 python -m examples.nbody   # N-body gravitational simulation
 python -m examples.gas     # Ideal gas with elastic collisions
+python -m examples.boids   # Boids flocking with soft boundary
 python -m examples.pbr_demo
 ```
 
