@@ -13,7 +13,7 @@ from manifoldx.resources import sphere, PhongMaterial
 
 # ── Simulation parameters ───────────────────────────────────────
 NUM_BOIDS = 300
-NUM_PREDATORS = 4
+NUM_PREDATORS = 3
 PERCEPTION_SQ = 4.0**2  # squared boid perception radius
 FEAR_RADIUS_SQ = 10.0**2  # predator detection range (very wide)
 SEP_W = 1.5  # separation weight

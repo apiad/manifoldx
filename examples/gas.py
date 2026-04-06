@@ -12,13 +12,13 @@ from manifoldx.components import Transform, Mesh, Material
 from manifoldx.resources import sphere, PhongMaterial
 
 NUM_PARTICLES = 500
-BOX_HALF = 8.0  # half-size of the invisible bounding box
+BOX_HALF = 10.0  # half-size of the invisible bounding box
 RESTITUTION = 0.99  # collision bounciness (1.0 = perfectly elastic)
-INITIAL_SPEED = 10.0  # Maxwell-Boltzmann-ish initial speed
+INITIAL_SPEED = 5.0  # Maxwell-Boltzmann-ish initial speed
 PARTICLE_RADIUS = 0.2  # collision & visual radius
 
 engine = mx.Engine("Ideal Gas")
-engine.camera.fit(BOX_HALF * 1.5)
+engine.camera.fit(BOX_HALF)
 
 # Random positions inside the box
 positions = np.random.uniform(
