@@ -104,3 +104,16 @@ entries:
     files:
       - examples/boids.py
       - examples/gas.py
+  - timestamp: "2026-04-06T21:40:00Z"
+    type: commit
+    message: "fix(test_camera): use camera's near/far in VP matrix test"
+    files:
+      - tests/test_camera.py
+  - timestamp: "2026-04-06T21:45:00Z"
+    type: commit
+    message: "chore: update development log with recent commits"
+    files:
+      - .knowledge/log/2026-04-06.yaml
+  - timestamp: "2026-04-06T21:50:00Z"
+    type: state
+    message: "Ready for release: 16 commits ahead of origin/main, all tests passing"
