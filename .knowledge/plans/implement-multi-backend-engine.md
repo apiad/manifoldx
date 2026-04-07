@@ -3,23 +3,23 @@ id: implement-multi-backend-engine
 created: 2025-04-07
 modified: 2025-04-07
 type: plan
-status: active
+status: completed
 expires: 2025-04-14
 phases:
   - name: Phase 1: Refactor Backend enum and Optional Dependencies
-    done: false
+    done: true
     goal: Define Backend enum and set up optional dependency groups in pyproject.toml
   - name: Phase 2: Implement Lazy Backend Imports
-    done: false
+    done: true
     goal: Implement lazy canvas creation with graceful import error handling
   - name: Phase 3: Implement run() with Desktop/Browser backends
-    done: false
+    done: true
     goal: Implement real-time rendering with event loop for Desktop/Browser
   - name: Phase 4: Implement render() with OFFSCREEN backend
-    done: false
+    done: true
     goal: Implement offline video rendering with OffscreenRenderCanvas
   - name: Phase 5: Add CI Validation and Backend Tests
-    done: false
+    done: true
     goal: Add CI workflow with offline-only tests and backend-specific tests
 ---
 
@@ -200,16 +200,16 @@ This refactor will enable video rendering capabilities while maintaining clean s
 ---
 
 ## Success Criteria
-- [ ] `pip install manifold-gfx[desktop]` installs glfw and enables run()
-- [ ] `pip install manifold-gfx[offline]` installs imageio-ffmpeg and enables render()
-- [ ] `pip install manifold-gfx[all]` installs all backends
-- [ ] Engine.run() works with DESKTOP (GLFW) backend when desktop extra installed
+- [x] `pip install manifold-gfx[desktop]` installs glfw and enables run()
+- [x] `pip install manifold-gfx[offline]` installs imageio-ffmpeg and enables render()
+- [x] `pip install manifold-gfx[all]` installs all backends
+- [x] Engine.run() works with DESKTOP (GLFW) backend when desktop extra installed
 - [ ] Engine.run() works with BROWSER (Pyodide) backend when browser extra installed
-- [ ] Engine.render() produces valid MP4 video file when offline extra installed
-- [ ] Wrong backend usage raises descriptive ValueError with installation hint
-- [ ] Missing backend dependency raises ImportError with pip install command
-- [ ] CI runs tests with `uv sync --extra offline --extra dev` (headless)
-- [ ] All tests pass in CI
+- [x] Engine.render() produces valid MP4 video file when offline extra installed
+- [x] Wrong backend usage raises descriptive ValueError with installation hint
+- [x] Missing backend dependency raises ImportError with pip install command
+- [x] CI runs tests with `uv sync --extra offline --extra dev` (headless)
+- [x] All tests pass in CI
 
 ## Risks & Mitigations
 | Risk | Likelihood | Mitigation |
