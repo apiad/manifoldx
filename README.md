@@ -34,6 +34,7 @@ ManifoldX gives researchers both:
 # Write physics in pure numpy (data-driven, not OOP)
 @engine.system
 def nbody_physics(query, dt):
+    # Magic happens here...
     forces = compute_gravity_all_pairs(query[Transform].pos.data)
     velocities += forces * dt
     query[Transform].pos += velocities * dt
@@ -198,28 +199,28 @@ The `examples/boids.py` demo shows **emergent behavior** from simple local rules
 
 ### Three Demos, Three Vectorization Patterns
 
-| Demo | Entities | Physics Pattern | Operations/Frame |
-|------|----------|-----------------|------------------|
-| `nbody.py` | 500 | All-pairs gravity | N² = 250,000 force pairs |
-| `gas.py` | 500 | Pair collisions + walls | O(N²) pair checks + wall masks |
-| `boids.py` | 300 + 4 | Neighbor flocking + predator-flee | (N,N,3) tensor sums + (N,P,3) |
+| Demo       | Entities | Physics Pattern                   | Operations/Frame               |
+| ---------- | -------- | --------------------------------- | ------------------------------ |
+| `nbody.py` | 500      | All-pairs gravity                 | N² = 250,000 force pairs       |
+| `gas.py`   | 500      | Pair collisions + walls           | O(N²) pair checks + wall masks |
+| `boids.py` | 300 + 4  | Neighbor flocking + predator-flee | (N,N,3) tensor sums + (N,P,3)  |
 
 All three use **pure numpy** — zero Python loops in the hot path. The ECS overhead is ~microseconds/frame; the bottleneck is GPU fill-rate, not CPU physics.
 
-| Example          | Description                                              |
-| ---------------- | -------------------------------------------------------- |
-| `hello_world.py` | Minimal empty window                                     |
-| `cube.py`        | Rotating cube with Phong material                        |
-| `pbr_demo.py`    | 3×2 grid demonstrating PBR materials + 3 orbiting lights |
-| `spheres.py`     | Many spheres with physics-like behavior                  |
-| `nbody.py`       | 500-body gravitational simulation with pure-numpy physics |
-| `gas.py`         | 500-particle ideal gas with collisions and virtual walls  |
+| Example          | Description                                                |
+| ---------------- | ---------------------------------------------------------- |
+| `hello_world.py` | Minimal empty window                                       |
+| `cube.py`        | Rotating cube with Phong material                          |
+| `pbr_demo.py`    | 3×2 grid demonstrating PBR materials + 3 orbiting lights   |
+| `spheres.py`     | Many spheres with physics-like behavior                    |
+| `nbody.py`       | 500-body gravitational simulation with pure-numpy physics  |
+| `gas.py`         | 500-particle ideal gas with collisions and virtual walls   |
 | `boids.py`       | 300-agent flocking simulation with emergent swarm behavior |
 
 Run an example:
 
 ```bash
-python examples/nbody.py        # Interactive window
+python examples/nbody.py              # Interactive window
 python examples/nbody.py --render 60  # Render 60s video to nbody.mp4
 ```
 
@@ -260,7 +261,7 @@ python examples/nbody.py --render 60  # Render 60s video to nbody.mp4
 Render simulations to video files for sharing or CI using the built-in CLI:
 
 ```bash
-python examples/nbody.py --render     # Render 60s → nbody.mp4
+python examples/nbody.py --render
 python examples/nbody.py --render --fps 60 --duration 120 --output movie.mp4
 ```
 
@@ -358,7 +359,3 @@ MIT License — See LICENSE file.
 - [wgpu](https://github.com/gfx-rs/wgpu) — Pure Python WebGPU bindings
 - [PyGfx](https://github.com/pygfx/pygfx) — Reference for WGSL shader patterns
 - [rendercanvas](https://github.com/pygfx/rendercanvas) — Window management
-
----
-
-**Disclaimer:** This project is for educational and research purposes. Not optimized for production use. Performance characteristics will vary by hardware and Python version.
