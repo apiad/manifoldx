@@ -409,11 +409,11 @@ class Engine:
 
     def render(
         self,
+        output: str,
         *,
-        output: str = None,
         fps: int = 30,
-        duration: float = None,
-        frame_count: int = None,
+        duration: float | None = None,
+        frame_count: int | None = None,
         codec: str = "h264",
         quality: str = "high",
         progress: bool = True,
@@ -456,6 +456,7 @@ class Engine:
         # Calculate frame count from duration if needed
         if frame_count is None:
             frame_count = int(duration * fps)
+
         dt = 1.0 / fps
 
         # Import backends module for lazy canvas creation
@@ -492,12 +493,9 @@ class Engine:
             callback()
 
         # Progress tracking
-        try:
-            from tqdm import tqdm
+        from tqdm import tqdm
 
-            pbar = tqdm(total=frame_count, desc="Rendering video")
-        except ImportError:
-            pbar = None
+        pbar = tqdm(total=frame_count, desc="Rendering video")
 
         # === RENDER LOOP ===
         for frame_idx in range(frame_count):
@@ -574,8 +572,7 @@ class Engine:
             writer.send(frame_rgb)
 
             # Update progress
-            if pbar:
-                pbar.update(1)
+            pbar.update(1)
 
             # Update elapsed time
             self.elapsed = (frame_idx + 1) * dt
@@ -583,8 +580,7 @@ class Engine:
         # Clean up
         writer.close()
         writer = None  # type: ignore
-        if pbar:
-            pbar.close()
+        pbar.close()
 
         # Run shutdown callbacks
         for callback in self._shutdown_callbacks:

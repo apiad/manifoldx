@@ -10,6 +10,7 @@ requires-python = ">=3.13"
 dependencies = [
     "numpy>=2.4.4",
     "rendercanvas>=2.6.3",
+    "tqdm>=4.67.3",
     "wgpu>=0.31.0",
 ]
 classifiers = [

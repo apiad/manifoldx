@@ -3,6 +3,27 @@ import pytest
 from manifoldx import Engine
 
 
+# === Simplified API Tests (no Backend enum) ===
+
+
+def test_engine_no_backend_parameter():
+    """Engine no longer has a backend parameter."""
+    import inspect
+
+    sig = inspect.signature(Engine.__init__)
+    params = list(sig.parameters.keys())
+    assert "backend" not in params
+
+
+def test_engine_stores_title_width_height_fullscreen():
+    """Engine stores title, width, height, fullscreen."""
+    engine = Engine("TestApp", width=1280, height=720, fullscreen=True)
+    assert engine.title == "TestApp"
+    assert engine.w == 1280
+    assert engine.h == 720
+    assert engine.fullscreen is True
+
+
 def test_engine_creation():
     """Engine can be created with name and dimensions."""
     engine = Engine("Test", height=600, width=800, fullscreen=False)
