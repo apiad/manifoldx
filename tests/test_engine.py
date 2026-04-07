@@ -392,3 +392,51 @@ def test_engine_run_calls_backend_factory():
         # the canvas would be created via backends module
         # by checking that _init_webgpu would use it
         assert engine.backend == Backend.DESKTOP
+
+
+# === Phase 4: render() with OFFSCREEN Backend ===
+
+
+def test_engine_render_with_offscreen_backend():
+    """Engine with OFFSCREEN backend can call render()."""
+    from manifoldx import Engine, Backend
+
+    engine = Engine("TestRender", backend=Backend.OFFSCREEN, width=640, height=480)
+    assert engine.backend == Backend.OFFSCREEN
+
+
+def test_engine_render_validates_frame_params():
+    """Engine.render() validates fps and frame_count parameters."""
+    from manifoldx import Engine, Backend
+
+    engine = Engine("Test", backend=Backend.OFFSCREEN)
+
+    # Missing output should raise
+    with pytest.raises(ValueError, match="output"):
+        engine.render()
+
+    # Missing duration/frame_count should raise
+    with pytest.raises(ValueError, match="duration.*frame_count"):
+        engine.render(output="test.mp4")
+
+
+def test_engine_render_accepts_duration():
+    """Engine.render() accepts duration parameter."""
+    from manifoldx import Engine, Backend
+
+    engine = Engine("Test", backend=Backend.OFFSCREEN)
+
+    # Duration should be accepted (raises NotImplementedError in placeholder)
+    with pytest.raises(NotImplementedError):
+        engine.render(output="test.mp4", duration=5.0)
+
+
+def test_engine_render_accepts_frame_count():
+    """Engine.render() accepts frame_count parameter."""
+    from manifoldx import Engine, Backend
+
+    engine = Engine("Test", backend=Backend.OFFSCREEN)
+
+    # Frame count should be accepted (raises NotImplementedError in placeholder)
+    with pytest.raises(NotImplementedError):
+        engine.render(output="test.mp4", frame_count=150)

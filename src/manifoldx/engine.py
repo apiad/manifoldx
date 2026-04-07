@@ -447,6 +447,12 @@ class Engine:
                 "Use run() for real-time display."
             )
 
+        # Validate parameters
+        if output is None:
+            raise ValueError("output path required for render()")
+        if duration is None and frame_count is None:
+            raise ValueError("Either duration or frame_count must be specified")
+
         # Placeholder - full implementation in Phase 4
         raise NotImplementedError(
             "render() is not yet implemented. This will be completed in Phase 4."
