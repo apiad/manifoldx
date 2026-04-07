@@ -9,7 +9,7 @@ engine = mx.Engine("Cubes")
 
 # These are all static things that are created
 # and stored in memory once
-cube_mesh = mx.geometry.cube(1,1,1)
+cube_mesh = mx.geometry.cube(1, 1, 1)
 cube_material = mx.material.phong(mx.colors.RED)
 
 
@@ -21,23 +21,16 @@ def create_cubes():
         # These components just store indices to resources
         Mesh(cube_mesh),
         Material(cube_material),
-        Transform(pos=(0,0,0)),
+        Transform(pos=(0, 0, 0)),
         n=1,
     )
 
 
 @engine.system
 def rotate(query: Query[Transform], dt: float):
-    query[Transform].rot += Transform.rotation(x=0, y=dt * math.pi, z =0)
-    query[Transform].pos = (0,math.sin(engine.elapsed),0)
+    query[Transform].rot += Transform.rotation(x=0, y=dt * math.pi, z=0)
+    query[Transform].pos = (0, math.sin(engine.elapsed), 0)
 
 
 if __name__ == "__main__":
-    import sys
-    from pathlib import Path
-
-    if len(sys.argv) > 1 and sys.argv[1] == "--render":
-        duration = float(sys.argv[2]) if len(sys.argv) > 2 else 60
-        engine.render(str(Path(__file__).with_suffix(".mp4")), duration=duration)
-    else:
-        engine.run()
+    engine.cli()

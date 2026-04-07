@@ -1,7 +1,9 @@
 import asyncio
+import argparse
 import wgpu
 import sys
 import numpy as np
+from pathlib import Path
 from time import perf_counter_ns
 
 # Import ECS components
@@ -541,3 +543,81 @@ class Engine:
         writer.send(None)
 
         return writer
+
+    def cli(
+        self,
+        *,
+        fps: int = 30,
+        duration: float = 60,
+        output: str | None = None,
+        quality: str = "high",
+    ) -> None:
+        """Command-line interface for the engine.
+
+        Usage:
+            python example.py           # Interactive window
+            python example.py --render  # Render 60s video
+            python example.py --render --fps 60 --duration 120
+            python example.py --render --output custom.mp4
+
+        Parameters
+        ----------
+        fps : int
+            Frames per second (default: 30).
+        duration : float
+            Video duration in seconds (default: 60).
+        output : str | None
+            Output filename. If None, inferred from script name (default).
+        quality : str
+            Video quality: "low", "medium", "high" (default: "high").
+        """
+        parser = argparse.ArgumentParser(description=self.title)
+        parser.add_argument(
+            "--render",
+            action="store_true",
+            help="Render to video instead of showing window",
+        )
+        parser.add_argument(
+            "--fps",
+            type=int,
+            default=fps,
+            help=f"Frames per second (default: {fps})",
+        )
+        parser.add_argument(
+            "--duration",
+            type=float,
+            default=duration,
+            help=f"Video duration in seconds (default: {duration})",
+        )
+        parser.add_argument(
+            "--output",
+            type=str,
+            default=None,
+            help="Output filename (default: <script>.mp4)",
+        )
+        parser.add_argument(
+            "--quality",
+            type=str,
+            default=quality,
+            choices=["low", "medium", "high"],
+            help=f"Video quality (default: {quality})",
+        )
+
+        args = parser.parse_args()
+
+        if args.render:
+            # Infer output filename from script name
+            if args.output is None:
+                script_path = Path(sys.argv[0]).resolve()
+                output_path = script_path.with_suffix(".mp4")
+            else:
+                output_path = args.output
+
+            self.render(
+                output=str(output_path),
+                fps=args.fps,
+                duration=args.duration,
+                quality=args.quality,
+            )
+        else:
+            self.run()

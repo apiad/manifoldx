@@ -6,8 +6,7 @@ But that's only the surface. If you want to see the coold demos and the technica
 
 ## The Origin Story
 
-
-So, this was back in undergrad, before I did anything related to machine learning or optimization or statistics. My first love was actually computer graphics. I had "learned to code" like, I don't know, at 11 or 12, and for the first five years or so, before getting to college and actually learning to code, all my "coding" was basically tiny games. It was RPG Maker back then---who remembers that?
+So, this starts back in undergrad, before I did anything related to machine learning or optimization or statistics. My first love was actually computer graphics. I had "learned to code" like, I don't know, at 11 or 12, and for the first five years or so, before getting to college and actually learning to code, all my "coding" was basically tiny games. It was RPG Maker back then---who remembers that?
 
 I always wanted to be a game developer, as you may imagine, and I think that's probably the main motivation why I studied Computer Science. There are two kind of people who want to study Computer Science, as a matter of fact. One is people who love games---and the other is, of course, people who hate games; there are no in-betweens.
 
@@ -27,11 +26,11 @@ I basically did a plan and sat for three days to hack this thing.
 
 ## The Engine
 
-My first idea was to make something with a Rust backend for all the graphics engine stuff---the rendering loop, materials, lights---but I quickly decided to drop that idea because getting Rust and Python to talk to each other was becoming increasingly harder and harder, and I really wanted to finally see a damn cube rendering on my screen.
+My first idea was to have a Rust backend for all the graphics engine stuff---the rendering loop, materials, lights---but I quickly decided to drop that idea because getting Rust and Python to talk to each other was becoming increasingly harder and harder, and I really wanted to finally see a damn cube rendering on my screen.
 
-So I decided to switch completely to Python. But since I'm a grown-up now, I have to find some kind of serious objective for making something like this. I decided I didn't want to make a typical graphics engine where you have a scene graph with hierarchies of entities and properties, and you simply render all of them. No, that is way to 2000s.
+So I decided to switch completely to Python. But since I'm a grown-up now, I have to find some kind of serious objective for making something like this. I decided I didn't want to make a typical graphics engine where you have a scene graph with hierarchies of entities and properties, and you simply render all of them. No, that is way too 2000s.
 
-I decided I wanted to do a very fast, data-driven visualization tool purely based on the Entity-Component-System (ECS) paradigm and make it extremely performant, so it would focus on big data-driven simulations like N-body simulations, chemical and physics experiments, you know, grown-up stuff like that.
+I decided I wanted to do a very fast, data-driven visualization tool purely based on the Entity-Component-System (ECS) paradigm and make it extremely performant, so it would focus on big data-driven simulations like N-body simulations, chemical and physics experiments, AI pathfinding and agents, you know, grown-up stuff like that.
 
 (But actually, all I wanted was to play with WGPU and draw some cubes in Python. Wink, wink.)
 
@@ -60,6 +59,8 @@ The key to high performance in ECS is to avoid looping as much as possible. You 
 And if you can write your code like this, then you get a very, very fast rendering loop because instead of making one method invocation per entity, you make one method invocation per _archetype_, that is, per combination of components, which is a couple of order of magnitude less that your entities count.
 
 Here's a minimal example showing how the ECS works in **manifoldx**:
+
+<!-- Use spheres.py here is an example instead of these fake cubes -->
 
 ```python
 import manifoldx as mx
@@ -139,7 +140,7 @@ This runs 500 bodies with 250,000 force pair computations at 60fps.
 
 ### 2. Ideal Gas Simulation
 
-The second example is an ideal gas with elastic collisions inside a bounding box:
+The second example is an ideal gas with elastic collisions inside a bounding box. Again, all running without a single for loop. Collision detection and impact resolution in vectorizednumpy operations.
 
 ```python
 @engine.system
@@ -169,7 +170,7 @@ def gas_physics(query, dt):
 
 ### 3. Boids Flocking
 
-The third example is a Boids simulation with emergent flocking behavior:
+The third example is a Boids simulation with emergent flocking behavior. This is the one that strikes me the most because boids simulation is often compute-heavy. Each individual entity must keep track of a subset of neighbors and adjust behavior based on them, not the whole set of entities. But again, a bit of numpy magic lets us vectorize the crap out of this and simulate 300 boids at 60 frames per second.
 
 ```python
 @engine.system
@@ -190,17 +191,20 @@ def boids_physics(query, dt):
     center = (pos[None,:] * neighbors[:,:,None]).sum(axis=1) / safe_count
 
     # Plus predator avoidance and boundary steering...
+    # That one is easy.
 ```
 
-You can get 300+ boids simulating together, something that would be too expensive in a typical game engine.
+You can check all the examples in the [Github](https://github.com/apiad/manifoldx) repository to see the full code, but the bulk of the implementation is these cleverly vectorized system methods.
 
 ## Future Directions
 
-And that's it. This is the engine. And where I will go with this? I don't know. I always write these things mostly as a learning exercise. I've learned a lot about graphics in Python; I've updated my view of modern graphics. I think I've paid my debt of the last seven years that I haven't done any graphics computation. I'm kind of happy now that I know how to do this.
+And that's it for today. This is my pure Python (well, you know what I mean) graphics engine for serious, grown-up stuff that is surely not a weekend side-project.
 
-There are some things that this engine can go to, a little bit more into rendering custom shaders when you need stuff like lighting effects and stuff like that. But it is not going to become a traditional game engine. I will not add support for lots of game engine-like features like, I don't know, skeleton simulations and animations and level of detail, perhaps, I don't know.
+Where I will go with this? I don't know. I always write these things mostly as a learning exercise and I've learned a lot about graphics in Python. I've updated my view of modern graphics and I think I've paid my debt of the last seven years that I haven't done any graphics computation. I'm kind of happy now that I know how to do this.
 
-There are two areas which I do believe I would like to explore in the future more. One is: extend the engine towards the kind of behavior you need to write for AI simulations, like if you want to run some sort of agent simulation or ant colony optimization or stuff like that. That code doesn't look that much as a frame-by-frame update, but it looks more like an asynchronous event-kind of code, which is also something that is not usual in game engines. You cannot do async await for some event to happen. That is one direction to go.
+There are some places this engine can go to, like rendering custom shaders when you need stuff like lighting effects. But it is not going to become a traditional, full-blown game engine. I will not add support for lots of game engine-like features including, I don't know, skeletal animations, level of detail, scene management, or, god forbids, visual scripting or any nonsense like that.
+
+There are two areas which I do believe I would like to explore in the future. One is extending the engine towards the kind of behavior you need to write for AI simulations, like if you want to run some sort of agent simulation or ant colony optimization or stuff like that. That code doesn't look that much as a frame-by-frame update, but it looks more like an asynchronous event-kind of code, which is also something that is not usual in game engines. You cannot do async await for some event to happen. That is one direction to go.
 
 And the other direction to go is towards procedural generation of meshes and content in general, which is an area I left five or six years ago—haven't come back to it. And there is so much that I want to do in the sense of, I don't know, building infinite worlds with infinite trees that keep expanding on-site, stuff like that, just for the sake of fun.
 

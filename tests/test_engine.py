@@ -351,3 +351,25 @@ def test_engine_render_produces_video_file(tmp_path):
     # Verify the file was created and has content
     assert output_file.exists()
     assert output_file.stat().st_size > 0
+
+
+# === CLI Tests ===
+
+
+def test_engine_has_cli_method():
+    """Engine has a cli method."""
+    engine = Engine("Test")
+    assert hasattr(engine, "cli")
+    assert callable(engine.cli)
+
+
+def test_engine_cli_accepts_custom_params():
+    """Engine.cli() accepts custom parameters."""
+    import inspect
+
+    sig = inspect.signature(Engine.cli)
+    params = list(sig.parameters.keys())
+    assert "fps" in params
+    assert "duration" in params
+    assert "output" in params
+    assert "quality" in params

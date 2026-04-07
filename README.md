@@ -57,9 +57,15 @@ def nbody_physics(query, dt):
 ## Installation
 
 ```bash
-pip install manifold-gfx
-# or
+pip install manifold-gfx           # Base (no rendering backends)
+pip install manifold-gfx[desktop]  # + GLFW for desktop window
+pip install manifold-gfx[offline]  # + imageio-ffmpeg for video
+pip install manifold-gfx[all]      # Everything
+
+# or with uv
 uv add manifold-gfx
+uv add manifold-gfx[desktop]       # Desktop rendering
+uv add manifold-gfx[offline]      # Video rendering
 ```
 
 **Requirements:**
@@ -68,6 +74,8 @@ uv add manifold-gfx
   - Vulkan on Linux
   - Metal on macOS
   - D3D12 on Windows
+
+**Note:** Install with `[desktop]` for interactive rendering, `[offline]` for video output, or `[all]` for both.
 
 ## Quick Start
 
@@ -119,14 +127,11 @@ def animate_lights(query: mx.Query[Transform], dt: float):
 # Auto-fit camera to view the scene
 engine.camera.fit(radius=5.0, azimuth=30, elevation=35)
 
-# Run!
+# Run with interactive window
 engine.run()
-```
 
-Save as `my_scene.py` and run:
-
-```bash
-python my_scene.py
+# Or render to video file (headless)
+# engine.render(output="my_scene.mp4", duration=60, fps=30)
 ```
 
 ## N-Body Simulation
@@ -209,10 +214,8 @@ All three use **pure numpy** — zero Python loops in the hot path. The ECS over
 Run an example:
 
 ```bash
-python -m examples.nbody   # N-body gravitational simulation
-python -m examples.gas     # Ideal gas with elastic collisions
-python -m examples.boids   # Boids flocking with soft boundary
-python -m examples.pbr_demo
+python examples/nbody.py        # Interactive window
+python examples/nbody.py --render 60  # Render 60s video to nbody.mp4
 ```
 
 ## Features
@@ -246,6 +249,27 @@ python -m examples.pbr_demo
 - Cube (with normals)
 - UV Sphere (with normals, CCW winding)
 - Plane (with normals)
+
+### Video Rendering
+
+Render simulations to video files for sharing or CI:
+
+```python
+engine.render(
+    output="simulation.mp4",
+    fps=30,           # Frame rate
+    duration=60,      # Duration in seconds (or use frame_count)
+    quality="high",   # low, medium, high
+)
+```
+
+All examples support `--render` for video output:
+```bash
+python examples/nbody.py --render 60   # 60 second video
+python examples/boids.py --render       # Default 60 seconds
+```
+
+**Note:** Video rendering requires the `offline` extra: `pip install manifold-gfx[offline]`
 
 ## Architecture Highlights
 
@@ -304,14 +328,14 @@ python -m examples.cube
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests (uses offline backend for headless CI)
 make test
 
 # Run specific test file
 python -m pytest tests/test_ecs.py -v
 ```
 
-Current test coverage: **150+ tests** covering ECS operations, components, materials, rendering, and camera.
+Current test coverage: **162 tests** covering ECS operations, components, materials, rendering, camera, and video output.
 
 ## License
 

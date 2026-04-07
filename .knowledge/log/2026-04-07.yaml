@@ -1,0 +1,11 @@
+entries:
+  - timestamp: 2026-04-07T12:00:00-04:00
+    type: commit
+    message: "feat(examples): add --render flag for video output support"
+    files:
+      - examples/boids.py
+      - examples/cube.py
+      - examples/gas.py
+      - examples/nbody.py
+      - examples/pbr_demo.py
+      - examples/spheres.py
