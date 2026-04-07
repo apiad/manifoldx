@@ -241,36 +241,6 @@ class Engine:
         if hasattr(indices, "__len__") and len(indices) > 0:
             self.commands.append(Command(CommandType.DESTROY, {"indices": indices}))
 
-    def _init_webgpu(self):
-        # Import backends module for lazy canvas creation
-        from manifoldx.backends import get_desktop_canvas
-
-        # Create canvas based on backend type
-        self._render_canvas = get_desktop_canvas(
-            width=self.w,
-            height=self.h,
-            fullscreen=self.fullscreen,
-            title=self.title,
-        )
-
-        # Get the wgpu context from the canvas
-        self._wgpu_context = self._render_canvas.get_wgpu_context()
-
-        # Request adapter and device (use sync API to avoid deprecation warnings)
-        self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
-        self._device = self._adapter.request_device_sync()
-
-        # Configure the swap chain
-        self._wgpu_context.configure(
-            device=self._device,
-            format=wgpu.TextureFormat.bgra8unorm,
-        )
-
-        # Depth texture created lazily in _draw_frame to match canvas size
-        self._depth_texture = None
-        self._depth_texture_view = None
-        self._depth_texture_size = (0, 0)
-
     def _draw_frame(self):
         """Draw callback invoked by rendercanvas event loop each frame."""
         # Check if we should stop - must be FIRST to avoid crashes
@@ -357,19 +327,42 @@ class Engine:
             self._render_canvas.request_draw()
 
     def run(self):
-        """Run the engine with real-time rendering (DESKTOP or BROWSER backend).
+        """Run the engine with real-time rendering.
 
-        Raises:
-            ValueError: If backend is OFFSCREEN (use render() for video output).
+        Automatically uses:
+        - PyodideRenderCanvas if running in browser (emscripten)
+        - GlfwRenderCanvas otherwise (desktop)
+
+        Note: Use render() for video output instead.
         """
-        # Validate backend - run() only works with DESKTOP or BROWSER
-        if self.backend == Backend.OFFSCREEN:
-            raise ValueError(
-                f"run() requires DESKTOP or BROWSER backend, got OFFSCREEN. "
-                "Use render() for video output."
-            )
+        # Import backends module for lazy canvas creation
+        from manifoldx.backends import get_desktop_canvas
 
-        self._init_webgpu()
+        # Create canvas (GLFW on desktop, handled by backends module)
+        self._render_canvas = get_desktop_canvas(
+            width=self.w,
+            height=self.h,
+            fullscreen=self.fullscreen,
+            title=self.title,
+        )
+
+        # Get the wgpu context from the canvas
+        self._wgpu_context = self._render_canvas.get_wgpu_context()
+
+        # Request adapter and device (use sync API to avoid deprecation warnings)
+        self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+        self._device = self._adapter.request_device_sync()
+
+        # Configure the swap chain
+        self._wgpu_context.configure(
+            device=self._device,
+            format=wgpu.TextureFormat.bgra8unorm,
+        )
+
+        # Depth texture created lazily in _draw_frame to match canvas size
+        self._depth_texture = None
+        self._depth_texture_view = None
+        self._depth_texture_size = (0, 0)
 
         self._running = True
         self._start_time = perf_counter_ns()
@@ -378,6 +371,19 @@ class Engine:
 
         for callback in self._startup_callbacks:
             callback()
+
+        # Register draw callback and run the canvas event loop
+        from rendercanvas.glfw import loop as glfw_loop
+
+        self._event_loop = glfw_loop
+        self._render_canvas.request_draw(self._draw_frame)
+        try:
+            glfw_loop.run()
+        except Exception as e:
+            print(f"Event loop error: {e}")
+        finally:
+            for callback in self._shutdown_callbacks:
+                callback()
 
         # Register draw callback and run the canvas event loop
         from rendercanvas.glfw import loop as glfw_loop
