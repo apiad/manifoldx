@@ -453,7 +453,170 @@ class Engine:
         if duration is None and frame_count is None:
             raise ValueError("Either duration or frame_count must be specified")
 
-        # Placeholder - full implementation in Phase 4
-        raise NotImplementedError(
-            "render() is not yet implemented. This will be completed in Phase 4."
+        # Calculate frame count from duration if needed
+        if frame_count is None:
+            frame_count = int(duration * fps)
+        dt = 1.0 / fps
+
+        # Import backends module for lazy canvas creation
+        from manifoldx.backends import get_offscreen_canvas
+
+        # Create offscreen canvas for headless rendering
+        self._render_canvas = get_offscreen_canvas(width=self.w, height=self.h)
+
+        # Initialize WebGPU
+        self._wgpu_context = self._render_canvas.get_wgpu_context()
+        self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+        self._device = self._adapter.request_device_sync()
+
+        # Get preferred texture format from canvas context
+        texture_format = self._wgpu_context.get_preferred_format(self._adapter)
+        self._texture_format = texture_format
+        self._wgpu_context.configure(device=self._device, format=texture_format)
+
+        # Depth texture (created lazily per frame)
+        self._depth_texture = None
+        self._depth_texture_view = None
+        self._depth_texture_size = (0, 0)
+
+        # Set up video writer with imageio-ffmpeg
+        writer = self._get_video_writer(output, fps, self.w, self.h, codec, quality)
+
+        # Initialize timing
+        self._start_time = perf_counter_ns()
+        self._last_time = self._start_time
+        self.elapsed = 0.0
+
+        # Run startup callbacks
+        for callback in self._startup_callbacks:
+            callback()
+
+        # Progress tracking
+        try:
+            from tqdm import tqdm
+
+            pbar = tqdm(total=frame_count, desc="Rendering video")
+        except ImportError:
+            pbar = None
+
+        # === RENDER LOOP ===
+        for frame_idx in range(frame_count):
+            # Clear command buffer
+            self.commands.clear()
+
+            # Run all user systems with fixed timestep
+            self.systems.run_all(self, dt)
+
+            # Execute command buffer
+            self.commands.execute(self.store)
+
+            # Run render pipeline
+            self._render_pipeline.run(self, dt)
+            self._render_pipeline._ensure_pipeline(self._device, wgpu.TextureFormat.bgra8unorm)
+
+            # Update registries with device reference
+            self._geometry_registry._device = self._device
+            self._material_registry._device = self._device
+
+            # Get current texture and create view
+            texture = self._wgpu_context.get_current_texture()
+            texture_view = texture.create_view()
+
+            # Recreate depth texture if canvas size changed
+            tex_size = (texture.size[0], texture.size[1])
+            if tex_size != self._depth_texture_size:
+                self._depth_texture = self._device.create_texture(
+                    size=(tex_size[0], tex_size[1], 1),
+                    format=wgpu.TextureFormat.depth24plus,
+                    usage=wgpu.TextureUsage.RENDER_ATTACHMENT,
+                )
+                self._depth_texture_view = self._depth_texture.create_view()
+                self._depth_texture_size = tex_size
+
+            # Create command encoder
+            command_encoder = self._device.create_command_encoder()
+
+            # Begin render pass
+            render_pass = command_encoder.begin_render_pass(
+                color_attachments=[
+                    {
+                        "view": texture_view,
+                        "resolve_target": None,
+                        "clear_value": (0.1, 0.1, 0.2, 1.0),
+                        "load_op": wgpu.LoadOp.clear,
+                        "store_op": wgpu.StoreOp.store,
+                    }
+                ],
+                depth_stencil_attachment={
+                    "view": self._depth_texture_view,
+                    "depth_clear_value": 1.0,
+                    "depth_load_op": wgpu.LoadOp.clear,
+                    "depth_store_op": wgpu.StoreOp.store,
+                },
+            )
+
+            # Issue draw calls
+            self._render_pipeline.render(self, render_pass)
+
+            # End render pass
+            render_pass.end()
+
+            # Submit command buffer
+            self._device.queue.submit([command_encoder.finish()])
+
+            # Capture frame from canvas
+            frame = self._render_canvas.draw()
+
+            # Convert RGBA to RGB (most video codecs don't support alpha)
+            frame_rgb = frame[:, :, :3].copy()  # Make contiguous
+
+            # Write to video
+            writer.send(frame_rgb)
+
+            # Update progress
+            if pbar:
+                pbar.update(1)
+
+            # Update elapsed time
+            self.elapsed = (frame_idx + 1) * dt
+
+        # Clean up
+        writer.close()
+        writer = None  # type: ignore
+        if pbar:
+            pbar.close()
+
+        # Run shutdown callbacks
+        for callback in self._shutdown_callbacks:
+            callback()
+
+        print(f"Video saved: {output}")
+
+    def _get_video_writer(self, output, fps, width, height, codec, quality):
+        """Set up imageio-ffmpeg video writer."""
+        import imageio_ffmpeg
+
+        # Quality presets (1-10 scale for imageio-ffmpeg)
+        quality_map = {
+            "low": 1,
+            "medium": 3,
+            "high": 5,
+            "ultra": 8,
+        }
+        quality_value = quality_map.get(quality, 5)
+
+        # Get writer with ffmpeg
+        writer = imageio_ffmpeg.write_frames(
+            output,
+            size=(width, height),
+            fps=fps,
+            codec="libx264" if codec == "h264" else codec,
+            quality=quality_value,
+            pix_fmt_in="rgb24",
+            pix_fmt_out="yuv420p",
         )
+
+        # Seed the generator
+        writer.send(None)
+
+        return writer
