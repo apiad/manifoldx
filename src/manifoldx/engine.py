@@ -257,10 +257,16 @@ class Engine:
             self.commands.append(Command(CommandType.DESTROY, {"indices": indices}))
 
     def _init_webgpu(self):
-        # Use rendercanvas's GlfwRenderCanvas - lazy import to avoid CI issues
-        from rendercanvas.glfw import GlfwRenderCanvas
+        # Import backends module for lazy canvas creation
+        from manifoldx.backends import get_desktop_canvas
 
-        self._render_canvas = GlfwRenderCanvas()
+        # Create canvas based on backend type
+        self._render_canvas = get_desktop_canvas(
+            width=self.w,
+            height=self.h,
+            fullscreen=self.fullscreen,
+            title=self.title,
+        )
 
         # Get the wgpu context from the canvas
         self._wgpu_context = self._render_canvas.get_wgpu_context()
