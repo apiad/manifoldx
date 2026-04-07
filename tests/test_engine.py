@@ -24,7 +24,7 @@ def test_engine_stores_title_width_height_fullscreen():
     assert engine.fullscreen is True
 
 
-# === Phase 2: run() is context-aware ===
+# === run() is context-aware ===
 
 
 def test_run_uses_glfw_on_desktop():
@@ -53,6 +53,23 @@ def test_run_raises_import_error_without_glfw():
     source = inspect.getsource(get_desktop_canvas)
     assert "glfw" in source
     assert "manifold-gfx[desktop]" in source
+
+
+# === render() uses offscreen unconditionally ===
+
+
+def test_render_uses_offscreen():
+    """render() uses OffscreenRenderCanvas for headless rendering."""
+    from manifoldx.backends import get_offscreen_canvas
+    import inspect
+
+    # Verify get_offscreen_canvas exists and is correct
+    source = inspect.getsource(get_offscreen_canvas)
+    assert "imageio-ffmpeg" in source
+    assert "manifold-gfx[offline]" in source
+
+
+# === Engine Basic Tests ===
 
 
 def test_engine_creation():
@@ -107,6 +124,13 @@ def test_engine_has_run_method():
     engine = Engine("Test")
     assert hasattr(engine, "run")
     assert callable(engine.run)
+
+
+def test_engine_has_render_method():
+    """Engine has render method for video output."""
+    engine = Engine("Test")
+    assert hasattr(engine, "render")
+    assert callable(engine.render)
 
 
 def test_engine_has_window_attribute():
@@ -180,16 +204,6 @@ def test_engine_calls_update_callbacks():
     assert tick in engine._update_callbacks
 
 
-def test_engine_has_render_method():
-    """Engine has method for rendering frames."""
-    engine = Engine("Test")
-    assert (
-        hasattr(engine, "_render_frame")
-        or hasattr(engine, "render_frame")
-        or hasattr(engine, "_draw_frame")
-    )
-
-
 def test_engine_uses_rendercanvas():
     """Engine uses rendercanvas's GlfwRenderCanvas."""
     try:
@@ -241,77 +255,7 @@ def test_engine_stores_rendercanvas_canvas():
     assert hasattr(engine, "_render_canvas") or hasattr(engine, "render_canvas")
 
 
-# === Phase 1: Backend Enum and Optional Dependencies ===
-
-
-def test_backend_enum_exists():
-    """Backend enum is defined in manifoldx module."""
-    from manifoldx import Backend
-
-    assert Backend is not None
-    assert hasattr(Backend, "DESKTOP")
-    assert hasattr(Backend, "BROWSER")
-    assert hasattr(Backend, "OFFSCREEN")
-
-
-def test_backend_enum_has_string_values():
-    """Backend enum values are strings matching backend module names."""
-    from manifoldx import Backend
-
-    # String values match rendercanvas module names
-    assert Backend.DESKTOP == "glfw"
-    assert Backend.BROWSER == "pyodide"
-    assert Backend.OFFSCREEN == "offscreen"
-
-
-def test_engine_accepts_backend_parameter():
-    """Engine accepts backend parameter in constructor."""
-    from manifoldx import Engine, Backend
-
-    engine = Engine("Test", backend=Backend.DESKTOP)
-    assert engine.backend == Backend.DESKTOP
-
-    engine = Engine("Test", backend=Backend.OFFSCREEN)
-    assert engine.backend == Backend.OFFSCREEN
-
-
-def test_engine_default_backend_is_desktop():
-    """Engine defaults to DESKTOP backend."""
-    from manifoldx import Engine, Backend
-
-    engine = Engine("Test")
-    assert engine.backend == Backend.DESKTOP
-
-
-def test_engine_has_render_method():
-    """Engine has render method for video output."""
-    from manifoldx import Engine
-
-    engine = Engine("Test")
-    assert hasattr(engine, "render")
-    assert callable(engine.render)
-
-
-def test_engine_render_raises_for_non_offscreen_backend():
-    """Engine.render() raises ValueError for non-OFFSCREEN backends."""
-    from manifoldx import Engine, Backend
-
-    engine = Engine("Test", backend=Backend.DESKTOP)
-    with pytest.raises(ValueError, match="render.*OFFSCREEN"):
-        engine.render(output="test.mp4", frame_count=1)
-
-
-def test_engine_run_raises_for_offscreen_backend():
-    """Engine.run() raises ValueError for OFFSCREEN backend."""
-    from manifoldx import Engine, Backend
-
-    engine = Engine("Test", backend=Backend.OFFSCREEN)
-    # Note: This will raise ValueError because run() can't work with offscreen
-    with pytest.raises(ValueError, match="run.*DESKTOP.*BROWSER"):
-        engine.run()
-
-
-# === Phase 2: Lazy Backend Imports ===
+# === Backends Module Tests ===
 
 
 def test_backends_module_exists():
@@ -328,9 +272,6 @@ def test_get_desktop_canvas_raises_without_glfw():
     """get_desktop_canvas raises ImportError if glfw not installed."""
     from manifoldx.backends import get_desktop_canvas
 
-    # Note: glfw is installed in dev environment, so we can't easily test
-    # the missing case. This test verifies the error message format.
-
     # Verify the error message in source code
     import inspect
 
@@ -343,14 +284,7 @@ def test_get_offscreen_canvas_raises_without_imageio():
     """get_offscreen_canvas raises ImportError if imageio-ffmpeg not installed."""
     from manifoldx.backends import get_offscreen_canvas
 
-    # Note: imageio-ffmpeg is installed in dev environment, so we can't easily test
-    # the missing case. This test verifies the function exists and is callable.
-    # The error message is validated in the docstring and the code structure.
-
-    # The function should exist and be callable
-    assert callable(get_offscreen_canvas)
-
-    # We can verify the error message format by checking the source
+    # Verify the error message in source code
     import inspect
 
     source = inspect.getsource(get_offscreen_canvas)
@@ -358,114 +292,27 @@ def test_get_offscreen_canvas_raises_without_imageio():
     assert "manifold-gfx[offline]" in source
 
 
-# === Phase 3: run() with Desktop Backend ===
+# === render() Video Output Tests ===
 
 
-def test_engine_run_uses_backend_canvas():
-    """Engine.run() creates canvas using backends module."""
-    from manifoldx import Engine, Backend
-    from manifoldx import backends
+def test_engine_render_validates_params():
+    """Engine.render() validates output and frame parameters."""
+    engine = Engine("Test")
 
-    # Verify Engine uses the backends module
-    engine = Engine("Test", backend=Backend.DESKTOP)
-
-    # The Engine should have backend attribute set correctly
-    assert engine.backend == Backend.DESKTOP
-    assert engine.title == "Test"
-    assert engine.w == 800  # default width
-    assert engine.h == 600  # default height
-
-
-def test_engine_run_passes_size_to_backend():
-    """Engine.run() passes width and height to backend canvas."""
-    from manifoldx import Engine, Backend
-
-    engine = Engine(
-        "TestCanvas",
-        backend=Backend.DESKTOP,
-        width=1280,
-        height=720,
-    )
-
-    # Verify dimensions are stored
-    assert engine.w == 1280
-    assert engine.h == 720
-    assert engine.title == "TestCanvas"
-
-
-def test_engine_run_passes_fullscreen_to_backend():
-    """Engine.run() passes fullscreen flag to backend canvas."""
-    from manifoldx import Engine, Backend
-
-    engine = Engine(
-        "Test",
-        backend=Backend.DESKTOP,
-        fullscreen=True,
-    )
-
-    assert engine.fullscreen is True
-
-
-def test_engine_run_calls_backend_factory():
-    """Engine.run() creates canvas via backends module."""
-    from manifoldx import Engine, Backend
-    from manifoldx import backends
-    from unittest.mock import patch, MagicMock
-
-    # Create a mock canvas
-    mock_canvas = MagicMock()
-    mock_canvas.get_wgpu_context.return_value = MagicMock()
-
-    # Patch at the backends module level
-    with patch.object(backends, "get_desktop_canvas", return_value=mock_canvas):
-        engine = Engine(
-            "TestFactory",
-            backend=Backend.DESKTOP,
-            width=1024,
-            height=768,
-            fullscreen=False,
-        )
-
-        # We can't actually run the event loop, but we can verify
-        # the canvas would be created via backends module
-        # by checking that _init_webgpu would use it
-        assert engine.backend == Backend.DESKTOP
-
-
-# === Phase 4: render() with OFFSCREEN Backend ===
-
-
-def test_engine_render_with_offscreen_backend():
-    """Engine with OFFSCREEN backend can call render()."""
-    from manifoldx import Engine, Backend
-
-    engine = Engine("TestRender", backend=Backend.OFFSCREEN, width=640, height=480)
-    assert engine.backend == Backend.OFFSCREEN
-
-
-def test_engine_render_validates_frame_params():
-    """Engine.render() validates fps and frame_count parameters."""
-    from manifoldx import Engine, Backend
-
-    engine = Engine("Test", backend=Backend.OFFSCREEN)
-
-    # Missing output should raise
-    with pytest.raises(ValueError, match="output"):
+    # Missing output should raise TypeError (required positional arg)
+    with pytest.raises(TypeError):
         engine.render()
 
-    # Missing duration/frame_count should raise
+    # Missing duration/frame_count should raise ValueError
     with pytest.raises(ValueError, match="duration.*frame_count"):
         engine.render(output="test.mp4")
 
 
 def test_engine_render_accepts_duration():
     """Engine.render() accepts duration parameter."""
-    from manifoldx import Engine, Backend
+    engine = Engine("Test")
 
-    engine = Engine("Test", backend=Backend.OFFSCREEN)
-
-    # Verify the method accepts duration (may raise on actual execution)
-    # This just checks the signature is correct
+    # Verify the method accepts duration
     import inspect
 
     sig = inspect.signature(engine.render)
@@ -474,12 +321,9 @@ def test_engine_render_accepts_duration():
 
 def test_engine_render_accepts_frame_count():
     """Engine.render() accepts frame_count parameter."""
-    from manifoldx import Engine, Backend
+    engine = Engine("Test")
 
-    engine = Engine("Test", backend=Backend.OFFSCREEN)
-
-    # Verify the method accepts frame_count (may raise on actual execution)
-    # This just checks the signature is correct
+    # Verify the method accepts frame_count
     import inspect
 
     sig = inspect.signature(engine.render)
@@ -488,11 +332,8 @@ def test_engine_render_accepts_frame_count():
 
 def test_engine_render_produces_video_file(tmp_path):
     """Engine.render() produces a valid video file."""
-    from manifoldx import Engine, Backend
-
     engine = Engine(
         "TestRender",
-        backend=Backend.OFFSCREEN,
         width=320,
         height=240,
     )
@@ -510,47 +351,3 @@ def test_engine_render_produces_video_file(tmp_path):
     # Verify the file was created and has content
     assert output_file.exists()
     assert output_file.stat().st_size > 0
-
-
-# === Phase 5: CI Validation ===
-
-
-def test_engine_run_raises_in_offline_context():
-    """Engine.run() raises ValueError when OFFSCREEN backend is set.
-
-    This simulates CI environment where only OFFSCREEN is available.
-    """
-    from manifoldx import Engine, Backend
-
-    engine = Engine("Test", backend=Backend.OFFSCREEN)
-
-    # In CI (offline-only), run() should raise ValueError
-    with pytest.raises(ValueError, match="run.*DESKTOP.*BROWSER.*OFFSCREEN"):
-        engine.run()
-
-
-def test_engine_render_works_in_offline_context():
-    """Engine.render() works when OFFSCREEN backend is set.
-
-    This verifies that in CI (offline-only), render() is the correct method.
-    """
-    from manifoldx import Engine, Backend
-
-    engine = Engine(
-        "Test",
-        backend=Backend.OFFSCREEN,
-        width=320,
-        height=240,
-    )
-
-    # Verify backend is set correctly
-    assert engine.backend == Backend.OFFSCREEN
-
-    # Verify render() doesn't raise backend error
-    import inspect
-
-    sig = inspect.signature(engine.render)
-    assert "output" in sig.parameters
-    assert "fps" in sig.parameters
-    assert "duration" in sig.parameters
-    assert "frame_count" in sig.parameters
