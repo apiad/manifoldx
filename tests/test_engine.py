@@ -458,3 +458,47 @@ def test_engine_render_produces_video_file(tmp_path):
     # Verify the file was created and has content
     assert output_file.exists()
     assert output_file.stat().st_size > 0
+
+
+# === Phase 5: CI Validation ===
+
+
+def test_engine_run_raises_in_offline_context():
+    """Engine.run() raises ValueError when OFFSCREEN backend is set.
+
+    This simulates CI environment where only OFFSCREEN is available.
+    """
+    from manifoldx import Engine, Backend
+
+    engine = Engine("Test", backend=Backend.OFFSCREEN)
+
+    # In CI (offline-only), run() should raise ValueError
+    with pytest.raises(ValueError, match="run.*DESKTOP.*BROWSER.*OFFSCREEN"):
+        engine.run()
+
+
+def test_engine_render_works_in_offline_context():
+    """Engine.render() works when OFFSCREEN backend is set.
+
+    This verifies that in CI (offline-only), render() is the correct method.
+    """
+    from manifoldx import Engine, Backend
+
+    engine = Engine(
+        "Test",
+        backend=Backend.OFFSCREEN,
+        width=320,
+        height=240,
+    )
+
+    # Verify backend is set correctly
+    assert engine.backend == Backend.OFFSCREEN
+
+    # Verify render() doesn't raise backend error
+    import inspect
+
+    sig = inspect.signature(engine.render)
+    assert "output" in sig.parameters
+    assert "fps" in sig.parameters
+    assert "duration" in sig.parameters
+    assert "frame_count" in sig.parameters
