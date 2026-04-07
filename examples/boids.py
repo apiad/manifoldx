@@ -166,5 +166,6 @@ def boids_physics(query: mx.Query[Transform], dt: float):
     query[Transform].pos += delta
 
 
-print(f"Boids: {NUM_BOIDS} agents + {NUM_PREDATORS} predators")
 engine.run()
+# or alternatively
+# engine.render("boids.mp4", duration=60)

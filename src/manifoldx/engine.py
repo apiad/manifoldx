@@ -241,9 +241,45 @@ class Engine:
         if hasattr(indices, "__len__") and len(indices) > 0:
             self.commands.append(Command(CommandType.DESTROY, {"indices": indices}))
 
+    # === Canvas Initialization ===
+
+    def _init_canvas(self, canvas):
+        """Initialize WebGPU context from a canvas (shared by run() and render())."""
+        self._render_canvas = canvas
+
+        # Get the wgpu context from the canvas
+        self._wgpu_context = canvas.get_wgpu_context()
+
+        # Request adapter and device (use sync API to avoid deprecation warnings)
+        self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+        self._device = self._adapter.request_device_sync()
+
+        # Get preferred texture format from canvas context
+        texture_format = self._wgpu_context.get_preferred_format(self._adapter)
+        self._texture_format = texture_format
+
+        # Configure the swap chain
+        self._wgpu_context.configure(device=self._device, format=texture_format)
+
+        # Update registries with device reference
+        self._geometry_registry._device = self._device
+        self._material_registry._device = self._device
+
+        # Depth texture created lazily to match canvas size
+        self._depth_texture = None
+        self._depth_texture_view = None
+        self._depth_texture_size = (0, 0)
+
+        # Initialize timing
+        self._start_time = perf_counter_ns()
+        self._last_time = self._start_time
+        self.elapsed = 0.0
+
+    # === Frame Rendering (shared by run() and render()) ===
+
     def _draw_frame(self):
-        """Draw callback invoked by rendercanvas event loop each frame."""
-        # Check if we should stop - must be FIRST to avoid crashes
+        """Draw a single frame. Backend-agnostic - used by both run() and render()."""
+        # Check if we should stop (only for run() with event loop)
         if not self._running:
             return False  # Stop the event loop
 
@@ -265,16 +301,11 @@ class Engine:
         # 3. Execute command buffer (apply all spawn/destroy/update)
         self.commands.execute(self.store)
 
-        # 4. RENDER PIPELINE (runs after commands)
+        # 4. RENDER PIPELINE
         self._render_pipeline.run(self, dt)
 
-        # 5. Render frame to screen
         # Ensure render pipeline is initialized
-        self._render_pipeline._ensure_pipeline(self._device, wgpu.TextureFormat.bgra8unorm)
-
-        # Also update registries with device reference
-        self._geometry_registry._device = self._device
-        self._material_registry._device = self._device
+        self._render_pipeline._ensure_pipeline(self._device, self._texture_format)
 
         # Get the next frame's texture and create view
         texture = self._wgpu_context.get_current_texture()
@@ -322,9 +353,14 @@ class Engine:
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
 
-        # Request next frame only if still running
+        return True  # Continue rendering
+
+    def _run_loop(self):
+        """Called each frame by the event loop (run() mode)."""
+        self._draw_frame()
+        # Re-queue for next frame if still running
         if self._running:
-            self._render_canvas.request_draw()
+            self._render_canvas.request_draw(self._run_loop)
 
     def run(self):
         """Run the engine with real-time rendering.
@@ -339,36 +375,19 @@ class Engine:
         from manifoldx.backends import get_desktop_canvas
 
         # Create canvas (GLFW on desktop, handled by backends module)
-        self._render_canvas = get_desktop_canvas(
+        canvas = get_desktop_canvas(
             width=self.w,
             height=self.h,
             fullscreen=self.fullscreen,
             title=self.title,
         )
 
-        # Get the wgpu context from the canvas
-        self._wgpu_context = self._render_canvas.get_wgpu_context()
-
-        # Request adapter and device (use sync API to avoid deprecation warnings)
-        self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
-        self._device = self._adapter.request_device_sync()
-
-        # Configure the swap chain
-        self._wgpu_context.configure(
-            device=self._device,
-            format=wgpu.TextureFormat.bgra8unorm,
-        )
-
-        # Depth texture created lazily in _draw_frame to match canvas size
-        self._depth_texture = None
-        self._depth_texture_view = None
-        self._depth_texture_size = (0, 0)
+        # Initialize WebGPU context
+        self._init_canvas(canvas)
 
         self._running = True
-        self._start_time = perf_counter_ns()
-        self._last_time = self._start_time
-        self.elapsed = 0.0
 
+        # Run startup callbacks
         for callback in self._startup_callbacks:
             callback()
 
@@ -376,12 +395,13 @@ class Engine:
         from rendercanvas.glfw import loop as glfw_loop
 
         self._event_loop = glfw_loop
-        self._render_canvas.request_draw(self._draw_frame)
+        self._render_canvas.request_draw(self._run_loop)
         try:
             glfw_loop.run()
         except Exception as e:
             print(f"Event loop error: {e}")
         finally:
+            self._running = False
             for callback in self._shutdown_callbacks:
                 callback()
 
@@ -427,110 +447,41 @@ class Engine:
         if frame_count is None:
             frame_count = int(duration * fps)
 
+        # Use fixed timestep for video rendering
         dt = 1.0 / fps
 
         # Import backends module for lazy canvas creation
         from manifoldx.backends import get_offscreen_canvas
 
         # Create offscreen canvas for headless rendering
-        self._render_canvas = get_offscreen_canvas(width=self.w, height=self.h)
+        canvas = get_offscreen_canvas(width=self.w, height=self.h)
 
-        # Initialize WebGPU
-        self._wgpu_context = self._render_canvas.get_wgpu_context()
-        self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
-        self._device = self._adapter.request_device_sync()
+        # Initialize WebGPU context
+        self._init_canvas(canvas)
 
-        # Get preferred texture format from canvas context
-        texture_format = self._wgpu_context.get_preferred_format(self._adapter)
-        self._texture_format = texture_format
-        self._wgpu_context.configure(device=self._device, format=texture_format)
-
-        # Depth texture (created lazily per frame)
-        self._depth_texture = None
-        self._depth_texture_view = None
-        self._depth_texture_size = (0, 0)
+        self._running = True
 
         # Set up video writer with imageio-ffmpeg
         writer = self._get_video_writer(output, fps, self.w, self.h, codec, quality)
-
-        # Initialize timing
-        self._start_time = perf_counter_ns()
-        self._last_time = self._start_time
-        self.elapsed = 0.0
 
         # Run startup callbacks
         for callback in self._startup_callbacks:
             callback()
 
         # Progress tracking
-        from tqdm import tqdm
+        pbar = None
+        if progress:
+            try:
+                from tqdm import tqdm
 
-        pbar = tqdm(total=frame_count, desc="Rendering video")
+                pbar = tqdm(total=frame_count, desc="Rendering video", unit="frames")
+            except ImportError:
+                pass
 
         # === RENDER LOOP ===
         for frame_idx in range(frame_count):
-            # Clear command buffer
-            self.commands.clear()
-
-            # Run all user systems with fixed timestep
-            self.systems.run_all(self, dt)
-
-            # Execute command buffer
-            self.commands.execute(self.store)
-
-            # Run render pipeline
-            self._render_pipeline.run(self, dt)
-            self._render_pipeline._ensure_pipeline(self._device, wgpu.TextureFormat.bgra8unorm)
-
-            # Update registries with device reference
-            self._geometry_registry._device = self._device
-            self._material_registry._device = self._device
-
-            # Get current texture and create view
-            texture = self._wgpu_context.get_current_texture()
-            texture_view = texture.create_view()
-
-            # Recreate depth texture if canvas size changed
-            tex_size = (texture.size[0], texture.size[1])
-            if tex_size != self._depth_texture_size:
-                self._depth_texture = self._device.create_texture(
-                    size=(tex_size[0], tex_size[1], 1),
-                    format=wgpu.TextureFormat.depth24plus,
-                    usage=wgpu.TextureUsage.RENDER_ATTACHMENT,
-                )
-                self._depth_texture_view = self._depth_texture.create_view()
-                self._depth_texture_size = tex_size
-
-            # Create command encoder
-            command_encoder = self._device.create_command_encoder()
-
-            # Begin render pass
-            render_pass = command_encoder.begin_render_pass(
-                color_attachments=[
-                    {
-                        "view": texture_view,
-                        "resolve_target": None,
-                        "clear_value": (0.1, 0.1, 0.2, 1.0),
-                        "load_op": wgpu.LoadOp.clear,
-                        "store_op": wgpu.StoreOp.store,
-                    }
-                ],
-                depth_stencil_attachment={
-                    "view": self._depth_texture_view,
-                    "depth_clear_value": 1.0,
-                    "depth_load_op": wgpu.LoadOp.clear,
-                    "depth_store_op": wgpu.StoreOp.store,
-                },
-            )
-
-            # Issue draw calls
-            self._render_pipeline.render(self, render_pass)
-
-            # End render pass
-            render_pass.end()
-
-            # Submit command buffer
-            self._device.queue.submit([command_encoder.finish()])
+            # Draw the frame (backend-agnostic)
+            self._draw_frame()
 
             # Capture frame from canvas
             frame = self._render_canvas.draw()
@@ -542,7 +493,8 @@ class Engine:
             writer.send(frame_rgb)
 
             # Update progress
-            pbar.update(1)
+            if pbar:
+                pbar.update(1)
 
             # Update elapsed time
             self.elapsed = (frame_idx + 1) * dt
@@ -550,7 +502,10 @@ class Engine:
         # Clean up
         writer.close()
         writer = None  # type: ignore
-        pbar.close()
+        if pbar:
+            pbar.close()
+
+        self._running = False
 
         # Run shutdown callbacks
         for callback in self._shutdown_callbacks:

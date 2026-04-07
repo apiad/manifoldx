@@ -72,4 +72,6 @@ def nbody_gravity(query: mx.Query[Transform], dt: float):
     query[Transform].pos += velocities * dt
 
 
-engine.render("nbody.mp4", duration=10)
+engine.run()
+# or alternatively
+# engine.render("nbody.mp4", duration=60)

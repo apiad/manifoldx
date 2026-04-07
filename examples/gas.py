@@ -13,7 +13,6 @@ from manifoldx.resources import sphere, PhongMaterial
 
 NUM_PARTICLES = 500
 BOX_HALF = 10.0  # half-size of the invisible bounding box
-RESTITUTION = 0.99  # collision bounciness (1.0 = perfectly elastic)
 INITIAL_SPEED = 5.0  # Maxwell-Boltzmann-ish initial speed
 PARTICLE_RADIUS = 0.2  # collision & visual radius
 
@@ -57,8 +56,8 @@ def gas_physics(query: mx.Query[Transform], dt: float):
     # Reflect velocity where particles cross walls (vectorized per-axis)
     below = next_pos < lo
     above = next_pos > hi
-    velocities[below] = np.abs(velocities[below]) * RESTITUTION
-    velocities[above] = -np.abs(velocities[above]) * RESTITUTION
+    velocities[below] = np.abs(velocities[below])
+    velocities[above] = -np.abs(velocities[above])
 
     # ── Vectorised particle-particle collisions ─────────────────
     # Use current positions for overlap detection
@@ -91,7 +90,7 @@ def gas_physics(query: mx.Query[Transform], dt: float):
 
             # Equal-mass elastic collision: exchange velocity along normal
             # Impulse = -(1+e) * v_rel·n / (1/m + 1/m) = -(1+e)/2 * v_rel·n
-            impulse = (-(1 + RESTITUTION) * 0.5 * v_n)[:, np.newaxis] * n_h
+            impulse = (-0.5 * v_n)[:, np.newaxis] * n_h
 
             # Safe accumulation (handles particle in multiple collisions)
             np.add.at(velocities, idx_i, -impulse)
@@ -101,5 +100,6 @@ def gas_physics(query: mx.Query[Transform], dt: float):
     query[Transform].pos += velocities * dt
 
 
-print(f"Ideal Gas: {NUM_PARTICLES} particles in a [{-BOX_HALF}, {BOX_HALF}]³ box")
-engine.run()
+# engine.run()
+# or alternatively
+engine.render("gas.mp4", duration=60)
