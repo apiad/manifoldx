@@ -1,7 +1,7 @@
 import numpy as np
 
 # Export core modules and types
-from manifoldx.engine import Engine
+from manifoldx.engine import Engine, Backend
 from manifoldx.types import Vector3, Vector4, Float, Color
 from manifoldx.ecs import EntityStore, ComponentView
 from manifoldx.systems import Query
@@ -82,6 +82,7 @@ colors = _ColorsProxy()
 
 __all__ = [
     "Engine",
+    "Backend",
     "Camera",
     "Vector3",
     "Vector4",

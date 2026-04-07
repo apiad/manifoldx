@@ -16,10 +16,16 @@ from manifoldx.camera import Camera
 
 
 class Backend(enum.StrEnum):
-    DESKTOP = enum.auto()
-    NOTEBOOK = enum.auto()
-    BROWSER = enum.auto()
-    OFFLINE = enum.auto()
+    """Rendering backend types.
+
+    - DESKTOP: GLFW window with event loop (requires: pip install manifold-gfx[desktop])
+    - BROWSER: Pyodide browser environment (requires: pip install manifold-gfx[browser])
+    - OFFSCREEN: Headless video rendering (requires: pip install manifold-gfx[offline])
+    """
+
+    DESKTOP = "glfw"
+    BROWSER = "pyodide"
+    OFFSCREEN = "offscreen"
 
 
 class Engine:
@@ -360,6 +366,18 @@ class Engine:
             self._render_canvas.request_draw()
 
     def run(self):
+        """Run the engine with real-time rendering (DESKTOP or BROWSER backend).
+
+        Raises:
+            ValueError: If backend is OFFSCREEN (use render() for video output).
+        """
+        # Validate backend - run() only works with DESKTOP or BROWSER
+        if self.backend == Backend.OFFSCREEN:
+            raise ValueError(
+                f"run() requires DESKTOP or BROWSER backend, got OFFSCREEN. "
+                "Use render() for video output."
+            )
+
         self._init_webgpu()
 
         self._running = True
@@ -382,3 +400,48 @@ class Engine:
         finally:
             for callback in self._shutdown_callbacks:
                 callback()
+
+    def render(
+        self,
+        *,
+        output: str = None,
+        fps: int = 30,
+        duration: float = None,
+        frame_count: int = None,
+        codec: str = "h264",
+        quality: str = "high",
+        progress: bool = True,
+    ):
+        """Render to video file (OFFSCREEN backend only).
+
+        Parameters
+        ----------
+        output : str
+            Output video file path (required).
+        fps : int
+            Frames per second (default: 30).
+        duration : float
+            Duration in seconds (alternative to frame_count).
+        frame_count : int
+            Number of frames to render (alternative to duration).
+        codec : str
+            Video codec: "h264", "hevc", or "mp4v" (default: "h264").
+        quality : str
+            Quality preset: "low", "medium", "high" (default: "high").
+        progress : bool
+            Show progress bar (default: True).
+
+        Raises:
+            ValueError: If backend is not OFFSCREEN (use run() for display).
+        """
+        # Validate backend - render() only works with OFFSCREEN
+        if self.backend != Backend.OFFSCREEN:
+            raise ValueError(
+                f"render() requires OFFSCREEN backend, got {self.backend.name}. "
+                "Use run() for real-time display."
+            )
+
+        # Placeholder - full implementation in Phase 4
+        raise NotImplementedError(
+            "render() is not yet implemented. This will be completed in Phase 4."
+        )
