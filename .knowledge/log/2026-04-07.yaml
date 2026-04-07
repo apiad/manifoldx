@@ -9,3 +9,15 @@ entries:
       - examples/nbody.py
       - examples/pbr_demo.py
       - examples/spheres.py
+  - timestamp: 2026-04-07T13:00:00-04:00
+    type: commit
+    message: "feat(engine): add cli() method for unified entry point"
+    files:
+      - src/manifoldx/engine.py
+      - examples/*.py
+      - tests/test_engine.py
+  - timestamp: 2026-04-07T14:00:00-04:00
+    type: commit
+    message: "docs: document cli() in README"
+    files:
+      - README.md
