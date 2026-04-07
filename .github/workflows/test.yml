@@ -9,28 +9,28 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-          
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           python-version: '3.13'
-          
+
       - name: Install dependencies
         # CI uses offline-only backend for headless rendering (video output)
         # Desktop GUI tests are skipped in CI
-        run: uv sync --extra offline --extra dev
-          
+        run: uv sync --extra offline --dev
+
       - name: Run tests
         # Tests should pass with OFFSCREEN backend only
         run: uv run pytest tests/ -v --tb=short
-          
+
       - name: Run linter
         run: uv run ruff check src/
