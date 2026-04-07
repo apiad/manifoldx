@@ -385,19 +385,6 @@ class Engine:
             for callback in self._shutdown_callbacks:
                 callback()
 
-        # Register draw callback and run the canvas event loop
-        from rendercanvas.glfw import loop as glfw_loop
-
-        self._event_loop = glfw_loop
-        self._render_canvas.request_draw(self._draw_frame)
-        try:
-            glfw_loop.run()
-        except Exception as e:
-            print(f"Event loop error: {e}")
-        finally:
-            for callback in self._shutdown_callbacks:
-                callback()
-
     def render(
         self,
         output: str,
@@ -409,7 +396,9 @@ class Engine:
         quality: str = "high",
         progress: bool = True,
     ):
-        """Render to video file (OFFSCREEN backend only).
+        """Render to video file.
+
+        Uses OffscreenRenderCanvas for headless rendering.
 
         Parameters
         ----------
@@ -427,17 +416,7 @@ class Engine:
             Quality preset: "low", "medium", "high" (default: "high").
         progress : bool
             Show progress bar (default: True).
-
-        Raises:
-            ValueError: If backend is not OFFSCREEN (use run() for display).
         """
-        # Validate backend - render() only works with OFFSCREEN
-        if self.backend != Backend.OFFSCREEN:
-            raise ValueError(
-                f"render() requires OFFSCREEN backend, got {self.backend.name}. "
-                "Use run() for real-time display."
-            )
-
         # Validate parameters
         if output is None:
             raise ValueError("output path required for render()")
