@@ -32,4 +32,12 @@ def rotate(query: Query[Transform], dt: float):
     query[Transform].pos = (0,math.sin(engine.elapsed),0)
 
 
-engine.run()
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--render":
+        duration = float(sys.argv[2]) if len(sys.argv) > 2 else 60
+        engine.render(str(Path(__file__).with_suffix(".mp4")), duration=duration)
+    else:
+        engine.run()

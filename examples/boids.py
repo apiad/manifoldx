@@ -166,6 +166,12 @@ def boids_physics(query: mx.Query[Transform], dt: float):
     query[Transform].pos += delta
 
 
-engine.run()
-# or alternatively
-# engine.render("boids.mp4", duration=60)
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--render":
+        duration = float(sys.argv[2]) if len(sys.argv) > 2 else 60
+        engine.render(str(Path(__file__).with_suffix(".mp4")), duration=duration)
+    else:
+        engine.run()
