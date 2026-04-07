@@ -5,8 +5,8 @@ from manifoldx import Engine
 
 def test_engine_creation():
     """Engine can be created with name and dimensions."""
-    engine = Engine("Test", h=600, w=800, fullscreen=False)
-    assert engine.name == "Test"
+    engine = Engine("Test", height=600, width=800, fullscreen=False)
+    assert engine.title == "Test"
     assert engine.h == 600
     assert engine.w == 800
     assert engine.fullscreen is False
@@ -187,3 +187,73 @@ def test_engine_stores_rendercanvas_canvas():
     engine = Engine("Test")
     # Engine should store rendercanvas canvas
     assert hasattr(engine, "_render_canvas") or hasattr(engine, "render_canvas")
+
+
+# === Phase 1: Backend Enum and Optional Dependencies ===
+
+
+def test_backend_enum_exists():
+    """Backend enum is defined in manifoldx module."""
+    from manifoldx import Backend
+
+    assert Backend is not None
+    assert hasattr(Backend, "DESKTOP")
+    assert hasattr(Backend, "BROWSER")
+    assert hasattr(Backend, "OFFSCREEN")
+
+
+def test_backend_enum_has_string_values():
+    """Backend enum values are strings matching backend module names."""
+    from manifoldx import Backend
+
+    # String values match rendercanvas module names
+    assert Backend.DESKTOP == "glfw"
+    assert Backend.BROWSER == "pyodide"
+    assert Backend.OFFSCREEN == "offscreen"
+
+
+def test_engine_accepts_backend_parameter():
+    """Engine accepts backend parameter in constructor."""
+    from manifoldx import Engine, Backend
+
+    engine = Engine("Test", backend=Backend.DESKTOP)
+    assert engine.backend == Backend.DESKTOP
+
+    engine = Engine("Test", backend=Backend.OFFSCREEN)
+    assert engine.backend == Backend.OFFSCREEN
+
+
+def test_engine_default_backend_is_desktop():
+    """Engine defaults to DESKTOP backend."""
+    from manifoldx import Engine, Backend
+
+    engine = Engine("Test")
+    assert engine.backend == Backend.DESKTOP
+
+
+def test_engine_has_render_method():
+    """Engine has render method for video output."""
+    from manifoldx import Engine
+
+    engine = Engine("Test")
+    assert hasattr(engine, "render")
+    assert callable(engine.render)
+
+
+def test_engine_render_raises_for_non_offscreen_backend():
+    """Engine.render() raises ValueError for non-OFFSCREEN backends."""
+    from manifoldx import Engine, Backend
+
+    engine = Engine("Test", backend=Backend.DESKTOP)
+    with pytest.raises(ValueError, match="render.*OFFSCREEN"):
+        engine.render(output="test.mp4", frame_count=1)
+
+
+def test_engine_run_raises_for_offscreen_backend():
+    """Engine.run() raises ValueError for OFFSCREEN backend."""
+    from manifoldx import Engine, Backend
+
+    engine = Engine("Test", backend=Backend.OFFSCREEN)
+    # Note: This will raise ValueError because run() can't work with offscreen
+    with pytest.raises(ValueError, match="run.*DESKTOP.*BROWSER"):
+        engine.run()

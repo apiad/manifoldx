@@ -11,12 +11,11 @@ from manifoldx.components import Transform, Mesh, Material
 from manifoldx.resources import sphere, PhongMaterial
 
 NUM_BODIES = 500
-G = 10.0  # gravitational constant
-SOFTENING = 0.3  # prevents singularities at close range
-DRAG = 0.998  # velocity damping per frame
+G = 20.0  # gravitational constant
+SOFTENING = 0.05  # prevents singularities at close range
 MAX_SPEED = 20.0  # velocity clamp
 SPHERE_RADIUS = 0.5  # base mesh radius
-SIZE = 0.5 * NUM_BODIES ** (1 / 3)
+SIZE = 5 * NUM_BODIES ** (1 / 3)
 
 engine = mx.Engine("N-Body Simulation")
 engine.camera.fit(SIZE)
@@ -68,12 +67,6 @@ def nbody_gravity(query: mx.Query[Transform], dt: float):
 
     # Integrate velocity (F = ma → a = F/m)
     velocities += (net_force / masses[:, np.newaxis]) * dt
-
-    # Damping & clamping
-    velocities *= DRAG
-    speeds = np.linalg.norm(velocities, axis=1, keepdims=True)
-    too_fast = speeds > MAX_SPEED
-    velocities = np.where(too_fast, velocities * MAX_SPEED / speeds, velocities)
 
     # Write back
     query[Transform].pos += velocities * dt

@@ -1,6 +1,6 @@
 import manifoldx as mx
 
-engine = mx.Engine("Hello World", h=600, w=800, fullscreen=False)
+engine = mx.Engine("Hello World", height=600, width=800, fullscreen=False)
 
 @engine.startup
 def init():

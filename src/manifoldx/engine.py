@@ -1,5 +1,6 @@
 import asyncio
 import wgpu
+import enum
 import numpy as np
 from time import perf_counter_ns
 
@@ -14,22 +15,34 @@ from manifoldx.components import Transform, Mesh, Material
 from manifoldx.camera import Camera
 
 
+class Backend(enum.StrEnum):
+    DESKTOP = enum.auto()
+    NOTEBOOK = enum.auto()
+    BROWSER = enum.auto()
+    OFFLINE = enum.auto()
+
+
 class Engine:
     def __init__(
         self,
-        name: str,
-        h: int = 600,
-        w: int = 800,
+        title: str,
+        *,
+        height: int = 600,
+        width: int = 800,
         fullscreen: bool = False,
         max_entities: int = 100_000,
-        check: bool = True,
+        check_numerics: bool = True,
+        backend: Backend = Backend.DESKTOP,
     ):
-        self.name = name
-        self.h = h
-        self.w = w
+        self.title = title
+        self.h = height
+        self.w = width
         self.fullscreen = fullscreen
-        self.check = check  # Enable/disable validation warnings
-        ecs.ENABLE_VALIDATION = check  # Set global flag for ECS validation
+        self.check = check_numerics  # Enable/disable validation warnings
+        self.backend = backend
+        ecs.ENABLE_VALIDATION = check_numerics  # Set global flag for ECS validation
+
+        # Private stuff
         self._running = False
         self._render_canvas = None
         self._wgpu_context = None
