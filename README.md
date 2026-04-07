@@ -127,11 +127,16 @@ def animate_lights(query: mx.Query[Transform], dt: float):
 # Auto-fit camera to view the scene
 engine.camera.fit(radius=5.0, azimuth=30, elevation=35)
 
-# Run with interactive window
-engine.run()
+# CLI handles run vs render automatically
+engine.cli()
+```
 
-# Or render to video file (headless)
-# engine.render(output="my_scene.mp4", duration=60, fps=30)
+Save as `my_scene.py` and run:
+
+```bash
+python my_scene.py              # Interactive window
+python my_scene.py --render     # Render 60s video → my_scene.mp4
+python my_scene.py --render --fps 60 --duration 120 --output movie.mp4
 ```
 
 ## N-Body Simulation
@@ -252,21 +257,28 @@ python examples/nbody.py --render 60  # Render 60s video to nbody.mp4
 
 ### Video Rendering
 
-Render simulations to video files for sharing or CI:
+Render simulations to video files for sharing or CI using the built-in CLI:
 
+```bash
+python examples/nbody.py --render     # Render 60s → nbody.mp4
+python examples/nbody.py --render --fps 60 --duration 120 --output movie.mp4
+```
+
+**Options:**
+- `--render` — Render to video instead of showing window
+- `--fps N` — Frames per second (default: 30)
+- `--duration N` — Video duration in seconds (default: 60)
+- `--output FILE` — Output filename (default: `<script>.mp4`)
+- `--quality Q` — Quality: low, medium, high (default: high)
+
+**Programmatic API:**
 ```python
 engine.render(
     output="simulation.mp4",
-    fps=30,           # Frame rate
-    duration=60,      # Duration in seconds (or use frame_count)
-    quality="high",   # low, medium, high
+    fps=30,
+    duration=60,
+    quality="high",
 )
-```
-
-All examples support `--render` for video output:
-```bash
-python examples/nbody.py --render 60   # 60 second video
-python examples/boids.py --render       # Default 60 seconds
 ```
 
 **Note:** Video rendering requires the `offline` extra: `pip install manifold-gfx[offline]`
