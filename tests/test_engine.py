@@ -257,3 +257,62 @@ def test_engine_run_raises_for_offscreen_backend():
     # Note: This will raise ValueError because run() can't work with offscreen
     with pytest.raises(ValueError, match="run.*DESKTOP.*BROWSER"):
         engine.run()
+
+
+# === Phase 2: Lazy Backend Imports ===
+
+
+def test_backends_module_exists():
+    """Backends module exists with lazy import functions."""
+    from manifoldx import backends
+
+    assert hasattr(backends, "get_desktop_canvas")
+    assert hasattr(backends, "get_offscreen_canvas")
+    assert callable(backends.get_desktop_canvas)
+    assert callable(backends.get_offscreen_canvas)
+
+
+def test_get_desktop_canvas_raises_without_glfw():
+    """get_desktop_canvas raises ImportError if glfw not installed."""
+    from manifoldx.backends import get_desktop_canvas
+
+    # Mock: temporarily hide glfw to test error message
+    import sys
+    import importlib
+
+    # Save original module
+    glfw_spec = sys.modules.get("glfw")
+    glfw_modules = [
+        k for k in sys.modules.keys() if k == "glfw" or k.startswith("rendercanvas.glfw")
+    ]
+    saved = {k: sys.modules.pop(k) for k in glfw_modules if k in sys.modules}
+
+    try:
+        # Remove rendercanvas.glfw to simulate missing glfw
+        if "rendercanvas.glfw" in sys.modules:
+            del sys.modules["rendercanvas.glfw"]
+
+        with pytest.raises(ImportError, match="glfw"):
+            get_desktop_canvas(800, 600, False, "Test")
+    finally:
+        # Restore
+        sys.modules.update(saved)
+        if glfw_spec:
+            sys.modules["glfw"] = glfw_spec
+
+
+def test_get_offscreen_canvas_raises_without_imageio():
+    """get_offscreen_canvas raises ImportError if imageio-ffmpeg not installed."""
+    from manifoldx.backends import get_offscreen_canvas
+
+    # Mock: temporarily hide imageio_ffmpeg
+    import sys
+
+    saved = sys.modules.pop("imageio_ffmpeg", None)
+
+    try:
+        with pytest.raises(ImportError, match="imageio-ffmpeg"):
+            get_offscreen_canvas(800, 600)
+    finally:
+        if saved:
+            sys.modules["imageio_ffmpeg"] = saved
