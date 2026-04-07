@@ -1,6 +1,6 @@
 import asyncio
 import wgpu
-import enum
+import sys
 import numpy as np
 from time import perf_counter_ns
 
@@ -15,19 +15,6 @@ from manifoldx.components import Transform, Mesh, Material
 from manifoldx.camera import Camera
 
 
-class Backend(enum.StrEnum):
-    """Rendering backend types.
-
-    - DESKTOP: GLFW window with event loop (requires: pip install manifold-gfx[desktop])
-    - BROWSER: Pyodide browser environment (requires: pip install manifold-gfx[browser])
-    - OFFSCREEN: Headless video rendering (requires: pip install manifold-gfx[offline])
-    """
-
-    DESKTOP = "glfw"
-    BROWSER = "pyodide"
-    OFFSCREEN = "offscreen"
-
-
 class Engine:
     def __init__(
         self,
@@ -38,14 +25,12 @@ class Engine:
         fullscreen: bool = False,
         max_entities: int = 100_000,
         check_numerics: bool = True,
-        backend: Backend = Backend.DESKTOP,
     ):
         self.title = title
         self.h = height
         self.w = width
         self.fullscreen = fullscreen
         self.check = check_numerics  # Enable/disable validation warnings
-        self.backend = backend
         ecs.ENABLE_VALIDATION = check_numerics  # Set global flag for ECS validation
 
         # Private stuff
