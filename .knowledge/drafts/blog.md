@@ -67,32 +67,51 @@ import manifoldx as mx
 import numpy as np
 
 engine = mx.Engine("Cubes")
+engine.camera.zoom(0.1)
 
-# Define a custom component
+# These are all static things that are created
+# and stored in memory once
+mesh = mx.geometry.sphere(1)
+material = mx.material.phong(mx.colors.BLUE)
+
+# Custom component, gets registered in engine to keep track
+# Only used for reflection on the values
 @engine.component
 class Particle:
     velocity: mx.Vector3
+    angular: mx.Vector3
+    life: mx.Float
 
-
-N = 1000
-
-# Create lots of entities
-engine.spawn(
-    mx.geometry.cube(), # with the same mesh
-    mx.material.phong(mx.colors.RED), # the same material
-    # and random data
-    Transform(pos=np.random.uniform(-1,1,size-(N, 3))),
-    Particle(velocity=np.random.uniform(-1,1,size=(N,3))),
-    n=N,  # spawn 1000 at once with instanced rendering
-)
-
-# Systems are methods that receive a query of entities
+# This runs every frame
 @engine.system
-def move_things(query: mx.Query[Transform, Particle], dt: float):
-    # This is a SINGLE vectorized operation over all N entities
-    query[Transform].pos += query[Particle].velocity * dt
+def particle_lifecycle(query: mx.Query[Particle, Transform], dt: float):
+    query[Particle].life -= dt  # Single vectorial operation
+    query[Transform].position += query[Particle].velocity * dt
+    query[Transform].rotation += Transform.rotation(euler=query[Particle].angular * dt)
+    query[Transform].scale = query[Particle].life / 10.0
 
-engine.run()
+    # Destroy all dead particles at once
+    engine.destroy(query[Particle].life <= 0)
+
+    # Now we create lots of particles
+    N = int(100 * dt)
+
+    # This will in principle reuse the buffers for dead entities,
+    # but will expand the buffer if necessary
+    engine.spawn(
+        Mesh(mesh),
+        Material(material),
+        Transform(pos=(0, 0, 0), scale=(1, 1, 1)),
+        Particle(
+            velocity=np.random.uniform(-5, 5, (N, 3)),
+            angular=np.random.uniform(-2, 2, (N, 3)),
+            life=np.random.rand(N) * 10,
+        ),
+        n=N,
+    )
+
+    # Update camera
+    engine.camera.orbit(45 * dt, 0)
 ```
 
 That's it. A single line of code to update all positions at once. Notice the `query` argument that defines which entities you get (all entities with both a `Transform` and a `Particle` component).
@@ -200,14 +219,12 @@ You can check all the examples in the [Github](https://github.com/apiad/manifold
 
 And that's it for today. This is my pure Python (well, you know what I mean) graphics engine for serious, grown-up stuff that is surely not a weekend side-project.
 
-Where I will go with this? I don't know. I always write these things mostly as a learning exercise and I've learned a lot about graphics in Python. I've updated my view of modern graphics and I think I've paid my debt of the last seven years that I haven't done any graphics computation. I'm kind of happy now that I know how to do this.
+Where I will go with this? I don't know. I always write these things mostly as a learning exercise and I've learned a lot about graphics in Python. I've updated my view of modern graphics and I think I've paid my debt of the last seven years in graphics computation. I'm kind of happy now that I know how to do this in 2026. Mission accomplished, I guess.
 
-There are some places this engine can go to, like rendering custom shaders when you need stuff like lighting effects. But it is not going to become a traditional, full-blown game engine. I will not add support for lots of game engine-like features including, I don't know, skeletal animations, level of detail, scene management, or, god forbids, visual scripting or any nonsense like that.
+There are some places this engine can go to, like some custom shaders when you need stuff like lighting effects. But it is not going to become a traditional, full-blown game engine. I will not add support for lots of game engine-like features including, I don't know, skeletal animations, level of detail, scene management, or, god forbids, visual scripting and nonsense like that.
 
-There are two areas which I do believe I would like to explore in the future. One is extending the engine towards the kind of behavior you need to write for AI simulations, like if you want to run some sort of agent simulation or ant colony optimization or stuff like that. That code doesn't look that much as a frame-by-frame update, but it looks more like an asynchronous event-kind of code, which is also something that is not usual in game engines. You cannot do async await for some event to happen. That is one direction to go.
+Now two areas I'd like to explore in the future. One is extending the engine towards the kind of behavior you need to write for AI simulations. If you want to run some sort of agent simulation or ant colony optimization or stuff like that, that code doesn't look that much as a frame-by-frame update, but like an asynchronous event-loop---which is also something that is not usual in game engines. And the other direction is towards procedural generation of meshes and content in general, which is an area I left five or six years ago and would pretty much love to come back to it.
 
-And the other direction to go is towards procedural generation of meshes and content in general, which is an area I left five or six years ago—haven't come back to it. And there is so much that I want to do in the sense of, I don't know, building infinite worlds with infinite trees that keep expanding on-site, stuff like that, just for the sake of fun.
-
-And that's it for this week. This is not production-ready at all—it's mostly a toy at the moment—but you can take it apart and hack your way into some cool physics or mathematical simulation. The code is on GitHub if you want to try it yourself, and I'd love to hear what you build with it.
+And that's it for this week. This is not production-ready at all---it's mostly a toy at the moment---but you can take it apart and hack your way into some cool physical or mathematical simulation. The code is on [GitHub](https://github.com/apiad/manifoldx) if you want to try it yourself, and I'd love to see what you build with it.
 
 Until next week, stay curious.

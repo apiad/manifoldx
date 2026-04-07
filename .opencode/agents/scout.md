@@ -7,10 +7,10 @@ permission:
   websearch: allow
   read:
     "*": deny
-    .knowledge/notes/*: allow
+    .knowledge/*: allow
   edit:
     "*": deny
-    .knowledge/notes/*: allow
+    .knowledge/*: allow
 ---
 
 # Scout Subagent
