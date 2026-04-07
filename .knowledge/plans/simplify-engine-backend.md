@@ -2,17 +2,17 @@
 id: simplify-engine-backend
 created: 2025-04-07
 type: plan
-status: draft
+status: completed
 expires: 2025-04-14
 phases:
   - name: Phase 1: Remove Backend enum and simplify constructor
-    done: false
+    done: true
   - name: Phase 2: Make run() context-aware (Pyodide/GLFW)
-    done: false
+    done: true
   - name: Phase 3: Make render() use offscreen unconditionally
-    done: false
+    done: true
   - name: Phase 4: Update tests
-    done: false
+    done: true
 ---
 
 # Plan: Simplify Engine - Remove Backend Enum
