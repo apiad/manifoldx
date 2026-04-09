@@ -1,20 +1,22 @@
-import asyncio
 import argparse
-import wgpu
+import asyncio
 import sys
-import numpy as np
 from pathlib import Path
 from time import perf_counter_ns
 
+import numpy as np
+import wgpu
+
 # Import ECS components
 import manifoldx.ecs as ecs
-from manifoldx.ecs import EntityStore
-from manifoldx.commands import CommandBuffer, Command, CommandType
-from manifoldx.systems import SystemRegistry
-from manifoldx.resources import GeometryRegistry, MaterialRegistry
-from manifoldx.renderer import RenderPipeline
-from manifoldx.components import Transform, Mesh, Material
 from manifoldx.camera import Camera
+from manifoldx.commands import Command, CommandBuffer, CommandType
+from manifoldx.components import Material, Mesh, Transform
+from manifoldx.ecs import EntityStore
+from manifoldx.inputs import Inputs
+from manifoldx.renderer import RenderPipeline
+from manifoldx.resources import GeometryRegistry, MaterialRegistry
+from manifoldx.systems import SystemRegistry
 
 
 class Engine:
@@ -34,6 +36,7 @@ class Engine:
         self.fullscreen = fullscreen
         self.check = check_numerics  # Enable/disable validation warnings
         ecs.ENABLE_VALIDATION = check_numerics  # Set global flag for ECS validation
+        self.inputs: Inputs
 
         # Private stuff
         self._running = False
@@ -97,6 +100,7 @@ class Engine:
         Parses Query type hints to determine which components to query.
         """
         import inspect
+
         from manifoldx.systems import Query
 
         # Parse type hints to extract component names
@@ -360,6 +364,7 @@ class Engine:
     def _run_loop(self):
         """Called each frame by the event loop (run() mode)."""
         self._draw_frame()
+        self.inputs._update()
         # Re-queue for next frame if still running
         if self._running:
             self._render_canvas.request_draw(self._run_loop)
@@ -386,6 +391,7 @@ class Engine:
 
         # Initialize WebGPU context
         self._init_canvas(canvas)
+        self.inputs = Inputs.from_render_canvas(canvas)
 
         self._running = True
 
