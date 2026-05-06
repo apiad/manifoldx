@@ -51,6 +51,7 @@ def test_colormap_material_compile_returns_wgsl():
     src = m._compile()
     assert isinstance(src, str)
     assert "@vertex" in src
+    assert "@fragment" in src
     # Vertex stage references per-instance bindings
     assert "transforms" in src
     assert "scalar_values" in src
@@ -73,3 +74,19 @@ def test_colormap_material_inherits_material_abc():
     from manifoldx.resources import Material
     m = ColormapMaterial(cmap="viridis", vmin=0.0, vmax=1.0)
     assert isinstance(m, Material)
+
+
+def test_colormap_material_compile_validates_against_wgpu():
+    """Compiled shader must be parseable by wgpu (no syntax errors)."""
+    import wgpu
+
+    try:
+        adapter = wgpu.gpu.request_adapter_sync(power_preference="low-power")
+        device = adapter.request_device_sync()
+    except Exception as e:
+        pytest.skip(f"no wgpu device available: {e}")
+
+    m = ColormapMaterial(cmap="viridis", vmin=0.0, vmax=1.0)
+    src = m._compile()
+    module = device.create_shader_module(code=src)
+    assert module is not None

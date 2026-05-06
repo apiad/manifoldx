@@ -94,6 +94,22 @@ fn vs_main(in: VSIn, @builtin(instance_index) iidx: u32) -> VSOut {
     out.scalar = scalar;
     return out;
 }
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+    let r2 = dot(in.quad_uv, in.quad_uv);
+    if (r2 > 1.0) {
+        discard;
+    }
+    let n_view = vec3<f32>(in.quad_uv.x, in.quad_uv.y, sqrt(1.0 - r2));
+    let denom = max(material.vmax - material.vmin, 1e-6);
+    let t = clamp((in.scalar - material.vmin) / denom, 0.0, 1.0);
+    let base_color = textureSample(lut_texture, lut_sampler, t);
+    let light_dir = normalize(vec3<f32>(0.5, 0.5, 1.0));
+    let lambert = max(dot(n_view, light_dir), 0.0);
+    let lit_factor = mix(1.0, 0.2 + 0.8 * lambert, material.lit_flag);
+    return vec4<f32>(base_color.rgb * lit_factor, base_color.a);
+}
 """.strip()
 
 
