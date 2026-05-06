@@ -109,7 +109,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 # WGSL shader source for LabelMaterial.
 #
 # Bindings (group 0):
-#   0: Globals uniform   { vp: mat4x4, view: mat4x4, proj: mat4x4, camera_pos: vec3, _pad: f32 }
+#   0: Globals uniform   { vp: mat4x4, view: mat4x4, proj: mat4x4,
+#                          camera_pos: vec3, _pad0: f32,
+#                          viewport_size: vec2, _pad1: vec2 }
 #   1: transforms        storage<read> array<mat4x4<f32>>
 #   2: material uniform  { pixel_width: f32, pixel_height: f32, anchor_mode: f32, _pad: f32 }
 #   3: label_indices     storage<read> array<f32>     # cast to u32 in shader
@@ -129,7 +131,9 @@ struct Globals {
     view: mat4x4<f32>,
     proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
-    _pad: f32,
+    _pad0: f32,
+    viewport_size: vec2<f32>,
+    _pad1: vec2<f32>,
 };
 
 struct MaterialUniform {
@@ -166,11 +170,13 @@ fn vs_main(in: VSIn, @builtin(instance_index) iidx: u32) -> VSOut {
     // view space at the anchor's depth so the label keeps a fixed pixel size
     // regardless of camera distance. The proj matrix's [0][0] and [1][1]
     // entries encode the focal lengths used by the perspective projection.
+    // Dividing by viewport_size.x / .y converts pixel offset → NDC → view
+    // space at the anchor's depth.
     let half_w_pixels = material.pixel_width * 0.5;
     let half_h_pixels = material.pixel_height * 0.5;
     let view_z = max(-view_center.z, 1e-3);
-    let view_dx = in.position.x * half_w_pixels * 2.0 * view_z / globals.proj[0][0] / 1024.0;
-    let view_dy = in.position.y * half_h_pixels * 2.0 * view_z / globals.proj[1][1] / 1024.0;
+    let view_dx = in.position.x * half_w_pixels * 2.0 * view_z / globals.proj[0][0] / globals.viewport_size.x;
+    let view_dy = in.position.y * half_h_pixels * 2.0 * view_z / globals.proj[1][1] / globals.viewport_size.y;
 
     let view_pos = vec4<f32>(
         view_center.x + view_dx,
