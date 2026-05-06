@@ -1172,7 +1172,9 @@ class RenderPipeline:
                 },
                 {
                     "binding": 4,
-                    "resource": atlas.gpu_texture.create_view(),
+                    "resource": atlas.gpu_texture.create_view(
+                        dimension=wgpu.TextureViewDimension.d2_array,
+                    ),
                 },
                 {
                     "binding": 5,
