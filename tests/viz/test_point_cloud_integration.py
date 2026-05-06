@@ -25,10 +25,8 @@ def _make_offscreen_engine():
     except Exception as e:
         pytest.skip(f"engine initialization failed: {e}")
 
-    engine.store.register_component("PointCloud", np.dtype("f4"), (0,))
-    engine.store.register_component("ScalarValue", np.dtype("f4"), (1,))
-    engine.store.register_component("Radius", np.dtype("f4"), (1,))
-
+    # PointCloud / ScalarValue / Radius auto-register on first spawn now
+    # that they inherit from Component. No manual registration needed.
     engine._running = True
 
     return engine

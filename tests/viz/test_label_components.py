@@ -7,9 +7,8 @@ from manifoldx.viz import TextLabel
 
 
 def _make_engine():
-    engine = mx.Engine("test")
-    engine.store.register_component("TextLabel", np.dtype("f4"), (1,))
-    return engine
+    # TextLabel auto-registers on first spawn via the Component base class.
+    return mx.Engine("test")
 
 
 def test_text_label_default_zero():

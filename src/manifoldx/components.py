@@ -1,6 +1,137 @@
-"""Built-in components: Transform, Mesh, Material."""
+"""Built-in components: Component (base), Transform, Mesh, Material."""
 
 import numpy as np
+
+
+# =============================================================================
+# Component Base Class
+# =============================================================================
+
+# Registry of all Component subclasses, keyed by class name. Populated by
+# Component.__init_subclass__ at class-definition time. The Engine consults
+# this on spawn so callers don't have to register components by hand.
+_COMPONENT_CLASSES: dict = {}
+
+
+def _shape_from_annotation(tp) -> tuple:
+    """Map a type-marker annotation to a per-entity numpy shape."""
+    from manifoldx.types import Float, Vector3, Vector4
+
+    if tp is Float or tp is float:
+        return (1,)
+    if tp is Vector3:
+        return (3,)
+    if tp is Vector4:
+        return (4,)
+    raise TypeError(
+        f"Unsupported component field type: {tp!r}. "
+        f"Use Float, Vector3, or Vector4 from manifoldx.types."
+    )
+
+
+class Component:
+    """Base class for ECS components with annotation-driven storage.
+
+    Subclasses declare per-entity storage via class-level annotations,
+    pydantic-style:
+
+        class Radius(Component):
+            radius: Float = 1.0          # 1 float per entity, default 1.0
+
+        class Velocity(Component):
+            velocity: Vector3            # 3 floats per entity, default 0
+
+        class PointCloud(Component):
+            \"\"\"Marker — no fields.\"\"\"   # zero-width
+
+    On subclass creation `__init_subclass__` reads the annotations,
+    computes total dtype + shape, and registers the class so the Engine
+    can auto-register it with the store on first spawn.
+
+    The default `__init__` accepts each annotated field as a keyword
+    argument; the default `get_data` broadcasts scalars across all
+    entities and accepts (n,) or (n, size) arrays for per-entity values.
+    Subclasses may override either method for richer semantics.
+    """
+
+    _dtype: np.dtype = np.dtype("f4")
+    _shape: tuple = (0,)
+    _field_specs: tuple = ()
+    _field_defaults: dict = {}
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        annotations = cls.__dict__.get("__annotations__", {})
+        fields = []
+        defaults = {}
+        for name, tp in annotations.items():
+            if name.startswith("_"):
+                continue
+            shape = _shape_from_annotation(tp)
+            fields.append((name, shape))
+            default = cls.__dict__.get(name)
+            if default is not None:
+                defaults[name] = default
+        cls._field_specs = tuple(fields)
+        cls._field_defaults = defaults
+        total = sum(int(np.prod(s)) for _, s in fields)
+        cls._shape = (total,)
+        _COMPONENT_CLASSES[cls.__name__] = cls
+
+    def __init__(self, **kwargs):
+        # Each declared field accepts a keyword. Missing fields fall back
+        # to the class-level default (or None → all-zeros).
+        self._field_values = {}
+        for name, _shape in self._field_specs:
+            v = kwargs.get(name)
+            if v is None:
+                v = self._field_defaults.get(name)
+            self._field_values[name] = v
+
+    def get_data(self, n: int, registry=None) -> np.ndarray:
+        """Pack this component's per-entity data into an (n, total_cols) array.
+
+        Each declared field is filled by broadcasting:
+        - scalar value → all rows get the scalar
+        - (size,) array → all rows get the same vector (per-field broadcast)
+        - (n,) array (size==1) → one value per row, reshaped to (n, 1)
+        - (n, size) array → one row per entity verbatim
+        Anything else raises ValueError.
+        """
+        cols = int(np.prod(self._shape)) if self._shape else 0
+        data = np.zeros((n, cols), dtype=self._dtype)
+        if cols == 0:
+            return data
+        col = 0
+        for name, shape in self._field_specs:
+            size = int(np.prod(shape))
+            value = self._field_values.get(name)
+            if value is not None:
+                v = np.asarray(value, dtype=np.float32)
+                if v.ndim == 0:
+                    data[:, col : col + size] = v.item()
+                elif v.ndim == 1 and v.shape[0] == n and size == 1:
+                    data[:, col : col + size] = v.reshape(n, 1)
+                elif v.ndim == 1 and v.shape[0] == size:
+                    data[:, col : col + size] = v
+                elif v.shape[0] == n:
+                    if v.ndim == 1:
+                        v = v.reshape(n, -1)
+                    data[:, col : col + size] = v[:, :size]
+                else:
+                    raise ValueError(
+                        f"{type(self).__name__}: field {name!r} value shape "
+                        f"{v.shape} incompatible with n={n}, field size={size}"
+                    )
+            col += size
+        return data
+
+    @classmethod
+    def register(cls, store) -> None:
+        """Register this component type with an EntityStore (idempotent)."""
+        if cls.__name__ in store._components:
+            return
+        store.register_component(cls.__name__, cls._dtype, cls._shape)
 
 
 # =============================================================================
@@ -210,6 +341,7 @@ class Colors:
 
 
 __all__ = [
+    "Component",
     "Transform",
     "Mesh",
     "Material",

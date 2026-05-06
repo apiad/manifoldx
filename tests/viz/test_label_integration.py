@@ -20,7 +20,8 @@ def _make_offscreen_engine(width=128, height=128):
     except Exception as e:
         pytest.skip(f"engine initialization failed: {e}")
 
-    engine.store.register_component("TextLabel", np.dtype("f4"), (1,))
+    # TextLabel auto-registers on first spawn now that it inherits from
+    # Component — no manual registration needed.
     engine._running = True
     return engine
 

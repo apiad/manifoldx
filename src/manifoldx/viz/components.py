@@ -1,9 +1,16 @@
-"""Sci-viz ECS components: PointCloud (marker), ScalarValue, Radius."""
+"""Sci-viz ECS components: PointCloud (marker), ScalarValue, Radius, TextLabel.
 
-import numpy as np
+All four inherit from `manifoldx.components.Component`, which means dtype +
+shape are derived from the class-level annotations and the Engine
+auto-registers them with the store on first spawn — no need for manual
+`engine.store.register_component(...)` boilerplate in user code.
+"""
+
+from manifoldx.components import Component
+from manifoldx.types import Float
 
 
-class ScalarValue:
+class ScalarValue(Component):
     """Per-entity scalar attribute, mapped through ColormapMaterial's LUT.
 
     Storage layout: 1 float per entity (column 0).
@@ -14,28 +21,13 @@ class ScalarValue:
         ScalarValue(value=array_shape_N)   # explicit per-entity
     """
 
-    def __init__(self, value=None):
-        self._value = value
-
-    def get_data(self, n: int, registry=None) -> np.ndarray:
-        data = np.zeros((n, 1), dtype=np.float32)
-        if self._value is None:
-            return data
-        v = np.asarray(self._value, dtype=np.float32)
-        if v.ndim == 0:
-            data[:, 0] = float(v)
-        elif v.ndim == 1 and v.shape[0] == n:
-            data[:, 0] = v
-        else:
-            raise ValueError(f"ScalarValue: value shape {v.shape} incompatible with n={n}")
-        return data
+    value: Float = 0.0
 
 
-class Radius:
+class Radius(Component):
     """Per-entity world-space radius for sprite scaling.
 
-    Storage layout: 1 float per entity (column 0).
-    Default: 1.0.
+    Storage layout: 1 float per entity (column 0). Default: 1.0.
 
     Usage:
         Radius()                       # all 1.0
@@ -43,38 +35,18 @@ class Radius:
         Radius(radius=array_shape_N)   # explicit per-entity
     """
 
-    def __init__(self, radius=None):
-        self._radius = radius
-
-    def get_data(self, n: int, registry=None) -> np.ndarray:
-        data = np.ones((n, 1), dtype=np.float32)
-        if self._radius is None:
-            return data
-        v = np.asarray(self._radius, dtype=np.float32)
-        if v.ndim == 0:
-            data[:, 0] = float(v)
-        elif v.ndim == 1 and v.shape[0] == n:
-            data[:, 0] = v
-        else:
-            raise ValueError(f"Radius: radius shape {v.shape} incompatible with n={n}")
-        return data
+    radius: Float = 1.0
 
 
-class PointCloud:
+class PointCloud(Component):
     """Marker component — tags entities for the sprite render path.
 
     Carries no per-entity data. The renderer detects this component
     and substitutes the SPRITE_QUAD geometry, ignoring any Mesh component.
     """
 
-    def __init__(self):
-        pass
 
-    def get_data(self, n: int, registry=None) -> np.ndarray:
-        return np.zeros((n, 0), dtype=np.float32)
-
-
-class TextLabel:
+class TextLabel(Component):
     """Per-entity atlas slice index for a rasterized label.
 
     Storage layout: 1 float per entity (column 0). The float holds an integer
@@ -88,18 +60,4 @@ class TextLabel:
         TextLabel(index=array_shape_N_int)       # explicit per-entity
     """
 
-    def __init__(self, index=None):
-        self._index = index
-
-    def get_data(self, n: int, registry=None) -> np.ndarray:
-        data = np.zeros((n, 1), dtype=np.float32)
-        if self._index is None:
-            return data
-        v = np.asarray(self._index, dtype=np.float32)
-        if v.ndim == 0:
-            data[:, 0] = float(v)
-        elif v.ndim == 1 and v.shape[0] == n:
-            data[:, 0] = v
-        else:
-            raise ValueError(f"TextLabel: index shape {v.shape} incompatible with n={n}")
-        return data
+    index: Float = 0.0

@@ -43,11 +43,8 @@ EXTENT = DISK_OUTER * 1.2
 engine = mx.Engine("Protoplanetary disk")
 engine.camera.fit(EXTENT)
 
-# Pre-register the viz components — Plan 4's functional shim hides this.
-engine.store.register_component("PointCloud", np.dtype("f4"), (0,))
-engine.store.register_component("ScalarValue", np.dtype("f4"), (1,))
-engine.store.register_component("Radius", np.dtype("f4"), (1,))
-engine.store.register_component("TextLabel", np.dtype("f4"), (1,))
+# No `engine.store.register_component(...)` boilerplate needed — the viz
+# components inherit from `Component` and auto-register on first spawn.
 
 # Central star: real 3D PBR sphere lit by a bright point light at the origin.
 # StandardMaterial parameters tuned for a warm, diffuse star surface.

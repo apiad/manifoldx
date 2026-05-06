@@ -13,7 +13,7 @@ from manifoldx.commands import CommandBuffer, Command, CommandType
 from manifoldx.systems import SystemRegistry
 from manifoldx.resources import GeometryRegistry, MaterialRegistry
 from manifoldx.renderer import RenderPipeline
-from manifoldx.components import Transform, Mesh, Material
+from manifoldx.components import Component, Transform, Mesh, Material
 from manifoldx.camera import Camera
 
 
@@ -195,6 +195,11 @@ class Engine:
             kwargs[name] = arg
 
         for name, value in kwargs.items():
+            # Auto-register Component subclasses on first encounter so callers
+            # don't have to call `engine.store.register_component(...)` by hand.
+            if isinstance(value, Component):
+                type(value).register(self.store)
+
             # Check if it's a custom component class (has _component_registry)
             if hasattr(value, "_component_registry") and hasattr(value, "_component_fields"):
                 # It's a custom component class like Cube
