@@ -53,3 +53,30 @@ class LabelTextureAtlas:
         y = (TILE_HEIGHT - text_h) // 2 - bbox[1]
         draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
         return np.array(img, dtype=np.uint8)
+
+    @property
+    def slice_count(self) -> int:
+        return self._slice_count
+
+    @property
+    def dirty_slices(self) -> set[int]:
+        return self._dirty_slices
+
+    def clear_dirty(self) -> None:
+        self._dirty_slices.clear()
+
+    def get_or_create(self, text: str, font_size: int = 14) -> int:
+        key = (text, font_size)
+        if key in self._index:
+            return self._index[key]
+        if self._slice_count >= MAX_LABELS:
+            raise AtlasOverflowError(
+                f"label atlas full at {MAX_LABELS} unique labels (v1 cap). "
+                f"Refused to add {key!r}."
+            )
+        idx = self._slice_count
+        self._slices[idx] = self.rasterize_string(text, font_size=font_size)
+        self._index[key] = idx
+        self._dirty_slices.add(idx)
+        self._slice_count += 1
+        return idx
