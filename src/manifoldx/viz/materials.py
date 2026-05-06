@@ -106,6 +106,98 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 """.strip()
 
 
+# WGSL shader source for LabelMaterial.
+#
+# Bindings (group 0):
+#   0: Globals uniform   { vp: mat4x4, view: mat4x4, proj: mat4x4, camera_pos: vec3, _pad: f32 }
+#   1: transforms        storage<read> array<mat4x4<f32>>
+#   2: material uniform  { pixel_width: f32, pixel_height: f32, anchor_mode: f32, _pad: f32 }
+#   3: label_indices     storage<read> array<f32>     # cast to u32 in shader
+#   4: atlas_texture     texture_2d_array<f32>
+#   5: atlas_sampler     sampler
+#
+# Vertex inputs:
+#   @location(0) position: vec3<f32>   — quad-local in [-1, 1]^2 (z = 0)
+#
+# Vertex outputs:
+#   @location(0) uv:    vec2<f32>      — texture UV in [0, 1]^2
+#   @location(1) slice: f32            — label slice index (f32-encoded u32)
+
+_LABEL_SHADER = """
+struct Globals {
+    vp: mat4x4<f32>,
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    _pad: f32,
+};
+
+struct MaterialUniform {
+    pixel_width: f32,
+    pixel_height: f32,
+    anchor_mode: f32,
+    _pad: f32,
+};
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> transforms: array<mat4x4<f32>>;
+@group(0) @binding(2) var<uniform> material: MaterialUniform;
+@group(0) @binding(3) var<storage, read> label_indices: array<f32>;
+@group(0) @binding(4) var atlas_texture: texture_2d_array<f32>;
+@group(0) @binding(5) var atlas_sampler: sampler;
+
+struct VSIn {
+    @location(0) position: vec3<f32>,
+};
+
+struct VSOut {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) slice: f32,
+};
+
+@vertex
+fn vs_main(in: VSIn, @builtin(instance_index) iidx: u32) -> VSOut {
+    let model = transforms[iidx];
+    let world_center = (model * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
+    let view_center = (globals.view * vec4<f32>(world_center, 1.0)).xyz;
+
+    // Convert quad-local position to a screen-pixel offset, then back into
+    // view space at the anchor's depth so the label keeps a fixed pixel size
+    // regardless of camera distance. The proj matrix's [0][0] and [1][1]
+    // entries encode the focal lengths used by the perspective projection.
+    let half_w_pixels = material.pixel_width * 0.5;
+    let half_h_pixels = material.pixel_height * 0.5;
+    let view_z = max(-view_center.z, 1e-3);
+    let view_dx = in.position.x * half_w_pixels * 2.0 * view_z / globals.proj[0][0] / 1024.0;
+    let view_dy = in.position.y * half_h_pixels * 2.0 * view_z / globals.proj[1][1] / 1024.0;
+
+    let view_pos = vec4<f32>(
+        view_center.x + view_dx,
+        view_center.y + view_dy,
+        view_center.z,
+        1.0,
+    );
+    let clip = globals.proj * view_pos;
+
+    var out: VSOut;
+    out.clip_position = clip;
+    // Map quad position [-1, 1]^2 to UV [0, 1]^2 with V flipped so PIL's
+    // top-left origin lands at the top of the rendered quad.
+    out.uv = vec2<f32>(in.position.x * 0.5 + 0.5, 0.5 - in.position.y * 0.5);
+    out.slice = label_indices[iidx];
+    return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+    let layer = i32(in.slice + 0.5);
+    let texel = textureSample(atlas_texture, atlas_sampler, in.uv, layer);
+    return texel;
+}
+""".strip()
+
+
 class ColormapMaterial(Material):
     """Point-sprite material that colormaps a per-instance scalar.
 
