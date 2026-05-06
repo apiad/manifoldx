@@ -4,6 +4,7 @@ SPRITE_QUAD: unit quad in XY plane, expanded into a camera-facing
 billboard by the vertex shader. UVs are reconstructed from the
 quad-local position (xy in [-1, 1]^2) inside the fragment shader.
 """
+
 import numpy as np
 
 
@@ -11,9 +12,9 @@ import numpy as np
 _QUAD_VERTICES = np.array(
     [
         [-1.0, -1.0, 0.0],  # 0: bottom-left
-        [ 1.0, -1.0, 0.0],  # 1: bottom-right
-        [ 1.0,  1.0, 0.0],  # 2: top-right
-        [-1.0,  1.0, 0.0],  # 3: top-left
+        [1.0, -1.0, 0.0],  # 1: bottom-right
+        [1.0, 1.0, 0.0],  # 2: top-right
+        [-1.0, 1.0, 0.0],  # 3: top-left
     ],
     dtype=np.float32,
 )

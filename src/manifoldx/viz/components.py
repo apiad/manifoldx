@@ -1,4 +1,5 @@
 """Sci-viz ECS components: PointCloud (marker), ScalarValue, Radius."""
+
 import numpy as np
 
 
@@ -26,9 +27,7 @@ class ScalarValue:
         elif v.ndim == 1 and v.shape[0] == n:
             data[:, 0] = v
         else:
-            raise ValueError(
-                f"ScalarValue: value shape {v.shape} incompatible with n={n}"
-            )
+            raise ValueError(f"ScalarValue: value shape {v.shape} incompatible with n={n}")
         return data
 
 
@@ -57,9 +56,7 @@ class Radius:
         elif v.ndim == 1 and v.shape[0] == n:
             data[:, 0] = v
         else:
-            raise ValueError(
-                f"Radius: radius shape {v.shape} incompatible with n={n}"
-            )
+            raise ValueError(f"Radius: radius shape {v.shape} incompatible with n={n}")
         return data
 
 

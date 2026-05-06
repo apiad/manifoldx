@@ -270,7 +270,9 @@ class RenderPipeline:
 
         self._initialized = True
 
-    def _get_or_create_pipeline(self, device, texture_format, geometry_id, material, registry, sprite=False):
+    def _get_or_create_pipeline(
+        self, device, texture_format, geometry_id, material, registry, sprite=False
+    ):
         """Get or create a material-type specific pipeline.
 
         Pipeline cache key:
@@ -487,7 +489,9 @@ class RenderPipeline:
             if not needs_lights:
                 buffer_size = 16  # vec4 color
             else:
-                buffer_size = 32  # 8 floats: albedo(3) + roughness(1) + metallic(1) + ao(1) + pad(2)
+                buffer_size = (
+                    32  # 8 floats: albedo(3) + roughness(1) + metallic(1) + ao(1) + pad(2)
+                )
 
             material_buffer = device.create_buffer(
                 size=buffer_size,
@@ -578,11 +582,13 @@ class RenderPipeline:
         # Upload projection matrix (column-major) at offset 128. Use the camera's
         # own near/far rather than the helper's defaults so the sprite path
         # matches the depth range the rest of the pipeline uses.
-        proj_mat = camera.get_projection_matrix(
-            aspect, near=camera.near, far=camera.far
-        ).T.astype(np.float32)
+        proj_mat = camera.get_projection_matrix(aspect, near=camera.near, far=camera.far).T.astype(
+            np.float32
+        )
         globals_data[128:192] = np.frombuffer(proj_mat.tobytes(), dtype=np.uint8)
-        globals_data[192:204] = np.frombuffer(camera_pos.astype(np.float32).tobytes(), dtype=np.uint8)
+        globals_data[192:204] = np.frombuffer(
+            camera_pos.astype(np.float32).tobytes(), dtype=np.uint8
+        )
         # bytes 204-207 are padding (already zero)
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 
@@ -781,9 +787,7 @@ class RenderPipeline:
             alive_indices = np.where(self._store._alive)[0]
             entity_indices = alive_indices[ent_arr]
             scalar_data = self._store.get_component_data("ScalarValue", entity_indices)
-            self._sprite_batch_buffers.upload_scalar_values(
-                scalar_data[:, 0].astype(np.float32)
-            )
+            self._sprite_batch_buffers.upload_scalar_values(scalar_data[:, 0].astype(np.float32))
         else:
             scalar_data = np.zeros((len(ent_arr),), dtype=np.float32)
             self._sprite_batch_buffers.upload_scalar_values(scalar_data)
@@ -793,9 +797,7 @@ class RenderPipeline:
             alive_indices = np.where(self._store._alive)[0]
             entity_indices = alive_indices[ent_arr]
             radius_data = self._store.get_component_data("Radius", entity_indices)
-            self._sprite_batch_buffers.upload_radii(
-                radius_data[:, 0].astype(np.float32)
-            )
+            self._sprite_batch_buffers.upload_radii(radius_data[:, 0].astype(np.float32))
         else:
             radius_data = np.ones((len(ent_arr),), dtype=np.float32)
             self._sprite_batch_buffers.upload_radii(radius_data)
@@ -822,8 +824,7 @@ class RenderPipeline:
 
             if not isinstance(mat_obj, ColormapMaterial):
                 raise TypeError(
-                    f"sprite batch material must be ColormapMaterial; "
-                    f"got {type(mat_obj).__name__}"
+                    f"sprite batch material must be ColormapMaterial; got {type(mat_obj).__name__}"
                 )
 
             first_instance, instance_count = batch_draw_info[mat_id]
@@ -851,16 +852,12 @@ class RenderPipeline:
                 )
 
             # Build sprite bind group
-            bind_group = self._make_sprite_bind_group(
-                bind_group_layout, mat_obj, mat_buffer
-            )
+            bind_group = self._make_sprite_bind_group(bind_group_layout, mat_obj, mat_buffer)
 
             render_pass.set_pipeline(pipeline)
             render_pass.set_bind_group(0, bind_group, [], 0, 0)
             render_pass.set_vertex_buffer(0, gpu_buffers["vertex_buffer"])
-            render_pass.set_index_buffer(
-                gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32
-            )
+            render_pass.set_index_buffer(gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32)
             render_pass.draw_indexed(
                 gpu_buffers["index_count"],
                 instance_count,
@@ -912,9 +909,7 @@ class RenderPipeline:
             5: lut_texture (1D RGBA8)
             6: lut_sampler
         """
-        lut_texture, lut_sampler = self._get_or_create_lut_texture(
-            self._device, material
-        )
+        lut_texture, lut_sampler = self._get_or_create_lut_texture(self._device, material)
 
         mat_buffer_size = 16  # 4 floats: vmin, vmax, lit_flag, _pad
 

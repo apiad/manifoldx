@@ -3,6 +3,7 @@
 ColormapMaterial: maps a per-instance scalar value through a 1D LUT.
 Camera-facing point sprites with sphere-imposter normal reconstruction.
 """
+
 import numpy as np
 from typing import Dict
 
