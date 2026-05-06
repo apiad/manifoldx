@@ -30,3 +30,34 @@ class ScalarValue:
                 f"ScalarValue: value shape {v.shape} incompatible with n={n}"
             )
         return data
+
+
+class Radius:
+    """Per-entity world-space radius for sprite scaling.
+
+    Storage layout: 1 float per entity (column 0).
+    Default: 1.0.
+
+    Usage:
+        Radius()                       # all 1.0
+        Radius(radius=0.05)            # broadcast scalar
+        Radius(radius=array_shape_N)   # explicit per-entity
+    """
+
+    def __init__(self, radius=None):
+        self._radius = radius
+
+    def get_data(self, n: int, registry=None) -> np.ndarray:
+        data = np.ones((n, 1), dtype=np.float32)
+        if self._radius is None:
+            return data
+        v = np.asarray(self._radius, dtype=np.float32)
+        if v.ndim == 0:
+            data[:, 0] = float(v)
+        elif v.ndim == 1 and v.shape[0] == n:
+            data[:, 0] = v
+        else:
+            raise ValueError(
+                f"Radius: radius shape {v.shape} incompatible with n={n}"
+            )
+        return data
