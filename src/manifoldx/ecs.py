@@ -470,6 +470,16 @@ class ComponentAccessor:
                     self._store, self._indices, "Transform", 7, 10, "scale", self._commands
                 )
 
+        # Built-in viz scalar components (single-column floats).
+        if self._component_name == "ScalarValue" and name == "value":
+            return _FieldView(
+                self._store, self._indices, "ScalarValue", 0, 1, "value", self._commands
+            )
+        if self._component_name == "Radius" and name == "radius":
+            return _FieldView(
+                self._store, self._indices, "Radius", 0, 1, "radius", self._commands
+            )
+
         # Check if component class has field positions
         comp_class = _COMPONENT_REGISTRY.get(self._component_name)
         if comp_class and hasattr(comp_class, "_component_start_idx"):
