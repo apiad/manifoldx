@@ -197,36 +197,11 @@ class Engine:
         for name, value in kwargs.items():
             # Auto-register Component subclasses on first encounter so callers
             # don't have to call `engine.store.register_component(...)` by hand.
+            # Classes decorated with `@engine.component` register themselves at
+            # decorator time via _make_component_class, so they don't need a
+            # branch here — they fall through to the get_data path below.
             if isinstance(value, Component):
                 type(value).register(self.store)
-
-            # Check if it's a custom component class (has _component_registry)
-            if hasattr(value, "_component_registry") and hasattr(value, "_component_fields"):
-                # It's a custom component class like Cube
-                # Register the component name immediately (not in command)
-                if name not in self.store._components:
-                    # Calculate total size of all fields
-                    total_cols = 0
-                    for field_name in value._component_fields:
-                        comp_def = value._component_registry.get(field_name)
-                        if comp_def:
-                            shape = comp_def.shape
-                            total_cols += int(np.prod(shape)) if shape else 1
-
-                    # Register as single component
-                    self.store.register_component(name, np.dtype("f4"), (total_cols,))
-                    # Store field info for later access
-                    value._component_name = name
-                    value._component_start_idx = {}
-
-                    col_idx = 0
-                    for field_name in value._component_fields:
-                        comp_def = value._component_registry.get(field_name)
-                        if comp_def:
-                            shape = comp_def.shape
-                            size = int(np.prod(shape)) if shape else 1
-                            value._component_start_idx[field_name] = (col_idx, size)
-                            col_idx += size
 
             if hasattr(value, "get_data"):
                 # It's a component object (Mesh, Material, Transform) - get data from it

@@ -546,49 +546,10 @@ class ComponentAccessor:
 # Global Component Registry
 # =============================================================================
 
-_COMPONENT_REGISTRY: dict[str, "ComponentDef"] = {}
-
-
-class ComponentDef:
-    """Definition of a registered component."""
-
-    def __init__(
-        self, name: str, dtype: np.dtype, shape: tuple, default_value: np.ndarray | None = None
-    ):
-        self.name = name
-        self.dtype = dtype
-        self.shape = shape
-        self.default_value = default_value
-
-
-def component(cls: type) -> type:
-    """
-    Decorator to register a component class.
-
-    Usage:
-        @component
-        class Cube:
-            velocity: Vector3  # shape (3,)
-            life: Float       # shape ()
-
-    Registers component in global _COMPONENT_REGISTRY.
-    """
-    from manifoldx.types import Vector3, Vector4, Float
-
-    annotations = cls.__annotations__
-
-    for field_name, field_type in annotations.items():
-        # Map type hints to numpy dtype and shape
-        shape = _infer_shape_from_type(field_type)
-        dtype = np.dtype("f4")  # Default to float32
-
-        default = getattr(cls, field_name, None)
-
-        comp_def = ComponentDef(name=field_name, dtype=dtype, shape=shape, default_value=default)
-        _COMPONENT_REGISTRY[field_name] = comp_def
-
-    cls._component_defs = _COMPONENT_REGISTRY
-    return cls
+# Registry of component classes created via `@engine.component` /
+# `_make_component_class`. Keyed by class name; value is the class itself.
+# Read by ComponentAccessor / ComponentView for field lookup.
+_COMPONENT_REGISTRY: dict[str, type] = {}
 
 
 def _infer_shape_from_type(tp) -> tuple:
@@ -679,6 +640,5 @@ __all__ = [
     "EntityStore",
     "ComponentView",
     "ComponentAccessor",
-    "component",
     "_COMPONENT_REGISTRY",
 ]
