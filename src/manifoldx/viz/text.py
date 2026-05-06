@@ -81,6 +81,57 @@ class LabelTextureAtlas:
         self._slice_count += 1
         return idx
 
+    def register_colormap_legend(
+        self, cmap_name: str, *, orientation: str = "horizontal"
+    ) -> int:
+        """Rasterize a colormap LUT as an atlas slice and return its index.
+
+        The atlas tile is 256×64 (4:1 aspect), so a horizontal legend maps
+        directly: column i = LUT[i] for i in [0, 255]. A vertical legend
+        subsamples the 256-entry LUT to 64 rows.
+
+        Plan 4's `colormap_legend(...)` shim composes this with TextLabel
+        tick annotations. Plan 3 just ships the rendering capability —
+        Spawn a screen-anchored TextLabel pointing at the returned slot and
+        the legend draws via the standard label render path; no new
+        material or pipeline is needed.
+
+        Idempotent: same cmap_name + orientation returns the same slot.
+        """
+        if orientation not in ("horizontal", "vertical"):
+            raise ValueError(
+                f"orientation must be 'horizontal' or 'vertical', got {orientation!r}"
+            )
+        # Use a sentinel key so colormap legends never collide with text labels.
+        key = (f"\x00cmap_legend\x00{cmap_name}\x00{orientation}", 0)
+        if key in self._index:
+            return self._index[key]
+        if self._slice_count >= MAX_LABELS:
+            raise AtlasOverflowError(
+                f"label atlas full at {MAX_LABELS} unique labels (v1 cap). "
+                f"Refused to add {key!r}."
+            )
+
+        from manifoldx.viz import colormaps
+
+        lut = colormaps.get_colormap(cmap_name)  # (256, 4) uint8
+        if orientation == "horizontal":
+            # Tile each LUT row across all 64 atlas rows: column i → LUT[i].
+            tile = np.broadcast_to(lut[None, :, :], (TILE_HEIGHT, TILE_WIDTH, 4)).copy()
+        else:
+            # Subsample LUT to 64 entries; bottom row = LUT[0] (low value),
+            # top row = LUT[255] (high value). Then broadcast across columns.
+            sample_idx = np.linspace(255, 0, TILE_HEIGHT, dtype=np.int32)
+            sampled = lut[sample_idx]  # (64, 4)
+            tile = np.broadcast_to(sampled[:, None, :], (TILE_HEIGHT, TILE_WIDTH, 4)).copy()
+
+        idx = self._slice_count
+        self._slices[idx] = tile
+        self._index[key] = idx
+        self._dirty_slices.add(idx)
+        self._slice_count += 1
+        return idx
+
     @property
     def gpu_texture(self):
         return self._gpu_texture

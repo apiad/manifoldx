@@ -103,6 +103,27 @@ engine.spawn(
     n=1,
 )
 
+# Screen-anchored colormap legend --------------------------------------------
+# A viridis colormap legend at the bottom-right corner. The LUT is rasterized
+# into a single label-atlas slice via the new register_colormap_legend()
+# method and rendered via the existing screen-anchored LabelMaterial path —
+# no new material or pipeline. Plan 4's `colormap_legend(...)` shim will
+# package this with min/max tick labels.
+legend_slot = atlas.register_colormap_legend("viridis")
+engine.spawn(
+    Material(LabelMaterial(pixel_width=240, pixel_height=24, anchor_mode="screen")),
+    Transform(pos=(0.55, -0.85, 0.0)),
+    TextLabel(index=legend_slot),
+    n=1,
+)
+legend_caption_slot = atlas.get_or_create("viridis: 0.0 → 1.0")
+engine.spawn(
+    Material(LabelMaterial(pixel_width=200, pixel_height=24, anchor_mode="screen")),
+    Transform(pos=(0.55, -0.93, 0.0)),
+    TextLabel(index=legend_caption_slot),
+    n=1,
+)
+
 # Screen-anchored scale-bar ---------------------------------------------------
 # A simple "scale bar" overlay built from Plan 3 part 2 primitives:
 # a screen-anchored AxisMaterial line (the bar) plus a screen-anchored
