@@ -251,3 +251,67 @@ class ColormapMaterial(Material):
     def get_lut(self) -> np.ndarray:
         """Return the (256, 4) uint8 LUT for this material's colormap."""
         return colormaps.get_colormap(self.cmap)
+
+
+_VALID_ANCHOR_MODES = ("world", "screen")
+
+
+class LabelMaterial(Material):
+    """Camera-facing billboard material textured with a label-atlas slice.
+
+    Per-batch uniform (4 floats):
+        pixel_width, pixel_height, anchor_mode, _pad
+        (anchor_mode: 0.0 = world, 1.0 = screen — Plan 2 ships world only)
+
+    Per-instance storage buffer:
+        transforms (mat4x4)  — existing
+        label_indices (f32)  — atlas slice index, cast to u32 in shader
+
+    Texture binding: 2D texture array (TILE_WIDTH x TILE_HEIGHT x MAX_LABELS).
+
+    Pipeline cache key: includes pipeline_subtype = anchor_mode so the
+    world-anchored and screen-anchored pipelines stay separate even though
+    they share a shader. (Screen-anchored is reserved for Plan 3.)
+    """
+
+    binding_slot = 3
+
+    def __init__(
+        self,
+        *,
+        pixel_width: float = 256.0,
+        pixel_height: float = 64.0,
+        anchor_mode: str = "world",
+    ):
+        if anchor_mode not in _VALID_ANCHOR_MODES:
+            raise ValueError(
+                f"LabelMaterial.anchor_mode must be one of {_VALID_ANCHOR_MODES}, got {anchor_mode!r}"
+            )
+        self.pixel_width = float(pixel_width)
+        self.pixel_height = float(pixel_height)
+        self.anchor_mode = anchor_mode
+
+    @classmethod
+    def _compile(cls) -> str:
+        return _LABEL_SHADER
+
+    @classmethod
+    def uniform_type(cls) -> Dict[str, str]:
+        return {
+            "pixel_width": "f32",
+            "pixel_height": "f32",
+            "anchor_mode": "f32",
+            "_pad": "f32",
+        }
+
+    @property
+    def pipeline_subtype(self) -> str:
+        return self.anchor_mode
+
+    def get_data(self, n: int, registry=None) -> np.ndarray:
+        anchor_f = 0.0 if self.anchor_mode == "world" else 1.0
+        row = np.array(
+            [self.pixel_width, self.pixel_height, anchor_f, 0.0],
+            dtype=np.float32,
+        )
+        return np.broadcast_to(row, (n, 4)).copy()

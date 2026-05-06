@@ -1,5 +1,5 @@
 from manifoldx.viz.components import PointCloud, Radius, ScalarValue, TextLabel
-from manifoldx.viz.materials import ColormapMaterial
+from manifoldx.viz.materials import ColormapMaterial, LabelMaterial
 from manifoldx.viz.text import LabelTextureAtlas
 
 __all__ = [
@@ -8,5 +8,6 @@ __all__ = [
     "Radius",
     "TextLabel",
     "ColormapMaterial",
+    "LabelMaterial",
     "LabelTextureAtlas",
 ]
