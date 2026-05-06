@@ -70,3 +70,50 @@ def test_label_does_not_render_when_no_atlas_strings_registered():
     engine._draw_frame()
     frame = engine._render_canvas.draw()
     assert frame is not None  # no crash
+
+
+def test_screen_anchored_label_lands_in_target_ndc_quadrant():
+    """anchor_mode='screen' interprets Transform.pos.xy as an NDC anchor in
+    [-1, 1]. A label anchored at (+0.5, +0.5) with the camera looking in a
+    completely unrelated direction should still land in the upper-right
+    quadrant of the rendered frame."""
+    engine = _make_offscreen_engine(width=128, height=128)
+    # Camera looks AWAY from origin — confirms screen-anchored bypasses view/proj.
+    engine.camera.position = np.array([100.0, 100.0, 100.0], dtype=np.float32)
+    engine.camera.target = np.array([200.0, 200.0, 200.0], dtype=np.float32)
+
+    atlas = engine.get_label_atlas()
+    slice_idx = atlas.get_or_create("HELLO")
+
+    engine.spawn(
+        # Label sized to fit inside the upper-right quadrant of a 128×128
+        # frame: NDC anchor (+0.5, +0.5) = pixel (96, 32), label 64×24 px
+        # spans roughly pixel x[64..128], y[20..44] — entirely inside UR.
+        Material(LabelMaterial(pixel_width=64, pixel_height=24, anchor_mode="screen")),
+        Transform(pos=(0.5, 0.5, 0.0)),
+        TextLabel(index=slice_idx),
+        n=1,
+    )
+
+    engine._draw_frame()
+    frame = engine._render_canvas.draw()
+    assert frame.shape == (128, 128, 4)
+
+    # Upper-right quadrant: rows 0..63 (top half — wgpu Y-up means NDC +y = top
+    # = small row index), cols 64..127. Use threshold 200 so we count only the
+    # near-white label glyph pixels, not the offscreen-clear gray background
+    # (which sits around 124).
+    upper_right = frame[0:64, 64:128, :3]
+    other_quadrants = [
+        frame[0:64, 0:64, :3],
+        frame[64:128, 0:64, :3],
+        frame[64:128, 64:128, :3],
+    ]
+    bright_ur = (upper_right.max(axis=-1) > 150).sum()
+    bright_others = sum((q.max(axis=-1) > 150).sum() for q in other_quadrants)
+
+    assert bright_ur > 5, f"too few bright pixels in target quadrant: {bright_ur}"
+    assert bright_others == 0, (
+        f"label leaked outside target quadrant: {bright_ur} bright in UR vs "
+        f"{bright_others} elsewhere"
+    )

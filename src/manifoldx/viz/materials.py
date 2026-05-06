@@ -164,27 +164,37 @@ struct VSOut {
 fn vs_main(in: VSIn, @builtin(instance_index) iidx: u32) -> VSOut {
     let model = transforms[iidx];
     let world_center = (model * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
-    let view_center = (globals.view * vec4<f32>(world_center, 1.0)).xyz;
 
-    // Convert quad-local position to a screen-pixel offset, then back into
-    // view space at the anchor's depth so the label keeps a fixed pixel size
-    // regardless of camera distance. The proj matrix's [0][0] and [1][1]
-    // entries encode the focal lengths used by the perspective projection.
-    // Dividing by viewport_size.x / .y converts pixel offset → NDC → view
-    // space at the anchor's depth.
-    let half_w_pixels = material.pixel_width * 0.5;
-    let half_h_pixels = material.pixel_height * 0.5;
-    let view_z = max(-view_center.z, 1e-3);
-    let view_dx = in.position.x * half_w_pixels * 2.0 * view_z / globals.proj[0][0] / globals.viewport_size.x;
-    let view_dy = in.position.y * half_h_pixels * 2.0 * view_z / globals.proj[1][1] / globals.viewport_size.y;
+    var clip: vec4<f32>;
 
-    let view_pos = vec4<f32>(
-        view_center.x + view_dx,
-        view_center.y + view_dy,
-        view_center.z,
-        1.0,
-    );
-    let clip = globals.proj * view_pos;
+    if (material.anchor_mode < 0.5) {
+        // World-anchored: project the entity's world position through the
+        // camera, then add a billboard offset in view space scaled so the
+        // label takes up `pixel_width` × `pixel_height` pixels on screen.
+        let view_center = (globals.view * vec4<f32>(world_center, 1.0)).xyz;
+        let half_w_pixels = material.pixel_width * 0.5;
+        let half_h_pixels = material.pixel_height * 0.5;
+        let view_z = max(-view_center.z, 1e-3);
+        let view_dx = in.position.x * half_w_pixels * 2.0 * view_z / globals.proj[0][0] / globals.viewport_size.x;
+        let view_dy = in.position.y * half_h_pixels * 2.0 * view_z / globals.proj[1][1] / globals.viewport_size.y;
+        let view_pos = vec4<f32>(
+            view_center.x + view_dx,
+            view_center.y + view_dy,
+            view_center.z,
+            1.0,
+        );
+        clip = globals.proj * view_pos;
+    } else {
+        // Screen-anchored: bypass view/proj entirely. Treat
+        // Transform.pos.xy as an NDC anchor in [-1, 1] and add the
+        // quad-local offset converted from pixels to NDC. NDC width
+        // is 2 units across the full viewport, so 1 pixel = 2 / viewport
+        // units; a quad-local x in [-1, 1] spans the full pixel_width
+        // → NDC offset = quad_local.x * pixel_width / viewport_size.x.
+        let ndc_dx = in.position.x * material.pixel_width / globals.viewport_size.x;
+        let ndc_dy = in.position.y * material.pixel_height / globals.viewport_size.y;
+        clip = vec4<f32>(world_center.x + ndc_dx, world_center.y + ndc_dy, 0.0, 1.0);
+    }
 
     var out: VSOut;
     out.clip_position = clip;
