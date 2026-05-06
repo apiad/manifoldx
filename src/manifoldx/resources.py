@@ -5,7 +5,8 @@ import wgpu
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
-from manifoldx.viz.geometry import SPRITE_QUAD as _SPRITE_QUAD
+# _SPRITE_QUAD is imported lazily inside GeometryRegistry.__init__ to avoid
+# a circular import: resources -> viz.geometry -> viz -> viz.materials -> resources.
 
 
 # =============================================================================
@@ -319,6 +320,8 @@ class GeometryRegistry:
     """
 
     def __init__(self, device=None):
+        from manifoldx.viz.geometry import SPRITE_QUAD as _sprite_quad
+
         self._device = device
         self._geometries: Dict[int, Any] = {}  # id -> geometry dict
         self._object_to_id: Dict[int, int] = {}  # object id -> registry id
@@ -327,7 +330,7 @@ class GeometryRegistry:
         self._gpu_buffers: Dict[int, dict] = {}  # id -> {vertex_buffer, index_buffer}
 
         # Register built-in geometries by name
-        self._register_builtin(_SPRITE_QUAD["name"], _SPRITE_QUAD)
+        self._register_builtin(_sprite_quad["name"], _sprite_quad)
 
     def create_buffers(self, geometry_id: int, geometry_obj: dict, queue):
         """Create GPU buffers for geometry.
