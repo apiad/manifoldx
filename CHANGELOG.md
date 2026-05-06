@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sci-viz Plan 2 (text rendering)** — `manifoldx.viz` adds the `TextLabel` ECS component, the `LabelMaterial` camera-facing-billboard material with depth-test on / depth-write off / alpha-blend on, and the `LabelTextureAtlas` host-side cache that rasterizes strings via PIL (DejaVu Sans Mono bundled, 256×64 RGBA8 tiles, sRGB-correct) and uploads them lazily to a `texture_2d_array` (256-slice cap in v1).
 - **Label render pass** — `RenderPipeline.run` now batches `TextLabel + LabelMaterial` entities into a third draw group dispatched after the 3D opaque pass. Pipeline cache key extended with a `"label"` fourth element so the world-anchored label pipeline never collides with sprite or mesh pipelines.
 - **`engine.get_label_atlas()`** — lazy accessor for the per-engine atlas, used by the renderer and by user code that wants to register strings up front.
+- **Sci-viz Plan 3 part 1 (axes + screen anchoring)** — viewport-aware label sizing, `LabelMaterial(anchor_mode="screen")` actually renders in NDC, `AxisFrame` component + `AxisMaterial` line material + native LineList rendering pipeline. `engine` has built-in `axis_line_x` / `axis_line_y` / `axis_line_z` geometries; users spawn three entities (one per direction) with their own `AxisMaterial(color=...)`.
+- **`Globals` uniform extended** — `viewport_size: vec2<f32>` (208 → 224 bytes) replaces the v1 `1024.0` calibration constant; labels now scale to actual viewport pixel dimensions on any canvas.
+
+### Refactors (Plan 3 part 1)
+- **Pipeline factory `_get_or_create_pipeline`** — accepts `line=True` for a LineList-topology, opaque, depth-write-on path. Three bind slots (globals, transforms, material uniform).
+- **`RenderPipeline.run` routing** — priority `axis > label > sprite > mesh`; new `_render_axis_pass` and dedicated `_axis_batch_buffers` parallel the existing sprite/label paths.
+- **Component base unchanged** — the new `AxisFrame` (2 floats: `extent`, `thickness`) auto-registers via the `Component` annotation pattern, no boilerplate in user code.
 
 ### Refactors
 - **`_BatchBuffers` helper** — Per-batch GPU buffer management lifted out of `RenderPipeline` into a dedicated helper, supporting capacity-tracking lazy allocation for `transforms`, `scalar_values`, and `radii`.
