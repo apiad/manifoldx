@@ -547,19 +547,20 @@ class RenderPipeline:
 
         for i, entity_idx in enumerate(alive_indices):
             mat_id = int(material_data[i, 0]) if material_data is not None else 0
+            geom_id = int(mesh_data[i, 0]) if mesh_data is not None else 0
 
-            # Determine if this entity is a sprite (has PointCloud component)
-            is_sprite = has_point_cloud and self._store._alive[entity_idx]
+            # Per-entity routing: an entity is a sprite when PointCloud is
+            # registered AND it has no Mesh geometry (geom_id == 0). This lets
+            # mesh-bearing entities (e.g. a central PBR sphere) coexist in the
+            # same scene as sprite-bearing entities (point clouds).
+            is_sprite = has_point_cloud and geom_id == 0
 
             if is_sprite:
                 if mat_id not in sprite_batches:
                     sprite_batches[mat_id] = []
                 sprite_batches[mat_id].append(i)
             else:
-                if not has_mesh:
-                    continue
-                geom_id = int(mesh_data[i, 0])
-                if geom_id == 0:
+                if not has_mesh or geom_id == 0:
                     continue
 
                 mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
