@@ -46,3 +46,20 @@ def test_label_material_invalid_anchor_mode_raises():
 
     with pytest.raises(ValueError):
         LabelMaterial(anchor_mode="bogus")
+
+
+def test_label_material_shader_module_creates_without_error():
+    """The shader source must compile in a real wgpu shader module."""
+    import pytest
+    try:
+        from manifoldx.backends import get_offscreen_canvas
+        get_offscreen_canvas(width=64, height=64)
+    except Exception as e:
+        pytest.skip(f"offscreen canvas unavailable: {e}")
+
+    import wgpu
+    adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+    device = adapter.request_device_sync()
+    src = LabelMaterial._compile()
+    module = device.create_shader_module(code=src)
+    assert module is not None
