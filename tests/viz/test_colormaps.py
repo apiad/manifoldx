@@ -40,3 +40,26 @@ def test_lookup_normalized_value():
     assert rgba.shape == (4,)
     # Index 127 or 128 — accept either
     np.testing.assert_array_equal(rgba, lut[127]) if (rgba == lut[127]).all() else np.testing.assert_array_equal(rgba, lut[128])
+
+
+@pytest.mark.parametrize("name", ["viridis", "magma", "plasma", "inferno", "turbo", "gray"])
+def test_all_colormaps_well_formed(name):
+    lut = colormaps.get_colormap(name)
+    assert lut.shape == (256, 4)
+    assert lut.dtype == np.uint8
+    # Alpha is always 255
+    assert (lut[:, 3] == 255).all()
+
+
+def test_gray_is_monotonic():
+    lut = colormaps.get_colormap("gray")
+    rgb = lut[:, :3]
+    # All three channels should equal each other and be monotonic increasing
+    assert (rgb[:, 0] == rgb[:, 1]).all()
+    assert (rgb[:, 1] == rgb[:, 2]).all()
+    assert (np.diff(rgb[:, 0].astype(int)) >= 0).all()
+
+
+def test_available_colormaps_complete():
+    available = sorted(colormaps._LUTS.keys())
+    assert available == sorted(["viridis", "magma", "plasma", "inferno", "turbo", "gray"])
