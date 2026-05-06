@@ -59,8 +59,11 @@ class Component:
     _field_specs: tuple = ()
     _field_defaults: dict = {}
 
-    def __init_subclass__(cls, **kwargs):
+    _gpu_only: bool = False
+
+    def __init_subclass__(cls, *, gpu_only: bool = False, **kwargs):
         super().__init_subclass__(**kwargs)
+        cls._gpu_only = bool(gpu_only)
         annotations = cls.__dict__.get("__annotations__", {})
         fields = []
         defaults = {}
