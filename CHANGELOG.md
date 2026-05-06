@@ -14,13 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sci-viz Plan 2 (text rendering)** — `manifoldx.viz` adds the `TextLabel` ECS component, the `LabelMaterial` camera-facing-billboard material with depth-test on / depth-write off / alpha-blend on, and the `LabelTextureAtlas` host-side cache that rasterizes strings via PIL (DejaVu Sans Mono bundled, 256×64 RGBA8 tiles, sRGB-correct) and uploads them lazily to a `texture_2d_array` (256-slice cap in v1).
 - **Label render pass** — `RenderPipeline.run` now batches `TextLabel + LabelMaterial` entities into a third draw group dispatched after the 3D opaque pass. Pipeline cache key extended with a `"label"` fourth element so the world-anchored label pipeline never collides with sprite or mesh pipelines.
 - **`engine.get_label_atlas()`** — lazy accessor for the per-engine atlas, used by the renderer and by user code that wants to register strings up front.
-- **Sci-viz Plan 3 part 1 (axes + screen anchoring)** — viewport-aware label sizing, `LabelMaterial(anchor_mode="screen")` actually renders in NDC, `AxisFrame` component + `AxisMaterial` line material + native LineList rendering pipeline. `engine` has built-in `axis_line_x` / `axis_line_y` / `axis_line_z` geometries; users spawn three entities (one per direction) with their own `AxisMaterial(color=...)`.
-- **`Globals` uniform extended** — `viewport_size: vec2<f32>` (208 → 224 bytes) replaces the v1 `1024.0` calibration constant; labels now scale to actual viewport pixel dimensions on any canvas.
+- **Sci-viz Plan 3 (axes, screen anchoring, scale bars, colormap legends)** — `LabelMaterial(anchor_mode="screen")` actually renders in NDC (was a silent fallback in Plan 2); `AxisFrame` component + `AxisMaterial` line material with `anchor_mode` (`"world"` | `"screen"`) + native LineList rendering pipeline. Built-in `axis_line_x` / `axis_line_y` / `axis_line_z` geometries auto-registered alongside `sprite_quad`. Screen-anchored axes give scale bars without a dedicated component.
+- **`LabelTextureAtlas.register_colormap_legend(cmap, orientation=...)`** — rasterizes a colormap LUT into one of the 256×64 atlas slices and returns the slot index. Renders via the existing screen-anchored LabelMaterial path — no new material or pipeline needed for legends.
+- **`Globals` uniform extended** — `viewport_size: vec2<f32>` (208 → 224 bytes) replaces the v1 `1024.0` calibration constant; labels and screen-anchored primitives scale to actual viewport pixel dimensions on any canvas.
+- **`examples/axes_demo.py`** — small standalone demo that exercises every Plan 3 primitive end-to-end: world-anchored axes with billboard end-cap labels, screen-anchored HUD overlay, screen-anchored scale bar, screen-anchored colormap legend. Camera orbits to highlight the world-vs-screen-anchored contrast.
 
-### Refactors (Plan 3 part 1)
-- **Pipeline factory `_get_or_create_pipeline`** — accepts `line=True` for a LineList-topology, opaque, depth-write-on path. Three bind slots (globals, transforms, material uniform).
+### Refactors (Plan 3)
+- **Pipeline factory `_get_or_create_pipeline`** — accepts `line=True` for a LineList-topology, opaque, depth-write-on path. Three bind slots (globals, transforms, material uniform); buffer is 32 bytes to fit `AxisMaterial`'s rgba + anchor_mode + 3 pad uniform.
 - **`RenderPipeline.run` routing** — priority `axis > label > sprite > mesh`; new `_render_axis_pass` and dedicated `_axis_batch_buffers` parallel the existing sprite/label paths.
+- **`AxisMaterial.pipeline_subtype = anchor_mode`** — world and screen modes get separate pipelines in the cache (parallels Plan 2's `LabelMaterial`).
 - **Component base unchanged** — the new `AxisFrame` (2 floats: `extent`, `thickness`) auto-registers via the `Component` annotation pattern, no boilerplate in user code.
+
+### Deferred from Plan 3 spec
+- **`ScaleBar` tag component** — the spec called for `ScaleBar(length, label_id)` as a routing tag, but on review the renderer doesn't need a distinct identity for scale bars: a screen-anchored axis line + a screen-anchored label compose into one. Plan 4's `scale_bar(...)` shim will package the composition.
+- **Dedicated `ColormapLegendMaterial` + pipeline** — same simplification: legends route through the existing label pipeline by stashing the LUT as an atlas slice. A future `vertical` colormap orientation would benefit from a dedicated material when the atlas tile aspect (4:1) becomes a real constraint, but v1 horizontal legends work fine.
+- **Line thickness honoring** — `AxisFrame.thickness` field is reserved; Plan 3 ships native LineList (1px on Vulkan/Metal). Quad-extrusion deferred until thicker lines have a concrete requirement.
 
 ### Refactors
 - **`_BatchBuffers` helper** — Per-batch GPU buffer management lifted out of `RenderPipeline` into a dedicated helper, supporting capacity-tracking lazy allocation for `transforms`, `scalar_values`, and `radii`.
