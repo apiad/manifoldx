@@ -9,17 +9,17 @@ Compare with examples/nbody.py (the imperative-ECS version): same
 visual surface, ~5x less code.
 """
 
+import manifoldx as mx
 import manifoldx.viz as mxv
 import numpy as np
 from manifoldx.resources import PointLight, StandardMaterial, sphere
 
 # Live data (the user mutates these in-place each frame) ---------------------
 N = 500
-rng = np.random.default_rng(7)
-positions = rng.uniform(-3.0, 3.0, (N, 3)).astype(np.float32)
-velocities = rng.normal(0.0, 0.6, (N, 3)).astype(np.float32)
+positions = mx.random.positions_in_box(N, half_size=3.0, rng=7)
+velocities = mx.random.velocities_gaussian(N, sigma=0.6, rng=8)
 speeds = np.linalg.norm(velocities, axis=1).astype(np.float32)
-radii = rng.uniform(0.04, 0.10, N).astype(np.float32)
+radii = mx.random.scalars_uniform(N, low=0.04, high=0.10, rng=9)
 
 # Declarative scene ---------------------------------------------------------
 chart = (

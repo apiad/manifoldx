@@ -20,13 +20,11 @@ SIZE = 5 * NUM_BODIES ** (1 / 3)
 engine = mx.Engine("N-Body Simulation")
 engine.camera.fit(SIZE)
 
-# Random initial positions spread uniformly
-positions = np.random.uniform(-SIZE, SIZE, size=(NUM_BODIES, 3)).astype(np.float32)
-
-# Random masses → visual scale (cube-root so volume ∝ mass)
-masses = np.random.uniform(0.5, 3.0, NUM_BODIES).astype(np.float32)
-visual_scales = masses ** (1 / 3)
-scales = visual_scales.reshape(-1, 1)  # (N, 1) → broadcasts to (N, 3)
+# Random initial positions spread uniformly + random masses (cube-root so
+# volume ∝ mass for the visual sphere scale).
+positions = mx.random.positions_in_box(NUM_BODIES, half_size=SIZE, rng=7)
+masses = mx.random.scalars_uniform(NUM_BODIES, low=0.5, high=3.0, rng=7)
+scales = (masses ** (1 / 3)).reshape(-1, 1)  # (N, 1) → broadcasts to (N, 3)
 
 # Spawn all bodies at once (instanced rendering)
 engine.spawn(

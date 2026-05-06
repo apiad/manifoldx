@@ -19,18 +19,18 @@ PARTICLE_RADIUS = 0.2  # collision & visual radius
 engine = mx.Engine("Ideal Gas")
 engine.camera.fit(BOX_HALF)
 
-# Random positions inside the box
-positions = np.random.uniform(
-    -BOX_HALF + PARTICLE_RADIUS,
-    BOX_HALF - PARTICLE_RADIUS,
-    size=(NUM_PARTICLES, 3),
-).astype(np.float32)
+# Random positions inside the box, leaving room for the particle radius.
+positions = mx.random.positions_in_box(
+    NUM_PARTICLES, half_size=BOX_HALF - PARTICLE_RADIUS, rng=7
+)
 
-# Random initial velocities (uniform direction, Maxwell-Boltzmann-ish speed)
-directions = np.random.randn(NUM_PARTICLES, 3).astype(np.float32)
-directions /= np.linalg.norm(directions, axis=1, keepdims=True)
-speeds = np.abs(np.random.normal(INITIAL_SPEED, INITIAL_SPEED * 0.3, NUM_PARTICLES))
-velocities = (directions * speeds[:, np.newaxis]).astype(np.float32)
+# Maxwell-Boltzmann-ish: random direction × |N(speed, 0.3·speed)|.
+directions = mx.random.velocities_on_sphere(NUM_PARTICLES, speed=1.0, rng=8)
+speeds = np.abs(
+    mx.random.scalars_gaussian(NUM_PARTICLES, sigma=INITIAL_SPEED * 0.3,
+                                mean=INITIAL_SPEED, rng=9)
+)
+velocities = directions * speeds[:, None]
 
 # Spawn all particles at once (instanced rendering — single draw call)
 engine.spawn(

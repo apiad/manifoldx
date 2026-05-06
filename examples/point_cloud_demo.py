@@ -66,31 +66,22 @@ engine.set_lights(
 # Per-frame physics runs over all alive entities (Plan 1's Query doesn't filter
 # per-component). The star's own velocity stays zero — softened gravity at the
 # origin returns ~0 acceleration, so it doesn't drift.
-rng = np.random.default_rng(7)
+positions = mx.random.positions_in_disk(
+    NUM_PARTICLES, inner=DISK_INNER, outer=DISK_OUTER,
+    thickness=DISK_THICK, axis="y", rng=7,
+)
 
-# Surface-density-uniform sampling: r² uniform in [r_min², r_max²].
-r = np.sqrt(rng.uniform(DISK_INNER**2, DISK_OUTER**2, NUM_PARTICLES)).astype(np.float32)
-theta = rng.uniform(0.0, 2.0 * np.pi, NUM_PARTICLES).astype(np.float32)
-z = rng.normal(0.0, DISK_THICK, NUM_PARTICLES).astype(np.float32)
-
-positions = np.stack([r * np.cos(theta), z, r * np.sin(theta)], axis=1).astype(np.float32)
-
-# Tangential unit vector in the xz-plane (counter-clockwise looking down +y).
-tangent = np.stack([-np.sin(theta), np.zeros_like(theta), np.cos(theta)], axis=1)
-
-# Circular-orbit speed at each radius: v = sqrt(GM / r).
-v_circ = np.sqrt(GM / r).astype(np.float32)
-
-# Initial velocities: tangential + small radial/vertical perturbation for
-# elliptical orbits and a non-zero scale-height.
-particle_velocities = (tangent.T * v_circ).T
+# Keplerian circular orbit around the central GM, plus small eccentric
+# perturbation so orbits aren't perfectly circular.
+particle_velocities = mx.random.velocities_orbit(positions, GM=GM, axis="y")
+v_circ_mag = np.linalg.norm(particle_velocities, axis=1, keepdims=True)
 particle_velocities += (
-    rng.normal(0.0, ECCENTRICITY, particle_velocities.shape).astype(np.float32)
-    * v_circ[:, None]
+    mx.random.velocities_gaussian(NUM_PARTICLES, sigma=ECCENTRICITY, rng=8)
+    * v_circ_mag
 )
 
 # Per-particle radius: brighter dust closer in, dustier farther out.
-radii = rng.uniform(0.04, 0.10, NUM_PARTICLES).astype(np.float32)
+radii = mx.random.scalars_uniform(NUM_PARTICLES, low=0.04, high=0.10, rng=9)
 
 initial_speeds = np.linalg.norm(particle_velocities, axis=1).astype(np.float32)
 

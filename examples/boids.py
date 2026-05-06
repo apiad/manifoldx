@@ -35,26 +35,15 @@ engine = mx.Engine("Boids & Predators")
 engine.camera.fit(BOUND_RADIUS * 1.2)
 
 # ── Boid initial conditions ─────────────────────────────────────
-boid_pos = np.random.normal(0, 5, (NUM_BOIDS, 3)).astype(np.float32)
-
-# Tangential initial velocity → swirling start
-axis = np.array([0.2, 1.0, 0.3], dtype=np.float32)
-axis /= np.linalg.norm(axis)
-tangent = np.cross(boid_pos, axis)
-norms = np.linalg.norm(tangent, axis=1, keepdims=True)
-tangent = np.where(
-    norms > 1e-6,
-    tangent / norms,
-    np.random.randn(NUM_BOIDS, 3).astype(np.float32),
-)
-boid_vel = (tangent * 6.0).astype(np.float32)
+# Gaussian cloud of positions; tangential swirl velocity around a tilted axis.
+boid_pos = mx.random.positions_gaussian(NUM_BOIDS, sigma=5.0, rng=7)
+boid_vel = mx.random.velocities_tangent(boid_pos, axis=(0.2, 1.0, 0.3), speed=6.0)
 
 # ── Predator initial conditions ─────────────────────────────────
-pred_pos = np.random.uniform(-BOUND_RADIUS * 0.5, BOUND_RADIUS * 0.5, (NUM_PREDATORS, 3)).astype(
-    np.float32
+pred_pos = mx.random.positions_in_box(
+    NUM_PREDATORS, half_size=BOUND_RADIUS * 0.5, rng=8
 )
-pred_dir = np.random.randn(NUM_PREDATORS, 3).astype(np.float32)
-pred_dir /= np.linalg.norm(pred_dir, axis=1, keepdims=True)
+pred_dir = mx.random.velocities_on_sphere(NUM_PREDATORS, speed=1.0, rng=9)
 
 # ── Spawn boids (instanced — single draw call) ─────────────────
 engine.spawn(
