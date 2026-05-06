@@ -147,12 +147,10 @@ def gravity(query: mx.Query[Transform, ScalarValue], dt: float):
 
     pos = query[Transform].pos.data  # (N_TOTAL + NUM_HUD, 3) snapshot
 
-    # Acceleration: a = -GM / (r² + ε²)^(3/2) * pos
-    r2 = (pos**2).sum(axis=1) + SOFTENING**2
-    inv_r3 = 1.0 / (r2 * np.sqrt(r2))
-    accel = -GM * pos * inv_r3[:, None]
+    # Soft Keplerian gravity toward the central star.
+    accel = mx.physics.central_gravity(pos, GM=GM, softening=SOFTENING)
 
-    # HUD labels are static — keep them anchored regardless of soft gravity.
+    # HUD labels are static — keep them anchored regardless of gravity.
     accel[N_TOTAL:] = 0.0
 
     velocities[:] = velocities + accel * dt

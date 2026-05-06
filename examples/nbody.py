@@ -41,32 +41,9 @@ velocities = np.zeros((NUM_BODIES, 3), dtype=np.float32)
 @engine.system
 def nbody_gravity(query: mx.Query[Transform], dt: float):
     global velocities
-
-    pos = query[Transform].pos.data  # (N, 3) copy
-
-    # ── Vectorised all-pairs gravity ────────────────────────────
-    diff = pos[np.newaxis, :, :] - pos[:, np.newaxis, :]  # (N, N, 3)
-    dist = np.linalg.norm(diff, axis=2)  # (N, N)
-    dist_safe = np.maximum(dist, SOFTENING)
-
-    # Force magnitudes: G * m_i * m_j / r²
-    mass_prod = masses[np.newaxis, :] * masses[:, np.newaxis]
-    force_mag = G * mass_prod / (dist_safe**2)
-
-    # Direction unit vectors (safe division — zero on diagonal)
-    inv_dist = np.zeros_like(dist)
-    nz = dist > 1e-6
-    inv_dist[nz] = 1.0 / dist[nz]
-    direction = diff * inv_dist[:, :, np.newaxis]
-
-    # Net force per body: sum over all others
-    forces = force_mag[:, :, np.newaxis] * direction
-    net_force = forces.sum(axis=1)
-
-    # Integrate velocity (F = ma → a = F/m)
-    velocities += (net_force / masses[:, np.newaxis]) * dt
-
-    # Write back
+    pos = query[Transform].pos.data
+    accel = mx.physics.gravity(pos, masses=masses, G=G, softening=SOFTENING)
+    velocities += accel * dt
     query[Transform].pos += velocities * dt
 
 

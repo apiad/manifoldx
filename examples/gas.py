@@ -44,59 +44,11 @@ engine.spawn(
 @engine.system
 def gas_physics(query: mx.Query[Transform], dt: float):
     global velocities
-
-    pos = query[Transform].pos.data  # (N, 3) copy
-
-    # ── Wall collisions (invisible box) ─────────────────────────
-    # Predict next position
-    next_pos = pos + velocities * dt
-    lo = -BOX_HALF + PARTICLE_RADIUS
-    hi = BOX_HALF - PARTICLE_RADIUS
-
-    # Reflect velocity where particles cross walls (vectorized per-axis)
-    below = next_pos < lo
-    above = next_pos > hi
-    velocities[below] = np.abs(velocities[below])
-    velocities[above] = -np.abs(velocities[above])
-
-    # ── Vectorised particle-particle collisions ─────────────────
-    # Use current positions for overlap detection
-    diff = pos[np.newaxis, :, :] - pos[:, np.newaxis, :]  # (N, N, 3)
-    dist = np.linalg.norm(diff, axis=2)  # (N, N)
-
-    # Find overlapping pairs (upper triangle only — no double-counting)
-    collision_dist = 2 * PARTICLE_RADIUS
-    overlap = dist < collision_dist
-    np.fill_diagonal(overlap, False)
-    i_idx, j_idx = np.where(np.triu(overlap))
-
-    if i_idx.size > 0:
-        # Collision normals (i → j)
-        n_vec = diff[i_idx, j_idx]  # (K, 3)
-        n_dist = dist[i_idx, j_idx, np.newaxis]  # (K, 1)
-        n_hat = np.where(n_dist > 1e-6, n_vec / n_dist, 0.0)  # (K, 3)
-
-        # Relative velocity
-        v_rel = velocities[j_idx] - velocities[i_idx]  # (K, 3)
-        v_dot_n = (v_rel * n_hat).sum(axis=1)  # (K,)
-
-        # Only resolve approaching pairs
-        approaching = v_dot_n < 0
-        if approaching.any():
-            idx_i = i_idx[approaching]
-            idx_j = j_idx[approaching]
-            v_n = v_dot_n[approaching]
-            n_h = n_hat[approaching]
-
-            # Equal-mass elastic collision: exchange velocity along normal
-            # Impulse = -(1+e) * v_rel·n / (1/m + 1/m) = -(1+e)/2 * v_rel·n
-            impulse = (-0.5 * v_n)[:, np.newaxis] * n_h
-
-            # Safe accumulation (handles particle in multiple collisions)
-            np.add.at(velocities, idx_i, -impulse)
-            np.add.at(velocities, idx_j, impulse)
-
-    # ── Write back ──────────────────────────────────────────────
+    pos = query[Transform].pos.data
+    mx.physics.box_boundary(
+        pos, velocities, half_size=BOX_HALF - PARTICLE_RADIUS, dt=dt
+    )
+    mx.physics.elastic_collisions(pos, velocities, radius=PARTICLE_RADIUS)
     query[Transform].pos += velocities * dt
 
 

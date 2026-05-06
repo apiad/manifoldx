@@ -108,16 +108,16 @@ def boids_physics(query: mx.Query[Transform], dt: float):
     inv_dist[scared] = 1.0 / pred_dist[scared]
     fear = (pred_diff * (scared[:, :, np.newaxis] * inv_dist[:, :, np.newaxis])).sum(axis=1)
 
-    # ── Soft boundary + central pull ────────────────────────────
-    dist_center = np.linalg.norm(pos, axis=1, keepdims=True)
-    overshoot = np.maximum(dist_center - BOUND_RADIUS, 0.0)
-    inward_dir = -pos / np.maximum(dist_center, 1e-6)
-    bound = inward_dir * overshoot * 3.0
+    # ── Central pull (soft boundary handled below via mx.physics) ──────
     pull = -pos * PULL_STRENGTH
 
     # ── Combine and integrate boid velocities ───────────────────
-    accel = SEP_W * sep + ALI_W * ali + COH_W * coh + FEAR_W * fear + pull + bound
+    accel = SEP_W * sep + ALI_W * ali + COH_W * coh + FEAR_W * fear + pull
     boid_vel += accel * dt
+    # Continuous inward pull when boids stray outside BOUND_RADIUS.
+    mx.physics.sphere_boundary(
+        pos, boid_vel, radius=BOUND_RADIUS, mode="soft", strength=3.0, dt=dt
+    )
 
     # Speed clamping with panic boost
     speed = np.linalg.norm(boid_vel, axis=1, keepdims=True)
