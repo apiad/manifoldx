@@ -28,7 +28,8 @@ desktop = ["glfw>=2.0"]
 offline = [
     "imageio-ffmpeg>=0.5",
 ]
-all = ["glfw>=2.0", "imageio-ffmpeg>=0.5"]
+viz = ["pillow>=10.0"]
+all = ["manifold-gfx[desktop,offline,viz]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/manifoldx"]

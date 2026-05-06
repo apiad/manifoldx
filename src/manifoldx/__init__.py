@@ -9,6 +9,7 @@ from manifoldx.systems import Query
 from manifoldx.components import Transform, Mesh, Material, Colors
 from manifoldx.camera import Camera
 from manifoldx.resources import cube, sphere, plane, basic, phong, standard
+from manifoldx import viz  # noqa: E402, F401
 
 
 # =============================================================================
