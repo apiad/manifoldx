@@ -19,8 +19,8 @@ def test_geometry_registry_id_allocation():
     id2 = registry.register(geo2)
     
     assert id1 != id2
-    assert id1 == 1
-    assert id2 == 2
+    assert id1 == 2
+    assert id2 == 3
 
 
 def test_geometry_cache():

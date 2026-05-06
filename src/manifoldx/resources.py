@@ -5,6 +5,8 @@ import wgpu
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
+from manifoldx.viz.geometry import SPRITE_QUAD as _SPRITE_QUAD
+
 
 # =============================================================================
 # Material Base Class
@@ -320,8 +322,12 @@ class GeometryRegistry:
         self._device = device
         self._geometries: Dict[int, Any] = {}  # id -> geometry dict
         self._object_to_id: Dict[int, int] = {}  # object id -> registry id
+        self._name_to_id: Dict[str, int] = {}  # name -> registry id
         self._next_id = 1
         self._gpu_buffers: Dict[int, dict] = {}  # id -> {vertex_buffer, index_buffer}
+
+        # Register built-in geometries by name
+        self._register_builtin(_SPRITE_QUAD["name"], _SPRITE_QUAD)
 
     def create_buffers(self, geometry_id: int, geometry_obj: dict, queue):
         """Create GPU buffers for geometry.
@@ -392,6 +398,29 @@ class GeometryRegistry:
         self._object_to_id[obj_id] = new_id
         self._geometries[new_id] = geometry_obj
         return new_id
+
+    def _register_builtin(self, name: str, geometry_obj: dict) -> int:
+        """Register a named built-in geometry. Returns the assigned ID."""
+        gid = self.register(geometry_obj)
+        self._name_to_id[name] = gid
+        return gid
+
+    def register_by_name(self, name: str, geometry_obj: dict) -> int:
+        """Register a geometry by name. Returns the assigned ID."""
+        return self._register_builtin(name, geometry_obj)
+
+    def get_id(self, name: str) -> int:
+        """Get the numeric ID for a named geometry."""
+        return self._name_to_id[name]
+
+    def get_by_name(self, name: str) -> Any:
+        """Get a geometry dict by name."""
+        gid = self._name_to_id[name]
+        return self._geometries[gid]
+
+    def __contains__(self, name: str) -> bool:
+        """Check if a named geometry is registered."""
+        return name in self._name_to_id
 
     def get(self, geometry_id: int) -> Any:
         """Get geometry by ID."""
