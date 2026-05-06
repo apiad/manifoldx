@@ -25,6 +25,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`AxisMaterial.pipeline_subtype = anchor_mode`** — world and screen modes get separate pipelines in the cache (parallels Plan 2's `LabelMaterial`).
 - **Component base unchanged** — the new `AxisFrame` (2 floats: `extent`, `thickness`) auto-registers via the `Component` annotation pattern, no boilerplate in user code.
 
+- **Sci-viz Plan 4 (Altair-style declarative shim)** — `manifoldx.viz` adds a grammar-of-graphics API on top of the imperative ECS primitives Plans 1-3 shipped:
+
+  ```python
+  import manifoldx.viz as mxv
+
+  chart = (
+      mxv.points(positions=p, color=mxv.color(s, cmap="viridis"), size=r)
+      + mxv.mesh(geometry=sphere(0.3, 16), material=...)
+      + mxv.axes(extent=4)
+      + mxv.legend(cmap="viridis", title="Speed")
+      + mxv.scale_bar(label="2 units")
+      + mxv.lights([...])
+  )
+
+  @chart.simulate
+  def step(dt):
+      p[:] += v * dt   # mutate live arrays in place
+      s[:] = np.linalg.norm(v, axis=1)
+
+  chart.cli()
+  ```
+
+  Six marks (`points`, `mesh`, `axes`, `legend`, `scale_bar`, `lights`), three Channel wrappers (`color`, `size`, `position`) for per-channel config, `+` operator for layered single-scene composition, `@chart.simulate(dt)` decorator for per-frame mutation. The shim holds references to the user's numpy arrays — a per-frame sync system copies them into ECS storage so live mutation propagates to the GPU. Escape hatch: `chart.engine` returns the underlying Engine for users who need to drop down to imperative ECS ops mid-design (e.g. camera config, custom systems).
+
+- **`examples/scatter_plot.py`** — the "hello world" of the declarative API: 500-particle 3D scatter with axes, colormap legend, scale bar, two PBR lights, and live physics in ~30 lines (vs ~120 for the equivalent imperative-ECS demo).
+
+### Deferred from Plan 4 spec
+- **Multi-viewport composition** (`|`, `&`). Renderer rewrite required; Plan 5+.
+- **Generic `lines` mark.** Would need a generalized line material beyond axes; defer until concrete demand.
+- **Standalone `text` mark.** Today's `TextLabel` + `LabelMaterial` covers this imperatively via the escape hatch; reconsider when usage shows it's wanted.
+- **Reactive transforms** (Altair's `transform_calculate` etc.). The `@chart.simulate` callback covers everything with a fraction of the surface area.
+- **Per-frame domain auto-scale.** `mxv.color(arr)` infers `(vmin, vmax)` from data once at build time; per-frame re-derivation would mean re-uploading material uniforms each tick.
+- **Camera channel.** `chart.engine.camera.fit(...)` via the escape hatch suffices for now; promote to a `mxv.camera(...)` mark when ergonomics warrant.
+
 ### Deferred from Plan 3 spec
 - **`ScaleBar` tag component** — the spec called for `ScaleBar(length, label_id)` as a routing tag, but on review the renderer doesn't need a distinct identity for scale bars: a screen-anchored axis line + a screen-anchored label compose into one. Plan 4's `scale_bar(...)` shim will package the composition.
 - **Dedicated `ColormapLegendMaterial` + pipeline** — same simplification: legends route through the existing label pipeline by stashing the LUT as an atlas slice. A future `vertical` colormap orientation would benefit from a dedicated material when the atlas tile aspect (4:1) becomes a real constraint, but v1 horizontal legends work fine.
