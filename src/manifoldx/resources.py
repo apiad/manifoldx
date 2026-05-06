@@ -35,6 +35,7 @@ class Material(ABC):
 _BASICMATERIAL_SHADER = """
 struct Globals {
     vp: mat4x4<f32>,
+    view: mat4x4<f32>,
     camera_pos: vec3<f32>,
     _pad: f32,
 };
@@ -118,6 +119,7 @@ class BasicMaterial(Material):
 _STANDARDMATERIAL_SHADER = """
 struct Globals {
     vp: mat4x4<f32>,
+    view: mat4x4<f32>,
     camera_pos: vec3<f32>,
     _pad: f32,
 };
@@ -345,6 +347,12 @@ class GeometryRegistry:
 
         if "positions" in geometry_obj:
             positions = geometry_obj["positions"].astype(np.float32)
+        elif "vertices" in geometry_obj:
+            positions = geometry_obj["vertices"].astype(np.float32)
+        else:
+            positions = None
+
+        if positions is not None:
             has_normals = "normals" in geometry_obj
 
             if has_normals:

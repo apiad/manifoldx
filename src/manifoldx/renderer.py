@@ -65,6 +65,7 @@ class _BatchBuffers:
 SHADER_SOURCE = """
 struct Globals {
     vp: mat4x4<f32>,
+    view: mat4x4<f32>,
     camera_pos: vec3<f32>,
     _pad: f32,
 };
@@ -234,9 +235,11 @@ class RenderPipeline:
         self._pipeline_layouts = {}  # material_type -> layout
         self._bind_group_layouts = {}  # material_type -> bind group layout
         self._material_buffers = {}  # (geometry_id, material_type) -> buffer
-        self._globals_buffer = None  # VP matrix + camera_pos
+        self._globals_buffer = None  # VP matrix + view matrix + camera_pos
         self._batch_buffers = None  # _BatchBuffers instance for per-batch storage
+        self._sprite_batch_buffers = None  # _BatchBuffers instance for sprite per-batch storage
         self._lights_buffer = None  # External lights uniform buffer
+        self._lut_textures = {}  # cmap_name -> (texture, sampler) for LUT caching
         self._initialized = False
 
     def _ensure_pipeline(self, device, texture_format):
@@ -246,14 +249,18 @@ class RenderPipeline:
 
         self._device = device
 
-        # Create globals uniform buffer: mat4x4 VP (64) + vec3 camera_pos (12) + pad (4) = 80 bytes
+        # Create globals uniform buffer:
+        #   vp(64) + view(64) + camera_pos(12) + pad(4) = 144 bytes
         self._globals_buffer = device.create_buffer(
-            size=80,
+            size=144,
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
         # Create batch buffers for per-batch storage (transforms, etc.)
         self._batch_buffers = _BatchBuffers(device)
+
+        # Create separate batch buffers for sprite path
+        self._sprite_batch_buffers = _BatchBuffers(device)
 
         # Create lights uniform buffer (up to 4 lights, 32 bytes each = 128 bytes max)
         self._lights_buffer = device.create_buffer(
@@ -263,20 +270,29 @@ class RenderPipeline:
 
         self._initialized = True
 
-    def _get_or_create_pipeline(self, device, texture_format, geometry_id, material, registry):
-        """Get or create a material-type specific pipeline."""
+    def _get_or_create_pipeline(self, device, texture_format, geometry_id, material, registry, sprite=False):
+        """Get or create a material-type specific pipeline.
+
+        Pipeline cache key:
+            mesh:  (geometry_id, material_type)
+            sprite: (geometry_id, material_type, material_subtype, sprite)
+        """
         material_type = type(material).__name__
-        key = (geometry_id, material_type)
+        material_subtype = getattr(material, "pipeline_subtype", None)
+
+        if sprite:
+            key = (geometry_id, material_type, material_subtype, True)
+        else:
+            key = (geometry_id, material_type)
 
         if key in self._pipelines:
-            return self._pipelines[key], self._bind_group_layouts.get(material_type)
+            return self._pipelines[key], self._bind_group_layouts.get(key)
 
         shader_source = material._compile()
         shader_module = device.create_shader_module(code=shader_source)
 
-        # Determine bind group layout based on shader bindings
-        needs_lights = "@binding(3)" in shader_source
-        if not needs_lights:
+        if sprite:
+            # Sprite pipeline: 7 bindings (0-6) with texture+sampbler
             bind_group_entries = [
                 {
                     "binding": 0,
@@ -290,96 +306,194 @@ class RenderPipeline:
                 },
                 {
                     "binding": 2,
-                    "visibility": wgpu.ShaderStage.FRAGMENT,
-                    "buffer": {"type": wgpu.BufferBindingType.uniform},
-                },
-            ]
-        else:
-            # StandardMaterial: 4 bindings (globals, transforms, material, lights)
-            bind_group_entries = [
-                {
-                    "binding": 0,
                     "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
-                    "buffer": {"type": wgpu.BufferBindingType.uniform},
-                },
-                {
-                    "binding": 1,
-                    "visibility": wgpu.ShaderStage.VERTEX,
-                    "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
-                },
-                {
-                    "binding": 2,
-                    "visibility": wgpu.ShaderStage.FRAGMENT,
                     "buffer": {"type": wgpu.BufferBindingType.uniform},
                 },
                 {
                     "binding": 3,
+                    "visibility": wgpu.ShaderStage.VERTEX,
+                    "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+                },
+                {
+                    "binding": 4,
+                    "visibility": wgpu.ShaderStage.VERTEX,
+                    "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+                },
+                {
+                    "binding": 5,
                     "visibility": wgpu.ShaderStage.FRAGMENT,
-                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                    "texture": {
+                        "sample_type": wgpu.TextureSampleType.float,
+                        "view_dimension": wgpu.TextureViewDimension.d1,
+                    },
+                },
+                {
+                    "binding": 6,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "sampler": {"type": wgpu.SamplerBindingType.filtering},
                 },
             ]
 
-        bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
-        self._bind_group_layouts[material_type] = bind_group_layout
+            bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
+            self._bind_group_layouts[key] = bind_group_layout
 
-        pipeline_layout = device.create_pipeline_layout(bind_group_layouts=[bind_group_layout])
-        self._pipeline_layouts[material_type] = pipeline_layout
+            pipeline_layout = device.create_pipeline_layout(bind_group_layouts=[bind_group_layout])
+            self._pipeline_layouts[key] = pipeline_layout
 
-        # Always use 6-float stride (pos + normal) with both vertex attributes
-        pipeline = device.create_render_pipeline(
-            layout=pipeline_layout,
-            vertex={
-                "module": shader_module,
-                "entry_point": "vs_main",
-                "buffers": [
-                    {
-                        "array_stride": 6 * 4,  # 6 floats * 4 bytes (pos + normal)
-                        "step_mode": wgpu.VertexStepMode.vertex,
-                        "attributes": [
-                            {
-                                "format": wgpu.VertexFormat.float32x3,
-                                "offset": 0,
-                                "shader_location": 0,  # position
-                            },
-                            {
-                                "format": wgpu.VertexFormat.float32x3,
-                                "offset": 3 * 4,
-                                "shader_location": 1,  # normal
-                            },
-                        ],
-                    }
-                ],
-            },
-            primitive={
-                "topology": wgpu.PrimitiveTopology.triangle_list,
-                "front_face": wgpu.FrontFace.ccw,
-                "cull_mode": wgpu.CullMode.back,
-            },
-            depth_stencil={
-                "format": wgpu.TextureFormat.depth24plus,
-                "depth_write_enabled": True,
-                "depth_compare": wgpu.CompareFunction.less,
-            },
-            fragment={
-                "module": shader_module,
-                "entry_point": "fs_main",
-                "targets": [{"format": texture_format}],
-            },
-        )
+            # Sprite vertex layout: position only (3 floats, stride=12)
+            pipeline = device.create_render_pipeline(
+                layout=pipeline_layout,
+                vertex={
+                    "module": shader_module,
+                    "entry_point": "vs_main",
+                    "buffers": [
+                        {
+                            "array_stride": 3 * 4,  # position only
+                            "step_mode": wgpu.VertexStepMode.vertex,
+                            "attributes": [
+                                {
+                                    "format": wgpu.VertexFormat.float32x3,
+                                    "offset": 0,
+                                    "shader_location": 0,
+                                },
+                            ],
+                        }
+                    ],
+                },
+                primitive={
+                    "topology": wgpu.PrimitiveTopology.triangle_list,
+                    "front_face": wgpu.FrontFace.ccw,
+                    "cull_mode": wgpu.CullMode.back,
+                },
+                depth_stencil={
+                    "format": wgpu.TextureFormat.depth24plus,
+                    "depth_write_enabled": True,
+                    "depth_compare": wgpu.CompareFunction.less,
+                },
+                fragment={
+                    "module": shader_module,
+                    "entry_point": "fs_main",
+                    "targets": [{"format": texture_format}],
+                },
+            )
 
-        self._pipelines[key] = pipeline
+            self._pipelines[key] = pipeline
 
-        # Create material uniform buffer for this key
-        if not needs_lights:
-            buffer_size = 16  # vec4 color
+            # Create material uniform buffer for this sprite key
+            buffer_size = 16  # 4 floats: vmin, vmax, lit_flag, _pad
+            material_buffer = device.create_buffer(
+                size=buffer_size,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+            self._material_buffers[key] = material_buffer
+
         else:
-            buffer_size = 32  # 8 floats: albedo(3) + roughness(1) + metallic(1) + ao(1) + pad(2)
+            # Existing mesh pipeline logic
+            # Determine bind group layout based on shader bindings
+            needs_lights = "@binding(3)" in shader_source
+            if not needs_lights:
+                bind_group_entries = [
+                    {
+                        "binding": 0,
+                        "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
+                        "buffer": {"type": wgpu.BufferBindingType.uniform},
+                    },
+                    {
+                        "binding": 1,
+                        "visibility": wgpu.ShaderStage.VERTEX,
+                        "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+                    },
+                    {
+                        "binding": 2,
+                        "visibility": wgpu.ShaderStage.FRAGMENT,
+                        "buffer": {"type": wgpu.BufferBindingType.uniform},
+                    },
+                ]
+            else:
+                # StandardMaterial: 4 bindings (globals, transforms, material, lights)
+                bind_group_entries = [
+                    {
+                        "binding": 0,
+                        "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
+                        "buffer": {"type": wgpu.BufferBindingType.uniform},
+                    },
+                    {
+                        "binding": 1,
+                        "visibility": wgpu.ShaderStage.VERTEX,
+                        "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+                    },
+                    {
+                        "binding": 2,
+                        "visibility": wgpu.ShaderStage.FRAGMENT,
+                        "buffer": {"type": wgpu.BufferBindingType.uniform},
+                    },
+                    {
+                        "binding": 3,
+                        "visibility": wgpu.ShaderStage.FRAGMENT,
+                        "buffer": {"type": wgpu.BufferBindingType.uniform},
+                    },
+                ]
 
-        material_buffer = device.create_buffer(
-            size=buffer_size,
-            usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
-        )
-        self._material_buffers[key] = material_buffer
+            bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
+            self._bind_group_layouts[key] = bind_group_layout
+
+            pipeline_layout = device.create_pipeline_layout(bind_group_layouts=[bind_group_layout])
+            self._pipeline_layouts[key] = pipeline_layout
+
+            pipeline = device.create_render_pipeline(
+                layout=pipeline_layout,
+                vertex={
+                    "module": shader_module,
+                    "entry_point": "vs_main",
+                    "buffers": [
+                        {
+                            "array_stride": 6 * 4,  # 6 floats * 4 bytes (pos + normal)
+                            "step_mode": wgpu.VertexStepMode.vertex,
+                            "attributes": [
+                                {
+                                    "format": wgpu.VertexFormat.float32x3,
+                                    "offset": 0,
+                                    "shader_location": 0,
+                                },
+                                {
+                                    "format": wgpu.VertexFormat.float32x3,
+                                    "offset": 3 * 4,
+                                    "shader_location": 1,
+                                },
+                            ],
+                        }
+                    ],
+                },
+                primitive={
+                    "topology": wgpu.PrimitiveTopology.triangle_list,
+                    "front_face": wgpu.FrontFace.ccw,
+                    "cull_mode": wgpu.CullMode.back,
+                },
+                depth_stencil={
+                    "format": wgpu.TextureFormat.depth24plus,
+                    "depth_write_enabled": True,
+                    "depth_compare": wgpu.CompareFunction.less,
+                },
+                fragment={
+                    "module": shader_module,
+                    "entry_point": "fs_main",
+                    "targets": [{"format": texture_format}],
+                },
+            )
+
+            self._pipelines[key] = pipeline
+
+            # Create material uniform buffer for this key
+            if not needs_lights:
+                buffer_size = 16  # vec4 color
+            else:
+                buffer_size = 32  # 8 floats: albedo(3) + roughness(1) + metallic(1) + ao(1) + pad(2)
+
+            material_buffer = device.create_buffer(
+                size=buffer_size,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+            self._material_buffers[key] = material_buffer
 
         return pipeline, bind_group_layout
 
@@ -396,7 +510,10 @@ class RenderPipeline:
         # Check required components exist
         if "Transform" not in self._store._components:
             return
-        if "Mesh" not in self._store._components:
+
+        has_mesh = "Mesh" in self._store._components
+        has_point_cloud = "PointCloud" in self._store._components
+        if not has_mesh and not has_point_cloud:
             return
 
         # Compute view-projection matrix from camera
@@ -404,44 +521,93 @@ class RenderPipeline:
         aspect = engine.w / engine.h
         vp = camera.get_view_projection_matrix(aspect)
 
+        # Compute view matrix from camera (column-major for WGSL)
+        view_mat = camera.get_view_matrix().T.astype(np.float32)
+
         # Get transform data
         self._transform_cache.mark_dirty(alive_indices)
         model_matrices = self._transform_cache.get_transforms(self._store, alive_indices)
 
         # Get mesh and material IDs
-        mesh_data = self._store.get_component_data("Mesh", alive_indices)
+        mesh_data = None
+        if has_mesh:
+            mesh_data = self._store.get_component_data("Mesh", alive_indices)
         material_data = None
         if "Material" in self._store._components:
             material_data = self._store.get_component_data("Material", alive_indices)
 
-        # Group by (geom_id, material_type) for batched instanced drawing
-        batches = {}  # (geom_id, mat_type) -> list of local indices
+        # Group by (geom_id, material_type) for mesh batches
+        # Group by mat_id for sprite batches (geometry is always SPRITE_QUAD)
+        mesh_batches = {}  # (geom_id, mat_type) -> list of local indices
+        sprite_batches = {}  # mat_id -> list of local indices
+
         for i, entity_idx in enumerate(alive_indices):
-            geom_id = int(mesh_data[i, 0])
             mat_id = int(material_data[i, 0]) if material_data is not None else 0
-            if geom_id == 0:
-                continue
 
-            mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
-            mat_type = type(mat_obj).__name__ if mat_obj else "BasicMaterial"
+            # Determine if this entity is a sprite (has PointCloud component)
+            is_sprite = has_point_cloud and self._store._alive[entity_idx]
 
-            key = (geom_id, mat_type)
-            if key not in batches:
-                batches[key] = []
-            batches[key].append(i)
+            if is_sprite:
+                if mat_id not in sprite_batches:
+                    sprite_batches[mat_id] = []
+                sprite_batches[mat_id].append(i)
+            else:
+                if not has_mesh:
+                    continue
+                geom_id = int(mesh_data[i, 0])
+                if geom_id == 0:
+                    continue
+
+                mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
+                mat_type = type(mat_obj).__name__ if mat_obj else "BasicMaterial"
+
+                key = (geom_id, mat_type)
+                if key not in mesh_batches:
+                    mesh_batches[key] = []
+                mesh_batches[key].append(i)
 
         # Get camera position for globals
         camera_pos = np.array([0.0, 0.0, 5.0], dtype=np.float32)
         if hasattr(camera, "position"):
             camera_pos = np.array(camera.position, dtype=np.float32)
 
-        # Upload globals (VP + camera_pos + pad) = 80 bytes
-        globals_data = np.zeros(80, dtype=np.uint8)
+        # Upload globals (vp + view + camera_pos + pad) = 144 bytes
+        globals_data = np.zeros(144, dtype=np.uint8)
         globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
-        globals_data[64:76] = np.frombuffer(camera_pos.astype(np.float32).tobytes(), dtype=np.uint8)
-        # bytes 76-79 are padding (already zero)
+        globals_data[64:128] = np.frombuffer(view_mat.tobytes(), dtype=np.uint8)
+        globals_data[128:140] = np.frombuffer(camera_pos.astype(np.float32).tobytes(), dtype=np.uint8)
+        # bytes 140-143 are padding (already zero)
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 
+        # Upload lights once (shared across all PBR draws)
+        lights = getattr(engine, "_lights", [])
+        lights_data = np.zeros(32, dtype=np.float32)  # 32 floats = 128 bytes
+        for li, light in enumerate(lights[:4]):
+            light_arr = light.get_data()
+            offset = li * 8  # 8 floats per light
+            lights_data[offset : offset + len(light_arr)] = light_arr
+        self._device.queue.write_buffer(self._lights_buffer, 0, lights_data.tobytes())
+
+        # ---------------------------------------------------------------
+        # Draw mesh batches (if any)
+        # ---------------------------------------------------------------
+        if mesh_batches:
+            self._render_mesh_batches(
+                engine, render_pass, mesh_batches, model_matrices, material_data
+            )
+
+        # ---------------------------------------------------------------
+        # Draw sprite batches (if any)
+        # ---------------------------------------------------------------
+        if sprite_batches:
+            self._render_sprite_batches(
+                engine, render_pass, sprite_batches, model_matrices, material_data
+            )
+
+    def _render_mesh_batches(
+        self, engine, render_pass, mesh_batches, model_matrices, material_data
+    ):
+        """Render all mesh batches using instanced draw with shared transform buffer."""
         # ---------------------------------------------------------------
         # Upload ALL transforms at once (queue.write_buffer happens
         # before GPU processes the command buffer, so per-batch writes
@@ -453,7 +619,7 @@ class RenderPipeline:
         batch_draw_info = {}  # key -> (first_instance, instance_count)
         instance_offset = 0
 
-        for key, local_indices in batches.items():
+        for key, local_indices in mesh_batches.items():
             count = len(local_indices)
             batch_draw_info[key] = (instance_offset, count)
             all_local_indices.extend(local_indices)
@@ -467,20 +633,11 @@ class RenderPipeline:
         all_matrices_t = all_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
         self._batch_buffers.upload_transforms(all_matrices_t.astype(np.float32))
 
-        # Upload lights once (shared across all PBR draws)
-        lights = getattr(engine, "_lights", [])
-        lights_data = np.zeros(32, dtype=np.float32)  # 32 floats = 128 bytes
-        for li, light in enumerate(lights[:4]):
-            light_arr = light.get_data()
-            offset = li * 8  # 8 floats per light
-            lights_data[offset : offset + len(light_arr)] = light_arr
-        self._device.queue.write_buffer(self._lights_buffer, 0, lights_data.tobytes())
-
         # ---------------------------------------------------------------
         # Draw each batch using first_instance to index into the
         # shared transform buffer.
         # ---------------------------------------------------------------
-        for (geom_id, mat_type), local_indices in batches.items():
+        for (geom_id, mat_type), local_indices in mesh_batches.items():
             first_instance, instance_count = batch_draw_info[(geom_id, mat_type)]
 
             # Get GPU buffers for geometry
@@ -529,7 +686,7 @@ class RenderPipeline:
                     "resource": {
                         "buffer": self._globals_buffer,
                         "offset": 0,
-                        "size": 80,
+                        "size": 144,
                     },
                 },
                 {
@@ -580,6 +737,231 @@ class RenderPipeline:
                 base_vertex=0,
                 first_instance=first_instance,
             )
+
+    def _render_sprite_batches(
+        self, engine, render_pass, sprite_batches, model_matrices, material_data
+    ):
+        """Render all sprite batches (PointCloud entities).
+
+        Each batch is one (mat_id) group; geometry is always SPRITE_QUAD.
+        Per-instance buffers: transforms, scalar_values, radii.
+        """
+        # Flatten all sprite local indices for single buffer upload
+        all_local_indices = []  # ordered list across sprite batches
+        batch_draw_info = {}  # mat_id -> (first_instance, instance_count)
+        instance_offset = 0
+
+        for mat_id, local_indices in sprite_batches.items():
+            count = len(local_indices)
+            batch_draw_info[mat_id] = (instance_offset, count)
+            all_local_indices.extend(local_indices)
+            instance_offset += count
+
+        if not all_local_indices:
+            return
+
+        # Collect per-instance arrays
+        ent_arr = np.asarray(all_local_indices, dtype=np.int64)
+
+        # Transform matrices
+        all_matrices = model_matrices[ent_arr]  # (total_instances, 16)
+        all_matrices_t = all_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
+        self._sprite_batch_buffers.upload_transforms(all_matrices_t.astype(np.float32))
+
+        # Scalar values (must be registered if we're rendering sprites)
+        if "ScalarValue" in self._store._components:
+            # Get entity indices (not local indices) for component lookup
+            alive_indices = np.where(self._store._alive)[0]
+            entity_indices = alive_indices[ent_arr]
+            scalar_data = self._store.get_component_data("ScalarValue", entity_indices)
+            self._sprite_batch_buffers.upload_scalar_values(
+                scalar_data[:, 0].astype(np.float32)
+            )
+        else:
+            scalar_data = np.zeros((len(ent_arr),), dtype=np.float32)
+            self._sprite_batch_buffers.upload_scalar_values(scalar_data)
+
+        # Radii
+        if "Radius" in self._store._components:
+            alive_indices = np.where(self._store._alive)[0]
+            entity_indices = alive_indices[ent_arr]
+            radius_data = self._store.get_component_data("Radius", entity_indices)
+            self._sprite_batch_buffers.upload_radii(
+                radius_data[:, 0].astype(np.float32)
+            )
+        else:
+            radius_data = np.ones((len(ent_arr),), dtype=np.float32)
+            self._sprite_batch_buffers.upload_radii(radius_data)
+
+        # Get sprite quad geometry and create buffers if needed
+        sprite_geom_id = engine._geometry_registry.get_id("sprite_quad")
+        gpu_buffers = engine._geometry_registry.get_gpu_buffers(sprite_geom_id)
+        if gpu_buffers is None:
+            geom_obj = engine._geometry_registry.get(sprite_geom_id)
+            if geom_obj is not None:
+                gpu_buffers = engine._geometry_registry.create_buffers(
+                    sprite_geom_id, geom_obj, self._device.queue
+                )
+        if gpu_buffers is None:
+            return
+
+        # ---------------------------------------------------------------
+        # Draw each sprite batch
+        # ---------------------------------------------------------------
+        for mat_id, local_indices in sprite_batches.items():
+            mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
+            if mat_obj is None:
+                continue
+
+            if not isinstance(mat_obj, ColormapMaterial):
+                raise TypeError(
+                    f"sprite batch material must be ColormapMaterial; "
+                    f"got {type(mat_obj).__name__}"
+                )
+
+            first_instance, instance_count = batch_draw_info[mat_id]
+
+            # Create or fetch sprite pipeline
+            pipeline, bind_group_layout = self._get_or_create_pipeline(
+                self._device,
+                engine._texture_format,
+                sprite_geom_id,
+                mat_obj,
+                engine._material_registry,
+                sprite=True,
+            )
+
+            # Upload material uniforms
+            mat_data = mat_obj.get_data(instance_count, engine._material_registry)
+            material_type = type(mat_obj).__name__
+            material_subtype = getattr(mat_obj, "pipeline_subtype", None)
+            bkey = (sprite_geom_id, material_type, material_subtype, True)
+            mat_buffer = self._material_buffers.get(bkey)
+            if mat_buffer is not None:
+                first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
+                self._device.queue.write_buffer(
+                    mat_buffer, 0, first_row.astype(np.float32).tobytes()
+                )
+
+            # Build sprite bind group
+            bind_group = self._make_sprite_bind_group(
+                bind_group_layout, mat_obj, mat_buffer
+            )
+
+            render_pass.set_pipeline(pipeline)
+            render_pass.set_bind_group(0, bind_group, [], 0, 0)
+            render_pass.set_vertex_buffer(0, gpu_buffers["vertex_buffer"])
+            render_pass.set_index_buffer(
+                gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32
+            )
+            render_pass.draw_indexed(
+                gpu_buffers["index_count"],
+                instance_count,
+                first_index=0,
+                base_vertex=0,
+                first_instance=first_instance,
+            )
+
+    def _get_or_create_lut_texture(self, device, material):
+        """Create or retrieve a cached 1D LUT texture + sampler for a colormap."""
+        cmap_name = material.cmap
+        if cmap_name in self._lut_textures:
+            return self._lut_textures[cmap_name]
+
+        lut = material.get_lut()  # (256, 4) uint8
+        texture = device.create_texture(
+            size=(256, 1, 1),
+            format=wgpu.TextureFormat.rgba8unorm,
+            usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
+            dimension=wgpu.TextureDimension.d1,
+        )
+        device.queue.write_texture(
+            {"texture": texture},
+            lut.tobytes(),
+            {"bytes_per_row": 256 * 4, "rows_per_image": 1},
+            (256, 1, 1),
+        )
+        sampler = device.create_sampler(
+            address_mode_u=wgpu.AddressMode.clamp_to_edge,
+            mag_filter=wgpu.FilterMode.linear,
+            min_filter=wgpu.FilterMode.linear,
+        )
+        self._lut_textures[cmap_name] = (texture, sampler)
+        return self._lut_textures[cmap_name]
+
+    def _make_sprite_bind_group(self, bind_group_layout, material, mat_buffer):
+        """Create bind group with bindings 0-6 for sprite rendering.
+
+        Bindings:
+            0: globals uniform (vp, view, camera_pos)
+            1: transforms storage
+            2: material uniform (vmin, vmax, lit_flag, _pad)
+            3: scalar_values storage
+            4: radii storage
+            5: lut_texture (1D RGBA8)
+            6: lut_sampler
+        """
+        lut_texture, lut_sampler = self._get_or_create_lut_texture(
+            self._device, material
+        )
+
+        mat_buffer_size = 16  # 4 floats: vmin, vmax, lit_flag, _pad
+
+        bind_group_entries = [
+            {
+                "binding": 0,
+                "resource": {
+                    "buffer": self._globals_buffer,
+                    "offset": 0,
+                    "size": 144,
+                },
+            },
+            {
+                "binding": 1,
+                "resource": {
+                    "buffer": self._sprite_batch_buffers.transforms_buf,
+                    "offset": 0,
+                    "size": self._sprite_batch_buffers.transforms_capacity,
+                },
+            },
+            {
+                "binding": 2,
+                "resource": {
+                    "buffer": mat_buffer,
+                    "offset": 0,
+                    "size": mat_buffer_size,
+                },
+            },
+            {
+                "binding": 3,
+                "resource": {
+                    "buffer": self._sprite_batch_buffers.scalar_values_buf,
+                    "offset": 0,
+                    "size": self._sprite_batch_buffers.scalar_values_capacity,
+                },
+            },
+            {
+                "binding": 4,
+                "resource": {
+                    "buffer": self._sprite_batch_buffers.radii_buf,
+                    "offset": 0,
+                    "size": self._sprite_batch_buffers.radii_capacity,
+                },
+            },
+            {
+                "binding": 5,
+                "resource": lut_texture.create_view(),
+            },
+            {
+                "binding": 6,
+                "resource": lut_sampler,
+            },
+        ]
+
+        return self._device.create_bind_group(
+            layout=bind_group_layout,
+            entries=bind_group_entries,
+        )
 
     def run(self, engine, dt: float):
         """Execute full render pipeline (CPU-side prep)."""
