@@ -44,3 +44,32 @@ def test_colormap_material_pipeline_subtype():
     assert m_v.pipeline_subtype == "viridis"
     assert m_m.pipeline_subtype == "magma"
     assert m_v.pipeline_subtype != m_m.pipeline_subtype
+
+
+def test_colormap_material_compile_returns_wgsl():
+    m = ColormapMaterial(cmap="viridis", vmin=0.0, vmax=1.0)
+    src = m._compile()
+    assert isinstance(src, str)
+    assert "@vertex" in src
+    # Vertex stage references per-instance bindings
+    assert "transforms" in src
+    assert "scalar_values" in src
+    assert "radii" in src
+    # Camera-facing billboard math: must reference view matrix
+    assert "view" in src.lower()
+
+
+def test_colormap_material_binding_slot():
+    m = ColormapMaterial(cmap="viridis", vmin=0.0, vmax=1.0)
+    assert m.binding_slot == 2
+
+
+def test_colormap_material_uniform_type():
+    ut = ColormapMaterial.uniform_type()
+    assert ut == {"vmin": "f32", "vmax": "f32", "lit_flag": "f32", "_pad": "f32"}
+
+
+def test_colormap_material_inherits_material_abc():
+    from manifoldx.resources import Material
+    m = ColormapMaterial(cmap="viridis", vmin=0.0, vmax=1.0)
+    assert isinstance(m, Material)
