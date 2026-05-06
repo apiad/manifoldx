@@ -103,6 +103,29 @@ engine.spawn(
     n=1,
 )
 
+# Screen-anchored scale-bar ---------------------------------------------------
+# A simple "scale bar" overlay built from Plan 3 part 2 primitives:
+# a screen-anchored AxisMaterial line (the bar) plus a screen-anchored
+# LabelMaterial (the bar's caption). Both stay pinned to the bottom-left
+# corner regardless of camera rotation.
+geom_x = engine._geometry_registry.get_by_name("axis_line_x")
+SCALE_BAR_NDC_HALF = 0.18      # 36% of viewport-width across
+SCALE_BAR_Y = -0.85
+engine.spawn(
+    Mesh(geom_x),
+    Material(AxisMaterial(color="#ffffff", anchor_mode="screen")),
+    Transform(pos=(-0.55, SCALE_BAR_Y, 0.0), scale=(SCALE_BAR_NDC_HALF, 1.0, 1.0)),
+    AxisFrame(extent=1.0),
+    n=1,
+)
+scale_label_slot = atlas.get_or_create(f"= {EXTENT * 2:.1f} units")
+engine.spawn(
+    Material(LabelMaterial(pixel_width=160, pixel_height=30, anchor_mode="screen")),
+    Transform(pos=(-0.55, SCALE_BAR_Y - 0.08, 0.0)),
+    TextLabel(index=scale_label_slot),
+    n=1,
+)
+
 
 # Camera orbit ----------------------------------------------------------------
 # Rotate the camera around the +Y axis so the axes spin in view. The Query

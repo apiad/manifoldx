@@ -364,6 +364,10 @@ struct MaterialUniform {
     g: f32,
     b: f32,
     a: f32,
+    anchor_mode: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -381,9 +385,21 @@ struct VSOut {
 @vertex
 fn vs_main(in: VSIn, @builtin(instance_index) iidx: u32) -> VSOut {
     let model = transforms[iidx];
-    let world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    var clip: vec4<f32>;
+    if (material.anchor_mode < 0.5) {
+        // World-anchored: project through camera as usual.
+        let world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+        clip = globals.vp * vec4<f32>(world_pos, 1.0);
+    } else {
+        // Screen-anchored: model matrix gives the NDC position directly.
+        // The entity's Transform.pos.xy is the NDC anchor in [-1, 1] and
+        // Transform.scale.{x,y,z} sets the half-length of the line in NDC
+        // units along whichever axis the geometry runs along.
+        let ndc_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+        clip = vec4<f32>(ndc_pos.x, ndc_pos.y, 0.0, 1.0);
+    }
     var out: VSOut;
-    out.clip_position = globals.vp * vec4<f32>(world_pos, 1.0);
+    out.clip_position = clip;
     return out;
 }
 
@@ -394,10 +410,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 """.strip()
 
 
+_VALID_AXIS_ANCHOR_MODES = ("world", "screen")
+
+
 class AxisMaterial(Material):
     """Unlit colored line material for axis frames.
 
-    Per-batch uniform (4 floats): r, g, b, a (linear RGB).
+    Per-batch uniform (8 floats): r, g, b, a, anchor_mode, _pad0, _pad1, _pad2.
+        anchor_mode: 0.0 = world (project through camera), 1.0 = screen
+        (model output's xy IS the NDC clip position; bypass view/proj).
     Per-instance: none (each color = one batch).
     Pipeline: native wgpu LineList topology, 1px native lines.
 
@@ -405,12 +426,23 @@ class AxisMaterial(Material):
     with its own AxisMaterial instance (and thus its own batch + color).
     Default colors follow the sci-viz v1 spec: X=#e64545, Y=#5fbf5f,
     Z=#5588ff (mutable via the `color` keyword).
+
+    For screen-anchored axes (e.g. a scale bar), pass
+    `anchor_mode="screen"`; the entity's Transform.pos.xy is then the
+    NDC anchor in [-1, 1] and Transform.scale.{x,y,z} sets the
+    half-length of the line in NDC units.
     """
 
     binding_slot = 3
 
-    def __init__(self, *, color: str = "#ffffff"):
+    def __init__(self, *, color: str = "#ffffff", anchor_mode: str = "world"):
+        if anchor_mode not in _VALID_AXIS_ANCHOR_MODES:
+            raise ValueError(
+                f"AxisMaterial.anchor_mode must be one of "
+                f"{_VALID_AXIS_ANCHOR_MODES}, got {anchor_mode!r}"
+            )
         self.color = color
+        self.anchor_mode = anchor_mode
 
     @classmethod
     def _compile(cls) -> str:
@@ -418,16 +450,31 @@ class AxisMaterial(Material):
 
     @classmethod
     def uniform_type(cls) -> Dict[str, str]:
-        return {"r": "f32", "g": "f32", "b": "f32", "a": "f32"}
+        return {
+            "r": "f32",
+            "g": "f32",
+            "b": "f32",
+            "a": "f32",
+            "anchor_mode": "f32",
+            "_pad0": "f32",
+            "_pad1": "f32",
+            "_pad2": "f32",
+        }
 
     @property
     def pipeline_subtype(self):
-        # All AxisMaterial batches share one pipeline; the color difference
-        # rides through the per-batch material uniform, not the cache key.
-        return None
+        # World and screen modes need separate pipelines because the vertex
+        # shader's clip-space derivation differs in observable ways (depth
+        # write, occlusion). Color difference still rides through the
+        # per-batch uniform; only the anchor mode forks the cache key.
+        return self.anchor_mode
 
     def get_data(self, n: int, registry=None) -> np.ndarray:
         from manifoldx.types import Color
         c = Color(self.color).to_linear()
-        row = np.array([c.r, c.g, c.b, c.a], dtype=np.float32)
-        return np.broadcast_to(row, (n, 4)).copy()
+        anchor_f = 0.0 if self.anchor_mode == "world" else 1.0
+        row = np.array(
+            [c.r, c.g, c.b, c.a, anchor_f, 0.0, 0.0, 0.0],
+            dtype=np.float32,
+        )
+        return np.broadcast_to(row, (n, 8)).copy()

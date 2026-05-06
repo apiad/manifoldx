@@ -388,8 +388,9 @@ class RenderPipeline:
 
             self._pipelines[key] = pipeline
 
+            # AxisMaterial uniform: rgba(16) + anchor_mode + 3 pad = 32 bytes.
             material_buffer = device.create_buffer(
-                size=16,
+                size=32,
                 usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
             )
             self._material_buffers[key] = material_buffer
@@ -1391,7 +1392,7 @@ class RenderPipeline:
                     },
                     {
                         "binding": 2,
-                        "resource": {"buffer": mat_buffer, "offset": 0, "size": 16},
+                        "resource": {"buffer": mat_buffer, "offset": 0, "size": 32},
                     },
                 ],
             )
