@@ -79,6 +79,20 @@ class Engine:
         # External lights (not in ECS)
         self._lights = []
 
+        # Lazily-constructed label atlas, materialized on first label render.
+        self._label_atlas = None
+
+    def get_label_atlas(self):
+        """Lazily construct the label atlas on first use.
+
+        Used by the renderer's label pass and by user code that needs to
+        register strings ahead of time.
+        """
+        if self._label_atlas is None:
+            from manifoldx.viz.text import LabelTextureAtlas
+            self._label_atlas = LabelTextureAtlas()
+        return self._label_atlas
+
     def startup(self, func):
         self._startup_callbacks.append(func)
         return func
