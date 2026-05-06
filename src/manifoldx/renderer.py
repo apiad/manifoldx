@@ -647,7 +647,8 @@ class RenderPipeline:
 
         has_mesh = "Mesh" in self._store._components
         has_point_cloud = "PointCloud" in self._store._components
-        if not has_mesh and not has_point_cloud:
+        has_text_label = "TextLabel" in self._store._components
+        if not has_mesh and not has_point_cloud and not has_text_label:
             return
 
         # Compute view-projection matrix from camera
@@ -674,18 +675,26 @@ class RenderPipeline:
         # Group by mat_id for sprite batches (geometry is always SPRITE_QUAD)
         mesh_batches = {}  # (geom_id, mat_type) -> list of local indices
         sprite_batches = {}  # mat_id -> list of local indices
+        label_batches = {}  # mat_id -> list of local indices
 
         for i, entity_idx in enumerate(alive_indices):
             mat_id = int(material_data[i, 0]) if material_data is not None else 0
             geom_id = int(mesh_data[i, 0]) if mesh_data is not None else 0
 
-            # Per-entity routing: an entity is a sprite when PointCloud is
-            # registered AND it has no Mesh geometry (geom_id == 0). This lets
-            # mesh-bearing entities (e.g. a central PBR sphere) coexist in the
-            # same scene as sprite-bearing entities (point clouds).
-            is_sprite = has_point_cloud and geom_id == 0
+            # Per-entity routing. TextLabel takes priority over PointCloud:
+            # an entity rarely has both, but the routing must be deterministic.
+            # An entity is a sprite when PointCloud is registered AND it has no
+            # Mesh geometry (geom_id == 0). This lets mesh-bearing entities
+            # (e.g. a central PBR sphere) coexist with sprite-bearing entities
+            # in the same scene.
+            is_label = has_text_label and self._is_label_entity(entity_idx, mat_id, engine)
+            is_sprite = (not is_label) and has_point_cloud and geom_id == 0
 
-            if is_sprite:
+            if is_label:
+                if mat_id not in label_batches:
+                    label_batches[mat_id] = []
+                label_batches[mat_id].append(i)
+            elif is_sprite:
                 if mat_id not in sprite_batches:
                     sprite_batches[mat_id] = []
                 sprite_batches[mat_id].append(i)
@@ -747,6 +756,23 @@ class RenderPipeline:
             self._render_sprite_batches(
                 engine, render_pass, sprite_batches, model_matrices, material_data
             )
+
+        # ---------------------------------------------------------------
+        # Draw label batches (depth-write off, alpha-blend on)
+        # ---------------------------------------------------------------
+        if label_batches:
+            self._render_label_pass(
+                engine, render_pass, label_batches, model_matrices, material_data
+            )
+
+    def _is_label_entity(self, entity_idx, mat_id, engine):
+        if mat_id <= 0:
+            return False
+        mat_obj = engine._material_registry.get(mat_id)
+        if mat_obj is None:
+            return False
+        from manifoldx.viz import LabelMaterial
+        return isinstance(mat_obj, LabelMaterial)
 
     def _render_mesh_batches(
         self, engine, render_pass, mesh_batches, model_matrices, material_data
