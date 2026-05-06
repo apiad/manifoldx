@@ -104,5 +104,17 @@ engine.spawn(
 )
 
 
+# Camera orbit ----------------------------------------------------------------
+# Rotate the camera around the +Y axis so the axes spin in view. The Query
+# is unused (the system needs *some* component query to register; Transform
+# is always present) — the work is on the camera, not the entities.
+ORBIT_DEG_PER_SEC = 30.0
+
+
+@engine.system
+def orbit_camera(query: mx.Query[Transform], dt: float):
+    engine.camera.orbit(d_azimuth=ORBIT_DEG_PER_SEC * dt)
+
+
 if __name__ == "__main__":
     engine.cli()
