@@ -238,8 +238,284 @@ def points(*, positions, color=None, size=None) -> "Chart":
     """Declarative point cloud mark. Returns a Chart with one mark so
     callers can immediately access `.engine`, `.simulate`, `.run()`, etc.
     or compose with `+`."""
+    return _wrap(PointsMark(positions=positions, color=color, size=size))
+
+
+# --- mesh -------------------------------------------------------------------
+
+
+class MeshMark(Mark):
+    """Single 3D mesh entity (PBR or unlit)."""
+
+    def __init__(self, *, geometry, material, position=(0.0, 0.0, 0.0), scale=None):
+        self.geometry = geometry
+        self.material = material
+        self.position = position
+        self.scale = scale
+
+    def apply(self, engine) -> None:
+        from manifoldx.components import Material, Mesh, Transform
+
+        kwargs = {"pos": self.position}
+        if self.scale is not None:
+            kwargs["scale"] = self.scale
+        engine.spawn(
+            Mesh(self.geometry),
+            Material(self.material),
+            Transform(**kwargs),
+            n=1,
+        )
+
+
+def mesh(*, geometry, material, position=(0.0, 0.0, 0.0), scale=None) -> "Chart":
+    """Single 3D mesh — sphere, cube, etc. + a PBR/unlit material."""
+    return _wrap(
+        MeshMark(geometry=geometry, material=material, position=position, scale=scale)
+    )
+
+
+# --- axes -------------------------------------------------------------------
+
+
+class AxesMark(Mark):
+    """Three colored axes (X red, Y green, Z blue) + optional end-cap labels."""
+
+    DEFAULT_COLORS = {"x": "#e64545", "y": "#5fbf5f", "z": "#5588ff"}
+
+    def __init__(
+        self,
+        *,
+        extent: float = 1.0,
+        labels: bool = True,
+        colors: Optional[dict] = None,
+    ):
+        self.extent = float(extent)
+        self.labels = labels
+        self.colors = {**self.DEFAULT_COLORS, **(colors or {})}
+
+    def apply(self, engine) -> None:
+        from manifoldx.components import Material, Mesh, Transform
+        from manifoldx.viz import AxisFrame, AxisMaterial, LabelMaterial, TextLabel
+
+        e = self.extent
+        for geom_name, axis_key, scale in [
+            ("axis_line_x", "x", (e, 1.0, 1.0)),
+            ("axis_line_y", "y", (1.0, e, 1.0)),
+            ("axis_line_z", "z", (1.0, 1.0, e)),
+        ]:
+            geom = engine._geometry_registry.get_by_name(geom_name)
+            engine.spawn(
+                Mesh(geom),
+                Material(AxisMaterial(color=self.colors[axis_key])),
+                Transform(pos=(0.0, 0.0, 0.0), scale=scale),
+                AxisFrame(extent=e),
+                n=1,
+            )
+
+        if self.labels:
+            atlas = engine.get_label_atlas()
+            slot_x = atlas.get_or_create("+X")
+            slot_y = atlas.get_or_create("+Y")
+            slot_z = atlas.get_or_create("+Z")
+            offset = e + 0.4 * e  # 40% of extent past the tip
+            for pos, slot in [
+                ((offset, 0.0, 0.0), slot_x),
+                ((0.0, offset, 0.0), slot_y),
+                ((0.0, 0.0, offset), slot_z),
+            ]:
+                engine.spawn(
+                    Material(LabelMaterial(pixel_width=160, pixel_height=40)),
+                    Transform(pos=pos),
+                    TextLabel(index=slot),
+                    n=1,
+                )
+
+
+def axes(*, extent: float = 1.0, labels: bool = True, colors=None) -> "Chart":
+    """Three colored 3D axes + optional end-cap labels."""
+    return _wrap(AxesMark(extent=extent, labels=labels, colors=colors))
+
+
+# --- legend -----------------------------------------------------------------
+
+
+_NDC_POSITIONS = {
+    "bottom-left": (-0.55, -0.85),
+    "bottom-right": (0.55, -0.85),
+    "top-left": (-0.55, 0.85),
+    "top-right": (0.55, 0.85),
+}
+
+
+class LegendMark(Mark):
+    """Screen-anchored colormap legend.
+
+    Either pass a ColorChannel directly (preserves cmap + domain + title)
+    or a `cmap=` string + `title=` for a standalone legend.
+    """
+
+    def __init__(
+        self,
+        color_channel: Optional[ColorChannel] = None,
+        *,
+        cmap: Optional[str] = None,
+        title: str = "",
+        position: str = "bottom-right",
+    ):
+        if color_channel is None and cmap is None:
+            raise ValueError(
+                "legend(...) needs either a ColorChannel or an explicit cmap=..."
+            )
+        if color_channel is not None:
+            self.cmap = color_channel.cmap
+            self.title = title or color_channel.title
+            self.domain = color_channel.domain
+        else:
+            self.cmap = cmap
+            self.title = title
+            self.domain = None
+        if position not in _NDC_POSITIONS:
+            raise ValueError(
+                f"position must be one of {list(_NDC_POSITIONS)}; got {position!r}"
+            )
+        self.position = position
+
+    def apply(self, engine) -> None:
+        from manifoldx.components import Material, Transform
+        from manifoldx.viz import LabelMaterial, TextLabel
+
+        atlas = engine.get_label_atlas()
+        legend_slot = atlas.register_colormap_legend(self.cmap)
+
+        anchor_x, anchor_y = _NDC_POSITIONS[self.position]
+        # Bar at the anchor.
+        engine.spawn(
+            Material(LabelMaterial(pixel_width=240, pixel_height=24, anchor_mode="screen")),
+            Transform(pos=(anchor_x, anchor_y, 0.0)),
+            TextLabel(index=legend_slot),
+            n=1,
+        )
+
+        # Caption below the bar (when title is non-empty).
+        if self.title:
+            domain_str = (
+                f"  ({self.domain[0]:.2g} → {self.domain[1]:.2g})"
+                if self.domain is not None
+                else ""
+            )
+            caption_slot = atlas.get_or_create(f"{self.title}{domain_str}")
+            engine.spawn(
+                Material(LabelMaterial(pixel_width=220, pixel_height=24, anchor_mode="screen")),
+                Transform(pos=(anchor_x, anchor_y - 0.08, 0.0)),
+                TextLabel(index=caption_slot),
+                n=1,
+            )
+
+
+def legend(
+    color_channel: Optional[ColorChannel] = None,
+    *,
+    cmap: Optional[str] = None,
+    title: str = "",
+    position: str = "bottom-right",
+) -> "Chart":
+    """Screen-anchored colormap legend. Pass a ColorChannel from a points
+    mark to auto-sync cmap + domain, or pass `cmap=` + `title=` for a
+    standalone legend."""
+    return _wrap(
+        LegendMark(color_channel, cmap=cmap, title=title, position=position)
+    )
+
+
+# --- scale_bar --------------------------------------------------------------
+
+
+class ScaleBarMark(Mark):
+    """Screen-anchored scale bar — a horizontal line + caption label."""
+
+    def __init__(
+        self,
+        *,
+        ndc_length: float = 0.3,
+        label: str = "",
+        position: str = "bottom-left",
+        color: str = "#ffffff",
+    ):
+        if position not in _NDC_POSITIONS:
+            raise ValueError(
+                f"position must be one of {list(_NDC_POSITIONS)}; got {position!r}"
+            )
+        self.ndc_length = float(ndc_length)
+        self.label = label
+        self.position = position
+        self.color = color
+
+    def apply(self, engine) -> None:
+        from manifoldx.components import Material, Mesh, Transform
+        from manifoldx.viz import AxisFrame, AxisMaterial, LabelMaterial, TextLabel
+
+        anchor_x, anchor_y = _NDC_POSITIONS[self.position]
+        half_len = self.ndc_length * 0.5
+
+        # The bar — screen-anchored AxisMaterial.
+        geom = engine._geometry_registry.get_by_name("axis_line_x")
+        engine.spawn(
+            Mesh(geom),
+            Material(AxisMaterial(color=self.color, anchor_mode="screen")),
+            Transform(pos=(anchor_x, anchor_y, 0.0), scale=(half_len, 1.0, 1.0)),
+            AxisFrame(extent=1.0),
+            n=1,
+        )
+
+        # The caption — screen-anchored LabelMaterial.
+        atlas = engine.get_label_atlas()
+        caption_slot = atlas.get_or_create(self.label or " ")
+        engine.spawn(
+            Material(LabelMaterial(pixel_width=160, pixel_height=24, anchor_mode="screen")),
+            Transform(pos=(anchor_x, anchor_y - 0.08, 0.0)),
+            TextLabel(index=caption_slot),
+            n=1,
+        )
+
+
+def scale_bar(
+    *,
+    ndc_length: float = 0.3,
+    label: str = "",
+    position: str = "bottom-left",
+    color: str = "#ffffff",
+) -> "Chart":
+    """Screen-anchored scale bar — a horizontal line + caption label."""
+    return _wrap(
+        ScaleBarMark(
+            ndc_length=ndc_length, label=label, position=position, color=color
+        )
+    )
+
+
+# --- lights -----------------------------------------------------------------
+
+
+class LightsMark(Mark):
+    """Declarative light-list — thin wrapper over engine.set_lights."""
+
+    def __init__(self, lights):
+        self.lights = list(lights)
+
+    def apply(self, engine) -> None:
+        engine.set_lights(self.lights)
+
+
+def lights(specs) -> "Chart":
+    """Set the engine's light list — a thin wrapper over engine.set_lights."""
+    return _wrap(LightsMark(specs))
+
+
+def _wrap(mark: Mark) -> "Chart":
+    """Promote a single mark into a Chart so factory callers can immediately
+    access Chart methods or compose with `+`."""
     chart = Chart()
-    chart.marks.append(PointsMark(positions=positions, color=color, size=size))
+    chart.marks.append(mark)
     return chart
 
 
