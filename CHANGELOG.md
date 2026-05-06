@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`examples/scatter_plot.py`** — the "hello world" of the declarative API: 500-particle 3D scatter with axes, colormap legend, scale bar, two PBR lights, and live physics in ~30 lines (vs ~120 for the equivalent imperative-ECS demo).
 
+- **`manifoldx.random`** — initial-condition generators for demos. Six position generators (`positions_uniform`, `_in_box`, `_in_sphere`, `_on_sphere`, `_in_disk`, `_gaussian`), five velocity generators (`velocities_gaussian`, `_uniform`, `_on_sphere`, `_tangent`, `_orbit`), two scalar generators (`scalars_uniform`, `scalars_gaussian`). All return float32 arrays. Optional `rng` kwarg accepts None (entropy seed), int (deterministic), or an existing `numpy.random.Generator`.
+
+- **`manifoldx.physics`** — vectorized simulation primitives. `all_pairs(positions)` returns a dataclass with `diff` / `dist` / `dist_safe`; `gravity(positions, masses, G, softening)` returns N-body acceleration; `central_gravity(positions, GM, softening, center)` for single-source cases; `box_boundary(positions, velocities, half_size, dt, mode)` and `sphere_boundary(positions, velocities, radius, mode, strength, dt)` for in-place velocity reflection; `elastic_collisions(positions, velocities, radius, restitution)` for equal-mass pair collisions.
+
+- **Examples rewritten** to use `mx.random.*` and `mx.physics.*`. Net effect on the four physics-heavy demos (nbody, gas, boids, point_cloud_demo): 99 lines of inline physics → 20 lines of helper calls; same visual behavior. Initial-condition setup compressed similarly: ~50 lines saved across five demos.
+
 ### Deferred from Plan 4 spec
 - **Multi-viewport composition** (`|`, `&`). Renderer rewrite required; Plan 5+.
 - **Generic `lines` mark.** Would need a generalized line material beyond axes; defer until concrete demand.
