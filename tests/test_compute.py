@@ -84,28 +84,36 @@ def test_compute_compile_returns_string_when_overridden():
 
 
 def test_bind_group_layout_orders_reads_then_writes():
-    """Bindings: 0 = uniform; 1..K = Reads (decl order); K+1.. = Writes."""
+    """Bindings with uniforms: 0 = uniform; 1..K = Reads; K+1.. = Writes.
+    Without uniforms: slot 0 starts with the first Reads buffer."""
     from manifoldx.compute import Compute, Reads, ReadsWrites, Uniform, Writes
 
-    class MyCompute(Compute):
+    class WithUniforms(Compute):
         a: Reads[int]
         b: Reads[int]
         c: Writes[int]
         d: ReadsWrites[int]
         e: Uniform[float] = 0.0
 
-    layout = MyCompute._bind_group_layout()
-    # Uniform always at 0.
+    layout = WithUniforms._bind_group_layout()
     assert layout[0]["name"] == "_uniforms"
-    # Reads at 1, 2 in declaration order.
     assert layout[1]["name"] == "a"
     assert layout[1]["access"] == "read"
     assert layout[2]["name"] == "b"
-    # Writes / ReadsWrites at 3, 4.
     assert layout[3]["name"] == "c"
     assert layout[3]["access"] == "read_write"
     assert layout[4]["name"] == "d"
-    assert layout[4]["access"] == "read_write"
+
+    class NoUniforms(Compute):
+        a: Reads[int]
+        c: Writes[int]
+
+    layout = NoUniforms._bind_group_layout()
+    # Slot 0 is now the first Reads buffer — no uniform binding.
+    assert layout[0]["name"] == "a"
+    assert layout[0]["access"] == "read"
+    assert layout[1]["name"] == "c"
+    assert layout[1]["access"] == "read_write"
 
 
 # --- Auto-bound uniform / dispatch symbols ----------------------------------

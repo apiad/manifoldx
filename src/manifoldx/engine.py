@@ -60,6 +60,12 @@ class Engine:
         # Render pipeline
         self._render_pipeline = RenderPipeline(self.store, self._device)
 
+        # Compute systems — declarative GPU work registered via engine.compute(cls).
+        from manifoldx.compute import ComputeRunner
+        self._compute_runner = ComputeRunner(self)
+        self._last_dt: float = 1 / 60
+        self._frame_index: int = 0
+
         # Configurable timestep
         self._use_fixed_dt = False
         self._fixed_dt_value = 1 / 60
@@ -136,6 +142,22 @@ class Engine:
         from manifoldx.ecs import _make_component_class
 
         return _make_component_class(cls, self)
+
+    def compute(self, cls):
+        """Register a Compute subclass to run as part of the per-frame loop.
+
+        Usage:
+            class Gravity(Compute):
+                ...
+
+            engine.compute(Gravity)
+
+        Pipeline compilation is deferred to the first frame after registration
+        so the engine's wgpu device is ready. Each registered Compute runs once
+        per frame between CPU command flush and the render pass.
+        """
+        self._compute_runner.register(cls)
+        return cls
 
     def set_lights(self, lights: list):
         """Set external lights (passed to renderer, not in ECS)."""
@@ -296,6 +318,10 @@ class Engine:
 
         # 3. Execute command buffer (apply all spawn/destroy/update)
         self.commands.execute(self.store)
+
+        # 3b. Dispatch GPU compute systems (after CPU flush, before render).
+        self._compute_runner.run_all(dt)
+        self._frame_index += 1
 
         # 4. RENDER PIPELINE
         self._render_pipeline.run(self, dt)

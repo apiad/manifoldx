@@ -187,20 +187,19 @@ class Compute:
     def _bind_group_layout(cls) -> list[dict]:
         """Compute the bind-group layout from the class annotations.
 
-        Slot 0 is always the packed uniform buffer. Slots 1..K are Reads
-        in declaration order; slots K+1.. are Writes / ReadsWrites in
-        declaration order. Returns a list of dicts; the engine consumes
+        Slot 0 is the packed uniform buffer IF the class declares any
+        Uniform[T] annotations; otherwise slot 0 is the first Reads buffer.
+        Reads come first (in declaration order), then Writes / ReadsWrites
+        (in declaration order). Returns a list of dicts; the engine consumes
         them to build the actual wgpu bind-group layout.
         """
-        layout: list[dict] = [
-            {
-                "binding": 0,
-                "name": "_uniforms",
-                "kind": "uniform",
-                "access": "read",
-            }
-        ]
-        slot = 1
+        layout: list[dict] = []
+        slot = 0
+        if cls._uniforms:
+            layout.append(
+                {"binding": slot, "name": "_uniforms", "kind": "uniform", "access": "read"}
+            )
+            slot += 1
         for name in cls._reads:
             layout.append(
                 {"binding": slot, "name": name, "kind": "storage", "access": "read"}
@@ -221,8 +220,283 @@ class Compute:
 
 __all__ = [
     "Compute",
+    "ComputeRunner",
     "Reads",
     "Writes",
     "ReadsWrites",
     "Uniform",
 ]
+
+
+# =============================================================================
+# Engine-side runner — owns pipelines, dispatches each frame
+# =============================================================================
+
+
+class ComputeRunner:
+    """Engine-side manager for registered Compute classes.
+
+    Lifecycle:
+    - `register(cls)`: append a Compute class to the registry. No GPU work yet.
+    - `run_all(dt)`: called once per frame after CPU command flush. For each
+      registered class, compile-on-first-use, sync mirrored Reads from CPU
+      to GPU, dispatch the compute pipeline, sync mirrored Writes back.
+
+    Phase 1 v1 simplifications (documented in the design doc):
+    - Each compute pass uses its own command encoder + submit (no batching).
+    - Mirrored components round-trip CPU→GPU→CPU each frame; gpu_only
+      components stay on GPU.
+    - One bind group, group=0, slot 0 = uniforms, 1..K = Reads, K+1.. = Writes.
+    """
+
+    def __init__(self, engine):
+        self._engine = engine
+        self._registered: list[type] = []
+        self._compiled: dict[type, _CompiledCompute] = {}
+
+    def register(self, cls: type) -> None:
+        if not isinstance(cls, type) or not issubclass(cls, Compute):
+            raise TypeError(
+                f"engine.compute(...) expects a Compute subclass; got {cls!r}"
+            )
+        if cls not in self._registered:
+            self._registered.append(cls)
+
+    def run_all(self, dt: float) -> None:
+        if not self._registered or self._engine._device is None:
+            return
+        for cls in self._registered:
+            if cls not in self._compiled:
+                self._compile(cls)
+            self._dispatch(cls, dt)
+
+    def _compile(self, cls: type) -> None:
+        import wgpu
+        engine = self._engine
+        device = engine._device
+
+        instance = cls()
+        wgsl = instance.compile()
+
+        # Build the bind-group layout from the class annotations.
+        layout = cls._bind_group_layout()
+        bgl_entries = []
+        for slot in layout:
+            if slot["kind"] == "uniform":
+                bgl_entries.append(
+                    {
+                        "binding": slot["binding"],
+                        "visibility": wgpu.ShaderStage.COMPUTE,
+                        # min_binding_size=0 disables the runtime check so the
+                        # shader's static-analysis "expected size" doesn't
+                        # need to match the bound buffer exactly.
+                        "buffer": {
+                            "type": wgpu.BufferBindingType.uniform,
+                            "min_binding_size": 0,
+                        },
+                    }
+                )
+            else:
+                bbt = (
+                    wgpu.BufferBindingType.read_only_storage
+                    if slot["access"] == "read"
+                    else wgpu.BufferBindingType.storage
+                )
+                bgl_entries.append(
+                    {
+                        "binding": slot["binding"],
+                        "visibility": wgpu.ShaderStage.COMPUTE,
+                        "buffer": {
+                            "type": bbt,
+                            "min_binding_size": 0,
+                        },
+                    }
+                )
+
+        bind_group_layout = device.create_bind_group_layout(entries=bgl_entries)
+        pipeline_layout = device.create_pipeline_layout(
+            bind_group_layouts=[bind_group_layout]
+        )
+        shader_module = device.create_shader_module(code=wgsl)
+        pipeline = device.create_compute_pipeline(
+            layout=pipeline_layout,
+            compute={"module": shader_module, "entry_point": "main"},
+        )
+
+        # Uniform buffer — only allocated when the class declares uniforms.
+        if cls._uniforms:
+            u_size = _round_up(4 * len(cls._uniforms), 16)
+            uniform_buffer = device.create_buffer(
+                size=u_size,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+        else:
+            uniform_buffer = None
+
+        # Storage buffers — one per component referenced by Reads/Writes.
+        component_buffers: dict[str, Any] = {}
+        for binding_name, comp_type in {**cls._reads, **cls._writes}.items():
+            store_array = engine.store._components[comp_type.__name__]
+            n_bytes = int(store_array.nbytes)
+            buf = device.create_buffer(
+                size=n_bytes,
+                usage=(
+                    wgpu.BufferUsage.STORAGE
+                    | wgpu.BufferUsage.COPY_SRC
+                    | wgpu.BufferUsage.COPY_DST
+                ),
+            )
+            component_buffers[binding_name] = (comp_type, buf, n_bytes)
+
+        self._compiled[cls] = _CompiledCompute(
+            instance=instance,
+            pipeline=pipeline,
+            bind_group_layout=bind_group_layout,
+            pipeline_layout=pipeline_layout,
+            uniform_buffer=uniform_buffer,
+            component_buffers=component_buffers,
+            wgsl=wgsl,
+        )
+
+    def _dispatch(self, cls: type, dt: float) -> None:
+        import wgpu
+        engine = self._engine
+        device = engine._device
+        cc = self._compiled[cls]
+
+        # 1. Sync mirrored components from CPU numpy → GPU storage buffer.
+        # Both Reads and ReadsWrites need their initial state uploaded each
+        # frame (Reads so the shader has fresh data; ReadsWrites so the
+        # shader can read the current state before mutating it). Pure Writes
+        # don't strictly need an upload, but Phase 1 doesn't distinguish
+        # Writes from ReadsWrites — both go through _writes. The cost is
+        # small so we upload regardless.
+        all_input_bindings = list(cls._reads) + list(cls._writes)
+        for binding_name in all_input_bindings:
+            comp_type, buf, n_bytes = cc.component_buffers[binding_name]
+            comp_name = comp_type.__name__
+            if not getattr(comp_type, "_gpu_only", False):
+                arr = engine.store._components[comp_name]
+                device.queue.write_buffer(buf, 0, arr.tobytes())
+
+        # 2. Resolve uniforms + pack into bytes.
+        engine._last_dt = dt  # auto-bound 'frame_dt' uses this
+        uniform_values = []
+        for name in cls._uniforms:
+            default = cls._uniform_defaults.get(name)
+            if isinstance(default, str):
+                resolver = _AUTO_BOUND_UNIFORMS.get(default)
+                if resolver is None:
+                    raise ValueError(
+                        f"Unknown auto-bound uniform sentinel {default!r} "
+                        f"for {cls.__name__}.{name}"
+                    )
+                value = resolver(engine)
+            elif default is None:
+                value = 0.0
+            else:
+                value = default
+            uniform_values.append(float(value))
+
+        if uniform_values and cc.uniform_buffer is not None:
+            packed = np.array(uniform_values, dtype=np.float32).tobytes()
+            # Pad to 16-byte alignment.
+            pad = (-len(packed)) % 16
+            if pad:
+                packed = packed + b"\x00" * pad
+            device.queue.write_buffer(cc.uniform_buffer, 0, packed)
+
+        # 3. Build the bind group fresh each dispatch (cheap; lets buffers move).
+        entries = []
+        slot = 0
+        if cc.uniform_buffer is not None:
+            entries.append(
+                {
+                    "binding": slot,
+                    "resource": {
+                        "buffer": cc.uniform_buffer,
+                        "offset": 0,
+                        "size": cc.uniform_buffer.size,
+                    },
+                }
+            )
+            slot += 1
+        for binding_name in {**cls._reads, **cls._writes}:
+            _comp_type, buf, n_bytes = cc.component_buffers[binding_name]
+            entries.append(
+                {
+                    "binding": slot,
+                    "resource": {"buffer": buf, "offset": 0, "size": n_bytes},
+                }
+            )
+            slot += 1
+        bind_group = device.create_bind_group(
+            layout=cc.bind_group_layout, entries=entries
+        )
+
+        # 4. Resolve dispatch size + workgroup count.
+        dispatch_value = cls.dispatch
+        if isinstance(dispatch_value, str):
+            resolver = _DISPATCH_SYMBOLS.get(dispatch_value)
+            if resolver is None:
+                raise ValueError(
+                    f"Unknown dispatch symbol {dispatch_value!r} for {cls.__name__}"
+                )
+            n_threads = resolver(engine)
+        elif callable(dispatch_value):
+            n_threads = int(dispatch_value(engine))
+        else:
+            n_threads = int(dispatch_value)
+        workgroup_count = (n_threads + cls.workgroup_size - 1) // cls.workgroup_size
+        if workgroup_count <= 0:
+            return
+
+        # 5. Encode + submit compute pass.
+        encoder = device.create_command_encoder()
+        compute_pass = encoder.begin_compute_pass()
+        compute_pass.set_pipeline(cc.pipeline)
+        compute_pass.set_bind_group(0, bind_group, [], 0, 0)
+        compute_pass.dispatch_workgroups(workgroup_count, 1, 1)
+        compute_pass.end()
+
+        # 6. Sync mirrored Writes back to CPU before submit completes.
+        # We read each write-buffer back through a staging buffer; for v1
+        # we just queue.read_buffer (sync).
+        for binding_name in cls._writes:
+            comp_type, buf, n_bytes = cc.component_buffers[binding_name]
+            comp_name = comp_type.__name__
+            if getattr(comp_type, "_gpu_only", False):
+                continue
+            # Use copy_buffer_to_buffer staging approach is cleaner, but for
+            # simplicity v1 reads back via queue.read_buffer after submit.
+            cc.pending_readbacks.append(binding_name)
+
+        device.queue.submit([encoder.finish()])
+
+        # 7. Read back mirrored writes (sync; blocks until GPU done).
+        for binding_name in list(cc.pending_readbacks):
+            comp_type, buf, n_bytes = cc.component_buffers[binding_name]
+            comp_name = comp_type.__name__
+            data = device.queue.read_buffer(buf, 0, n_bytes)
+            arr = engine.store._components[comp_name]
+            np.copyto(arr, np.frombuffer(data, dtype=arr.dtype).reshape(arr.shape))
+        cc.pending_readbacks.clear()
+
+
+def _round_up(value: int, multiple: int) -> int:
+    return ((value + multiple - 1) // multiple) * multiple
+
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class _CompiledCompute:
+    instance: "Compute"
+    pipeline: Any
+    bind_group_layout: Any
+    pipeline_layout: Any
+    uniform_buffer: Any
+    component_buffers: dict
+    wgsl: str
+    pending_readbacks: list = field(default_factory=list)
