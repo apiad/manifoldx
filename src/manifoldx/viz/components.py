@@ -72,3 +72,34 @@ class PointCloud:
 
     def get_data(self, n: int, registry=None) -> np.ndarray:
         return np.zeros((n, 0), dtype=np.float32)
+
+
+class TextLabel:
+    """Per-entity atlas slice index for a rasterized label.
+
+    Storage layout: 1 float per entity (column 0). The float holds an integer
+    slice index in [0, MAX_LABELS); the shader casts it to u32. Float storage
+    keeps `TextLabel` symmetric with `ScalarValue` and `Radius`, all of which
+    flow through the same _FieldView path.
+
+    Usage:
+        TextLabel()                              # all 0
+        TextLabel(index=7)                       # broadcast scalar
+        TextLabel(index=array_shape_N_int)       # explicit per-entity
+    """
+
+    def __init__(self, index=None):
+        self._index = index
+
+    def get_data(self, n: int, registry=None) -> np.ndarray:
+        data = np.zeros((n, 1), dtype=np.float32)
+        if self._index is None:
+            return data
+        v = np.asarray(self._index, dtype=np.float32)
+        if v.ndim == 0:
+            data[:, 0] = float(v)
+        elif v.ndim == 1 and v.shape[0] == n:
+            data[:, 0] = v
+        else:
+            raise ValueError(f"TextLabel: index shape {v.shape} incompatible with n={n}")
+        return data
