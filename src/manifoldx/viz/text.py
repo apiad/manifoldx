@@ -80,3 +80,52 @@ class LabelTextureAtlas:
         self._dirty_slices.add(idx)
         self._slice_count += 1
         return idx
+
+    @property
+    def gpu_texture(self):
+        return self._gpu_texture
+
+    @property
+    def gpu_sampler(self):
+        return self._gpu_sampler
+
+    def upload_dirty(self, device, queue) -> None:
+        """Create the texture array on first call; upload each dirty slice.
+
+        The texture is allocated once at MAX_LABELS slices so subsequent
+        `get_or_create` calls just write into already-allocated slots.
+        """
+        import wgpu
+
+        if not self._dirty_slices and self._gpu_texture is not None:
+            return
+
+        if self._gpu_texture is None:
+            self._gpu_texture = device.create_texture(
+                size=(TILE_WIDTH, TILE_HEIGHT, MAX_LABELS),
+                format=wgpu.TextureFormat.rgba8unorm_srgb,
+                usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
+                dimension=wgpu.TextureDimension.d2,
+            )
+            self._gpu_sampler = device.create_sampler(
+                address_mode_u=wgpu.AddressMode.clamp_to_edge,
+                address_mode_v=wgpu.AddressMode.clamp_to_edge,
+                mag_filter=wgpu.FilterMode.linear,
+                min_filter=wgpu.FilterMode.linear,
+            )
+
+        for idx in sorted(self._dirty_slices):
+            slice_data = self._slices[idx]
+            queue.write_texture(
+                {
+                    "texture": self._gpu_texture,
+                    "origin": (0, 0, idx),
+                },
+                slice_data.tobytes(),
+                {
+                    "bytes_per_row": TILE_WIDTH * 4,
+                    "rows_per_image": TILE_HEIGHT,
+                },
+                (TILE_WIDTH, TILE_HEIGHT, 1),
+            )
+        self._dirty_slices.clear()

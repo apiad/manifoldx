@@ -114,3 +114,47 @@ def test_rasterize_string_writes_into_slice_buffer():
     idx = atlas.get_or_create("X", font_size=14)
     expected = LabelTextureAtlas.rasterize_string("X", font_size=14)
     assert np.array_equal(atlas._slices[idx], expected)
+
+
+def _get_offscreen_device():
+    """Get a wgpu device from an offscreen canvas. Skips if unavailable."""
+    try:
+        from manifoldx.backends import get_offscreen_canvas
+        get_offscreen_canvas(width=64, height=64)
+    except Exception as e:
+        pytest.skip(f"offscreen canvas unavailable: {e}")
+    import wgpu
+    adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+    return adapter.request_device_sync()
+
+
+def test_upload_dirty_creates_texture_on_first_call():
+    atlas = LabelTextureAtlas()
+    device = _get_offscreen_device()
+    atlas.get_or_create("abc")
+    atlas.upload_dirty(device, device.queue)
+    assert atlas.gpu_texture is not None
+    assert atlas.gpu_sampler is not None
+    assert atlas.dirty_slices == set()
+
+
+def test_upload_dirty_idempotent_when_no_new_labels():
+    atlas = LabelTextureAtlas()
+    device = _get_offscreen_device()
+    atlas.get_or_create("abc")
+    atlas.upload_dirty(device, device.queue)
+    tex_first = atlas.gpu_texture
+    atlas.upload_dirty(device, device.queue)
+    assert atlas.gpu_texture is tex_first
+
+
+def test_upload_dirty_appends_new_slices_without_recreating_texture():
+    atlas = LabelTextureAtlas()
+    device = _get_offscreen_device()
+    atlas.get_or_create("first")
+    atlas.upload_dirty(device, device.queue)
+    tex_before = atlas.gpu_texture
+    atlas.get_or_create("second")
+    atlas.upload_dirty(device, device.queue)
+    assert atlas.gpu_texture is tex_before
+    assert atlas.dirty_slices == set()
