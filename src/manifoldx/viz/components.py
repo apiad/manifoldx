@@ -61,3 +61,22 @@ class TextLabel(Component):
     """
 
     index: Float = 0.0
+
+
+class AxisFrame(Component):
+    """Tag entity for axis line rendering with `AxisMaterial`.
+
+    Storage layout: 2 floats per entity (extent, thickness).
+
+    `extent` is the half-length of the axis line in world units. The line
+    geometry is a unit line; the entity's `Transform` provides position +
+    rotation + scale (axis direction is encoded by which AXIS_* geometry
+    the entity carries).
+
+    `thickness` is reserved in v1 — the line render path uses native wgpu
+    LineList topology, which on Vulkan/Metal/D3D12 always renders 1px wide.
+    Kept in the schema for future quad-extrusion support.
+    """
+
+    extent: Float = 1.0
+    thickness: Float = 1.0

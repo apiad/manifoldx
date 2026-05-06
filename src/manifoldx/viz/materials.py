@@ -331,3 +331,103 @@ class LabelMaterial(Material):
             dtype=np.float32,
         )
         return np.broadcast_to(row, (n, 4)).copy()
+
+
+# WGSL shader source for AxisMaterial.
+#
+# Bindings (group 0):
+#   0: Globals uniform   { vp, view, proj, camera_pos, _pad0,
+#                          viewport_size, _pad1 }
+#   1: transforms        storage<read> array<mat4x4<f32>>
+#   2: material uniform  { r: f32, g: f32, b: f32, a: f32 }
+#
+# Vertex inputs:
+#   @location(0) position: vec3<f32>   — line endpoint in unit space
+#                                        (e.g. AXIS_LINE_X has vertices at
+#                                        (-1, 0, 0) and (+1, 0, 0); the entity's
+#                                        Transform.scale = (extent, 1, 1) puts
+#                                        them at the right world distance)
+
+_AXIS_SHADER = """
+struct Globals {
+    vp: mat4x4<f32>,
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    _pad0: f32,
+    viewport_size: vec2<f32>,
+    _pad1: vec2<f32>,
+};
+
+struct MaterialUniform {
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+};
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> transforms: array<mat4x4<f32>>;
+@group(0) @binding(2) var<uniform> material: MaterialUniform;
+
+struct VSIn {
+    @location(0) position: vec3<f32>,
+};
+
+struct VSOut {
+    @builtin(position) clip_position: vec4<f32>,
+};
+
+@vertex
+fn vs_main(in: VSIn, @builtin(instance_index) iidx: u32) -> VSOut {
+    let model = transforms[iidx];
+    let world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    var out: VSOut;
+    out.clip_position = globals.vp * vec4<f32>(world_pos, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(material.r, material.g, material.b, material.a);
+}
+""".strip()
+
+
+class AxisMaterial(Material):
+    """Unlit colored line material for axis frames.
+
+    Per-batch uniform (4 floats): r, g, b, a (linear RGB).
+    Per-instance: none (each color = one batch).
+    Pipeline: native wgpu LineList topology, 1px native lines.
+
+    Three axes (X / Y / Z) are typically spawned as three entities, each
+    with its own AxisMaterial instance (and thus its own batch + color).
+    Default colors follow the sci-viz v1 spec: X=#e64545, Y=#5fbf5f,
+    Z=#5588ff (mutable via the `color` keyword).
+    """
+
+    binding_slot = 3
+
+    def __init__(self, *, color: str = "#ffffff"):
+        self.color = color
+
+    @classmethod
+    def _compile(cls) -> str:
+        return _AXIS_SHADER
+
+    @classmethod
+    def uniform_type(cls) -> Dict[str, str]:
+        return {"r": "f32", "g": "f32", "b": "f32", "a": "f32"}
+
+    @property
+    def pipeline_subtype(self):
+        # All AxisMaterial batches share one pipeline; the color difference
+        # rides through the per-batch material uniform, not the cache key.
+        return None
+
+    def get_data(self, n: int, registry=None) -> np.ndarray:
+        from manifoldx.types import Color
+        c = Color(self.color).to_linear()
+        row = np.array([c.r, c.g, c.b, c.a], dtype=np.float32)
+        return np.broadcast_to(row, (n, 4)).copy()
