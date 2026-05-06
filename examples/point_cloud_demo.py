@@ -1,6 +1,6 @@
 """Point cloud demo — sci-viz primitives v1 (Plan 1).
 
-A protoplanetary-disk-style demo: ~5000 dust particles orbiting a central
+A protoplanetary-disk-style demo: ~10000 dust particles orbiting a central
 star under Keplerian gravity. Each particle is rendered as a camera-facing
 point sprite with sphere-imposter shading and colormapped by orbital speed
 (inferno LUT — slow → black, fast → yellow). The central star is a real
@@ -22,7 +22,7 @@ from manifoldx.resources import PointLight, StandardMaterial, sphere
 from manifoldx.viz import ColormapMaterial, PointCloud, Radius, ScalarValue
 
 # Simulation parameters -------------------------------------------------------
-NUM_PARTICLES = 5000
+NUM_PARTICLES = 10000
 GM = 60.0           # gravitational parameter of the central star
 SOFTENING = 0.4     # avoids singularity / wild accelerations near the star
 DISK_INNER = 2.0    # inner edge of the disk
@@ -30,7 +30,7 @@ DISK_OUTER = 8.0    # outer edge of the disk
 DISK_THICK = 0.18   # z-axis half-width of the disk
 ECCENTRICITY = 0.06  # fractional perturbation on circular orbits
 STAR_RADIUS = 1.0   # central PBR sphere
-EXTENT = DISK_OUTER * 1.4
+EXTENT = DISK_OUTER * 1.2
 
 engine = mx.Engine("Protoplanetary disk")
 engine.camera.fit(EXTENT)
