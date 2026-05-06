@@ -3,6 +3,60 @@
 import numpy as np
 import wgpu
 
+from manifoldx.viz.materials import ColormapMaterial
+
+
+# =============================================================================
+# Batch Buffers (per-batch GPU buffer management)
+# =============================================================================
+
+
+class _BatchBuffers:
+    """Per-batch GPU buffers managed by RenderPipeline.
+
+    Extends transform-only management to include optional per-instance
+    scalar_values and radii buffers required by ColormapMaterial.
+    """
+
+    def __init__(self, device):
+        self._device = device
+        self.transforms_buf = None
+        self.transforms_capacity = 0
+        self.scalar_values_buf = None
+        self.scalar_values_capacity = 0
+        self.radii_buf = None
+        self.radii_capacity = 0
+
+    def upload_transforms(self, data: "np.ndarray"):
+        n_bytes = data.nbytes
+        if self.transforms_buf is None or self.transforms_capacity < n_bytes:
+            self.transforms_buf = self._device.create_buffer(
+                size=n_bytes,
+                usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
+            )
+            self.transforms_capacity = n_bytes
+        self._device.queue.write_buffer(self.transforms_buf, 0, data.tobytes())
+
+    def upload_scalar_values(self, data: "np.ndarray"):
+        n_bytes = data.nbytes
+        if self.scalar_values_buf is None or self.scalar_values_capacity < n_bytes:
+            self.scalar_values_buf = self._device.create_buffer(
+                size=n_bytes,
+                usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
+            )
+            self.scalar_values_capacity = n_bytes
+        self._device.queue.write_buffer(self.scalar_values_buf, 0, data.tobytes())
+
+    def upload_radii(self, data: "np.ndarray"):
+        n_bytes = data.nbytes
+        if self.radii_buf is None or self.radii_capacity < n_bytes:
+            self.radii_buf = self._device.create_buffer(
+                size=n_bytes,
+                usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
+            )
+            self.radii_capacity = n_bytes
+        self._device.queue.write_buffer(self.radii_buf, 0, data.tobytes())
+
 
 # =============================================================================
 # WGSL Shaders (default fallback - not used when materials provide shaders)
@@ -181,8 +235,7 @@ class RenderPipeline:
         self._bind_group_layouts = {}  # material_type -> bind group layout
         self._material_buffers = {}  # (geometry_id, material_type) -> buffer
         self._globals_buffer = None  # VP matrix + camera_pos
-        self._transform_buffer = None  # Storage buffer for model matrices
-        self._transform_buffer_size = 0
+        self._batch_buffers = None  # _BatchBuffers instance for per-batch storage
         self._lights_buffer = None  # External lights uniform buffer
         self._initialized = False
 
@@ -199,13 +252,8 @@ class RenderPipeline:
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
-        # Create initial transform storage buffer (will grow as needed)
-        initial_size = max(64, 64 * 1024)  # At least 1 matrix, start with 1024
-        self._transform_buffer = device.create_buffer(
-            size=initial_size,
-            usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
-        )
-        self._transform_buffer_size = initial_size
+        # Create batch buffers for per-batch storage (transforms, etc.)
+        self._batch_buffers = _BatchBuffers(device)
 
         # Create lights uniform buffer (up to 4 lights, 32 bytes each = 128 bytes max)
         self._lights_buffer = device.create_buffer(
@@ -335,22 +383,6 @@ class RenderPipeline:
 
         return pipeline, bind_group_layout
 
-    def _ensure_transform_buffer(self, needed_bytes):
-        """Grow transform storage buffer if needed."""
-        if needed_bytes <= self._transform_buffer_size:
-            return
-
-        # Double until big enough
-        new_size = self._transform_buffer_size
-        while new_size < needed_bytes:
-            new_size *= 2
-
-        self._transform_buffer = self._device.create_buffer(
-            size=new_size,
-            usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
-        )
-        self._transform_buffer_size = new_size
-
     def render(self, engine, render_pass):
         """Issue instanced draw calls into an active render pass."""
         if not self._initialized or self._device is None:
@@ -433,9 +465,7 @@ class RenderPipeline:
         # Transpose all matrices for WGSL column-major layout and upload once
         all_matrices = model_matrices[all_local_indices]  # (total_instances, 16)
         all_matrices_t = all_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
-        transform_bytes = all_matrices_t.astype(np.float32).tobytes()
-        self._ensure_transform_buffer(len(transform_bytes))
-        self._device.queue.write_buffer(self._transform_buffer, 0, transform_bytes)
+        self._batch_buffers.upload_transforms(all_matrices_t.astype(np.float32))
 
         # Upload lights once (shared across all PBR draws)
         lights = getattr(engine, "_lights", [])
@@ -505,9 +535,9 @@ class RenderPipeline:
                 {
                     "binding": 1,
                     "resource": {
-                        "buffer": self._transform_buffer,
+                        "buffer": self._batch_buffers.transforms_buf,
                         "offset": 0,
-                        "size": self._transform_buffer_size,
+                        "size": self._batch_buffers.transforms_capacity,
                     },
                 },
                 {
