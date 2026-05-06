@@ -28,3 +28,30 @@ SPRITE_QUAD = {
     "indices": _QUAD_INDICES,
     "name": "sprite_quad",
 }
+
+
+# Unit-line geometries for AxisFrame, one per axis direction.
+#
+# Each axis is a single line from -1 to +1 along its axis. The entity's
+# Transform.scale = (extent, 1, 1) (or (1, extent, 1) etc. — usually keyed
+# by which AXIS_LINE_* the entity carries, but the engine doesn't enforce
+# this) puts the endpoints at the right world distance.
+#
+# Topology is LineList — 2 vertices, 2 indices.
+AXIS_LINE_X = {
+    "vertices": np.array([[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32),
+    "indices": np.array([0, 1], dtype=np.uint32),
+    "name": "axis_line_x",
+}
+
+AXIS_LINE_Y = {
+    "vertices": np.array([[0.0, -1.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32),
+    "indices": np.array([0, 1], dtype=np.uint32),
+    "name": "axis_line_y",
+}
+
+AXIS_LINE_Z = {
+    "vertices": np.array([[0.0, 0.0, -1.0], [0.0, 0.0, 1.0]], dtype=np.float32),
+    "indices": np.array([0, 1], dtype=np.uint32),
+    "name": "axis_line_z",
+}

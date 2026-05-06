@@ -322,7 +322,12 @@ class GeometryRegistry:
     """
 
     def __init__(self, device=None):
-        from manifoldx.viz.geometry import SPRITE_QUAD as _sprite_quad
+        from manifoldx.viz.geometry import (
+            AXIS_LINE_X as _axis_line_x,
+            AXIS_LINE_Y as _axis_line_y,
+            AXIS_LINE_Z as _axis_line_z,
+            SPRITE_QUAD as _sprite_quad,
+        )
 
         self._device = device
         self._geometries: Dict[int, Any] = {}  # id -> geometry dict
@@ -333,6 +338,9 @@ class GeometryRegistry:
 
         # Register built-in geometries by name
         self._register_builtin(_sprite_quad["name"], _sprite_quad)
+        self._register_builtin(_axis_line_x["name"], _axis_line_x)
+        self._register_builtin(_axis_line_y["name"], _axis_line_y)
+        self._register_builtin(_axis_line_z["name"], _axis_line_z)
 
     def create_buffers(self, geometry_id: int, geometry_obj: dict, queue):
         """Create GPU buffers for geometry.

@@ -251,6 +251,7 @@ class RenderPipeline:
         self._batch_buffers = None  # _BatchBuffers instance for per-batch storage
         self._sprite_batch_buffers = None  # _BatchBuffers instance for sprite per-batch storage
         self._label_batch_buffers = None  # _BatchBuffers instance for label per-batch storage
+        self._axis_batch_buffers = None  # _BatchBuffers instance for axis per-batch storage
         self._lights_buffer = None  # External lights uniform buffer
         self._lut_textures = {}  # cmap_name -> (texture, sampler) for LUT caching
         self._initialized = False
@@ -280,6 +281,9 @@ class RenderPipeline:
         # Create separate batch buffers for label path
         self._label_batch_buffers = _BatchBuffers(device)
 
+        # Create separate batch buffers for axis path
+        self._axis_batch_buffers = _BatchBuffers(device)
+
         # Create lights uniform buffer (up to 4 lights, 32 bytes each = 128 bytes max)
         self._lights_buffer = device.create_buffer(
             size=128,
@@ -290,7 +294,7 @@ class RenderPipeline:
 
     def _get_or_create_pipeline(
         self, device, texture_format, geometry_id, material, registry,
-        sprite=False, label=False,
+        sprite=False, label=False, line=False,
     ):
         """Get or create a material-type specific pipeline.
 
@@ -298,11 +302,14 @@ class RenderPipeline:
             mesh:   (geometry_id, material_type)
             sprite: (geometry_id, material_type, material_subtype, sprite)
             label:  (geometry_id, material_type, material_subtype, "label")
+            line:   (geometry_id, material_type, material_subtype, "line")
         """
         material_type = type(material).__name__
         material_subtype = getattr(material, "pipeline_subtype", None)
 
-        if label:
+        if line:
+            key = (geometry_id, material_type, material_subtype, "line")
+        elif label:
             key = (geometry_id, material_type, material_subtype, "label")
         elif sprite:
             key = (geometry_id, material_type, material_subtype, True)
@@ -311,6 +318,83 @@ class RenderPipeline:
 
         if key in self._pipelines:
             return self._pipelines[key], self._bind_group_layouts.get(key)
+
+        if line:
+            # 3 bindings: globals, transforms, material uniform.
+            # Native LineList topology — 1px lines on Vulkan/Metal/D3D12;
+            # thickness honoring is deferred (Plan 3 Task 6 docstring).
+            bind_group_entries = [
+                {
+                    "binding": 0,
+                    "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                },
+                {
+                    "binding": 1,
+                    "visibility": wgpu.ShaderStage.VERTEX,
+                    "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+                },
+                {
+                    "binding": 2,
+                    "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                },
+            ]
+
+            bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
+            self._bind_group_layouts[key] = bind_group_layout
+
+            pipeline_layout = device.create_pipeline_layout(bind_group_layouts=[bind_group_layout])
+            self._pipeline_layouts[key] = pipeline_layout
+
+            shader_module = device.create_shader_module(code=material._compile())
+
+            pipeline = device.create_render_pipeline(
+                layout=pipeline_layout,
+                vertex={
+                    "module": shader_module,
+                    "entry_point": "vs_main",
+                    "buffers": [
+                        {
+                            "array_stride": 3 * 4,  # AXIS_LINE_*: position only
+                            "step_mode": wgpu.VertexStepMode.vertex,
+                            "attributes": [
+                                {
+                                    "format": wgpu.VertexFormat.float32x3,
+                                    "offset": 0,
+                                    "shader_location": 0,
+                                },
+                            ],
+                        }
+                    ],
+                },
+                primitive={
+                    "topology": wgpu.PrimitiveTopology.line_list,
+                    "front_face": wgpu.FrontFace.ccw,
+                    "cull_mode": wgpu.CullMode.none,
+                },
+                # Standard depth: lines occlude correctly with the 3D scene.
+                depth_stencil={
+                    "format": wgpu.TextureFormat.depth24plus,
+                    "depth_write_enabled": True,
+                    "depth_compare": wgpu.CompareFunction.less,
+                },
+                fragment={
+                    "module": shader_module,
+                    "entry_point": "fs_main",
+                    "targets": [{"format": texture_format}],
+                },
+            )
+
+            self._pipelines[key] = pipeline
+
+            material_buffer = device.create_buffer(
+                size=16,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+            self._material_buffers[key] = material_buffer
+
+            return pipeline, bind_group_layout
 
         if label:
             # 6 bindings: globals, transforms, material uniform, label_indices,
@@ -654,7 +738,13 @@ class RenderPipeline:
         has_mesh = "Mesh" in self._store._components
         has_point_cloud = "PointCloud" in self._store._components
         has_text_label = "TextLabel" in self._store._components
-        if not has_mesh and not has_point_cloud and not has_text_label:
+        has_axis_frame = "AxisFrame" in self._store._components
+        if (
+            not has_mesh
+            and not has_point_cloud
+            and not has_text_label
+            and not has_axis_frame
+        ):
             return
 
         # Compute view-projection matrix from camera
@@ -678,25 +768,34 @@ class RenderPipeline:
             material_data = self._store.get_component_data("Material", alive_indices)
 
         # Group by (geom_id, material_type) for mesh batches
-        # Group by mat_id for sprite batches (geometry is always SPRITE_QUAD)
+        # Group by mat_id for sprite/label/axis batches
         mesh_batches = {}  # (geom_id, mat_type) -> list of local indices
         sprite_batches = {}  # mat_id -> list of local indices
         label_batches = {}  # mat_id -> list of local indices
+        axis_batches = {}   # (geom_id, mat_id) -> list of local indices
 
         for i, entity_idx in enumerate(alive_indices):
             mat_id = int(material_data[i, 0]) if material_data is not None else 0
             geom_id = int(mesh_data[i, 0]) if mesh_data is not None else 0
 
-            # Per-entity routing. TextLabel takes priority over PointCloud:
-            # an entity rarely has both, but the routing must be deterministic.
+            # Per-entity routing. Priority: axis > label > sprite > mesh.
             # An entity is a sprite when PointCloud is registered AND it has no
-            # Mesh geometry (geom_id == 0). This lets mesh-bearing entities
-            # (e.g. a central PBR sphere) coexist with sprite-bearing entities
-            # in the same scene.
-            is_label = has_text_label and self._is_label_entity(entity_idx, mat_id, engine)
-            is_sprite = (not is_label) and has_point_cloud and geom_id == 0
+            # Mesh geometry (geom_id == 0). Axis frames carry both AxisFrame
+            # *and* an AXIS_LINE_* mesh, so they need to win over the mesh path.
+            is_axis = has_axis_frame and self._is_axis_entity(entity_idx, mat_id, engine)
+            is_label = (
+                (not is_axis)
+                and has_text_label
+                and self._is_label_entity(entity_idx, mat_id, engine)
+            )
+            is_sprite = (not is_axis) and (not is_label) and has_point_cloud and geom_id == 0
 
-            if is_label:
+            if is_axis:
+                key = (geom_id, mat_id)
+                if key not in axis_batches:
+                    axis_batches[key] = []
+                axis_batches[key].append(i)
+            elif is_label:
                 if mat_id not in label_batches:
                     label_batches[mat_id] = []
                 label_batches[mat_id].append(i)
@@ -774,6 +873,23 @@ class RenderPipeline:
             self._render_label_pass(
                 engine, render_pass, label_batches, model_matrices, material_data
             )
+
+        # ---------------------------------------------------------------
+        # Draw axis batches (LineList topology, opaque)
+        # ---------------------------------------------------------------
+        if axis_batches:
+            self._render_axis_pass(
+                engine, render_pass, axis_batches, model_matrices, material_data
+            )
+
+    def _is_axis_entity(self, entity_idx, mat_id, engine):
+        if mat_id <= 0:
+            return False
+        mat_obj = engine._material_registry.get(mat_id)
+        if mat_obj is None:
+            return False
+        from manifoldx.viz import AxisMaterial
+        return isinstance(mat_obj, AxisMaterial)
 
     def _is_label_entity(self, entity_idx, mat_id, engine):
         if mat_id <= 0:
@@ -1188,6 +1304,109 @@ class RenderPipeline:
                 },
             ],
         )
+
+    def _render_axis_pass(
+        self, engine, render_pass, axis_batches, model_matrices, material_data
+    ):
+        """Draw all axis batches as LineList primitives.
+
+        Each batch is keyed by (geom_id, mat_id) and gets its own pipeline
+        (LineList) + per-batch material color uniform. Axes share a dedicated
+        _axis_batch_buffers (separate from sprite/label) so their transform
+        uploads don't clobber other passes.
+        """
+        from manifoldx.viz.materials import AxisMaterial
+
+        if self._axis_batch_buffers is None:
+            self._axis_batch_buffers = _BatchBuffers(self._device)
+
+        # Pack all axis transforms once. instance_offset/count per batch.
+        all_local_indices = []
+        batch_draw_info = {}  # (geom_id, mat_id) -> (offset, count)
+        instance_offset = 0
+        for key, local_indices in axis_batches.items():
+            count = len(local_indices)
+            batch_draw_info[key] = (instance_offset, count)
+            all_local_indices.extend(local_indices)
+            instance_offset += count
+
+        if not all_local_indices:
+            return
+
+        ent_arr = np.asarray(all_local_indices, dtype=np.int64)
+        all_matrices = model_matrices[ent_arr]
+        all_matrices_t = all_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
+        self._axis_batch_buffers.upload_transforms(all_matrices_t.astype(np.float32))
+
+        for (geom_id, mat_id), local_indices in axis_batches.items():
+            mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
+            if not isinstance(mat_obj, AxisMaterial):
+                continue
+            first_instance, instance_count = batch_draw_info[(geom_id, mat_id)]
+
+            gpu_buffers = engine._geometry_registry.get_gpu_buffers(geom_id)
+            if gpu_buffers is None:
+                geom_obj = engine._geometry_registry.get(geom_id)
+                if geom_obj is not None:
+                    gpu_buffers = engine._geometry_registry.create_buffers(
+                        geom_id, geom_obj, self._device.queue
+                    )
+            if gpu_buffers is None:
+                continue
+
+            pipeline, bind_group_layout = self._get_or_create_pipeline(
+                self._device,
+                engine._texture_format,
+                geom_id,
+                mat_obj,
+                engine._material_registry,
+                line=True,
+            )
+
+            mat_data = mat_obj.get_data(instance_count, engine._material_registry)
+            material_type = type(mat_obj).__name__
+            material_subtype = getattr(mat_obj, "pipeline_subtype", None)
+            bkey = (geom_id, material_type, material_subtype, "line")
+            mat_buffer = self._material_buffers.get(bkey)
+            if mat_buffer is not None:
+                first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
+                self._device.queue.write_buffer(
+                    mat_buffer, 0, first_row.astype(np.float32).tobytes()
+                )
+
+            bind_group = self._device.create_bind_group(
+                layout=bind_group_layout,
+                entries=[
+                    {
+                        "binding": 0,
+                        "resource": {"buffer": self._globals_buffer, "offset": 0, "size": 224},
+                    },
+                    {
+                        "binding": 1,
+                        "resource": {
+                            "buffer": self._axis_batch_buffers.transforms_buf,
+                            "offset": 0,
+                            "size": self._axis_batch_buffers.transforms_capacity,
+                        },
+                    },
+                    {
+                        "binding": 2,
+                        "resource": {"buffer": mat_buffer, "offset": 0, "size": 16},
+                    },
+                ],
+            )
+
+            render_pass.set_pipeline(pipeline)
+            render_pass.set_bind_group(0, bind_group, [], 0, 0)
+            render_pass.set_vertex_buffer(0, gpu_buffers["vertex_buffer"])
+            render_pass.set_index_buffer(gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32)
+            render_pass.draw_indexed(
+                gpu_buffers["index_count"],
+                instance_count,
+                first_index=0,
+                base_vertex=0,
+                first_instance=first_instance,
+            )
 
     def _get_or_create_lut_texture(self, device, material):
         """Create or retrieve a cached 1D LUT texture + sampler for a colormap."""

@@ -17,10 +17,11 @@ def test_geometry_registry_id_allocation():
     
     id1 = registry.register(geo1)
     id2 = registry.register(geo2)
-    
+
+    # Built-ins (sprite_quad + axis_line_{x,y,z}) consume the first 4 IDs;
+    # user registrations start after them and remain sequential.
     assert id1 != id2
-    assert id1 == 2
-    assert id2 == 3
+    assert id2 == id1 + 1
 
 
 def test_geometry_cache():
