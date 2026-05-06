@@ -263,9 +263,11 @@ class RenderPipeline:
         self._device = device
 
         # Create globals uniform buffer:
-        #   vp(64) + view(64) + proj(64) + camera_pos(12) + pad(4) = 208 bytes
+        #   vp(64) + view(64) + proj(64) + camera_pos(12) + pad(4)
+        #   + viewport_size(8) + pad(8) = 224 bytes
+        # The trailing pad keeps the struct 16-byte aligned per WGSL rules.
         self._globals_buffer = device.create_buffer(
-            size=208,
+            size=224,
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
@@ -719,8 +721,9 @@ class RenderPipeline:
         if hasattr(camera, "position"):
             camera_pos = np.array(camera.position, dtype=np.float32)
 
-        # Upload globals (vp + view + proj + camera_pos + pad) = 208 bytes
-        globals_data = np.zeros(208, dtype=np.uint8)
+        # Upload globals: vp(64) + view(64) + proj(64) + camera_pos(12) +
+        # pad(4) + viewport_size(8) + pad(8) = 224 bytes.
+        globals_data = np.zeros(224, dtype=np.uint8)
         globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
         globals_data[64:128] = np.frombuffer(view_mat.tobytes(), dtype=np.uint8)
         # Upload projection matrix (column-major) at offset 128. Use the camera's
@@ -734,6 +737,9 @@ class RenderPipeline:
             camera_pos.astype(np.float32).tobytes(), dtype=np.uint8
         )
         # bytes 204-207 are padding (already zero)
+        viewport_size = np.array([float(engine.w), float(engine.h)], dtype=np.float32)
+        globals_data[208:216] = np.frombuffer(viewport_size.tobytes(), dtype=np.uint8)
+        # bytes 216-223 are trailing pad (already zero)
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 
         # Upload lights once (shared across all PBR draws)
@@ -860,7 +866,7 @@ class RenderPipeline:
                     "resource": {
                         "buffer": self._globals_buffer,
                         "offset": 0,
-                        "size": 208,
+                        "size": 224,
                     },
                 },
                 {
@@ -1148,7 +1154,7 @@ class RenderPipeline:
             entries=[
                 {
                     "binding": 0,
-                    "resource": {"buffer": self._globals_buffer, "offset": 0, "size": 208},
+                    "resource": {"buffer": self._globals_buffer, "offset": 0, "size": 224},
                 },
                 {
                     "binding": 1,
@@ -1236,7 +1242,7 @@ class RenderPipeline:
                 "resource": {
                     "buffer": self._globals_buffer,
                     "offset": 0,
-                    "size": 208,
+                    "size": 224,
                 },
             },
             {
