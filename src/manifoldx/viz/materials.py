@@ -13,7 +13,7 @@ from manifoldx.viz import colormaps
 # WGSL shader source for ColormapMaterial.
 #
 # Bindings (group 0):
-#   0: Globals uniform   { vp: mat4x4, view: mat4x4, camera_pos: vec3, _pad: f32 }
+#   0: Globals uniform   { vp: mat4x4, view: mat4x4, proj: mat4x4, camera_pos: vec3, _pad: f32 }
 #   1: transforms        storage<read> array<mat4x4<f32>>
 #   2: material uniform  { vmin: f32, vmax: f32, lit_flag: f32, _pad: f32 }
 #   3: scalar_values     storage<read> array<f32>
@@ -27,17 +27,12 @@ from manifoldx.viz import colormaps
 # Vertex outputs / fragment inputs:
 #   @location(0) quad_uv: vec2<f32>    — passes the quad-local xy for normal reconstruction
 #   @location(1) scalar:  f32          — per-instance scalar value passed to fragment
-#
-# Camera-facing billboard trick:
-#   The view_inv = transpose(view) approximation assumes the view matrix is
-#   orthonormal (rigid: rotation + translation only). ManifoldX cameras satisfy
-#   this. If a future camera adds shear/scale, a separate view_inv uniform must
-#   be uploaded by the renderer.
 
 _COLORMAP_SHADER = """
 struct Globals {
     vp: mat4x4<f32>,
     view: mat4x4<f32>,
+    proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
     _pad: f32,
 };
@@ -80,13 +75,10 @@ fn vs_main(in: VSIn, @builtin(instance_index) iidx: u32) -> VSOut {
     // position scaled by radius. This makes the quad always face the camera.
     let view_center = (globals.view * vec4<f32>(world_center, 1.0)).xyz;
     let offset = vec2<f32>(in.position.x, in.position.y) * radius;
-    let view_pos = vec3<f32>(view_center.x + offset.x, view_center.y + offset.y, view_center.z);
+    let view_pos = vec4<f32>(view_center.x + offset.x, view_center.y + offset.y, view_center.z, 1.0);
 
-    // Reconstruct world position via inverse view (transpose approximation for
-    // rigid view matrices), then apply full VP for clip-space.
-    let view_inv = transpose(globals.view);
-    let world_pos = (view_inv * vec4<f32>(view_pos, 1.0)).xyz;
-    let clip = globals.vp * vec4<f32>(world_pos, 1.0);
+    // Project view-space position directly to clip space.
+    let clip = globals.proj * view_pos;
 
     var out: VSOut;
     out.clip_position = clip;

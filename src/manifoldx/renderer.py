@@ -250,9 +250,9 @@ class RenderPipeline:
         self._device = device
 
         # Create globals uniform buffer:
-        #   vp(64) + view(64) + camera_pos(12) + pad(4) = 144 bytes
+        #   vp(64) + view(64) + proj(64) + camera_pos(12) + pad(4) = 208 bytes
         self._globals_buffer = device.create_buffer(
-            size=144,
+            size=208,
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
@@ -571,12 +571,19 @@ class RenderPipeline:
         if hasattr(camera, "position"):
             camera_pos = np.array(camera.position, dtype=np.float32)
 
-        # Upload globals (vp + view + camera_pos + pad) = 144 bytes
-        globals_data = np.zeros(144, dtype=np.uint8)
+        # Upload globals (vp + view + proj + camera_pos + pad) = 208 bytes
+        globals_data = np.zeros(208, dtype=np.uint8)
         globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
         globals_data[64:128] = np.frombuffer(view_mat.tobytes(), dtype=np.uint8)
-        globals_data[128:140] = np.frombuffer(camera_pos.astype(np.float32).tobytes(), dtype=np.uint8)
-        # bytes 140-143 are padding (already zero)
+        # Upload projection matrix (column-major) at offset 128. Use the camera's
+        # own near/far rather than the helper's defaults so the sprite path
+        # matches the depth range the rest of the pipeline uses.
+        proj_mat = camera.get_projection_matrix(
+            aspect, near=camera.near, far=camera.far
+        ).T.astype(np.float32)
+        globals_data[128:192] = np.frombuffer(proj_mat.tobytes(), dtype=np.uint8)
+        globals_data[192:204] = np.frombuffer(camera_pos.astype(np.float32).tobytes(), dtype=np.uint8)
+        # bytes 204-207 are padding (already zero)
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 
         # Upload lights once (shared across all PBR draws)
@@ -686,7 +693,7 @@ class RenderPipeline:
                     "resource": {
                         "buffer": self._globals_buffer,
                         "offset": 0,
-                        "size": 144,
+                        "size": 208,
                     },
                 },
                 {
@@ -868,10 +875,14 @@ class RenderPipeline:
         if cmap_name in self._lut_textures:
             return self._lut_textures[cmap_name]
 
-        lut = material.get_lut()  # (256, 4) uint8
+        lut = material.get_lut()  # (256, 4) uint8 — matplotlib-encoded sRGB
+        # Use rgba8unorm-srgb so the GPU sRGB-decodes on sample. The framebuffer
+        # is also sRGB-encoded on write, so the round trip preserves the
+        # author-intended display colors. Without -srgb the gamma curve gets
+        # applied twice and colors come out brighter than matplotlib's swatch.
         texture = device.create_texture(
             size=(256, 1, 1),
-            format=wgpu.TextureFormat.rgba8unorm,
+            format=wgpu.TextureFormat.rgba8unorm_srgb,
             usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
             dimension=wgpu.TextureDimension.d1,
         )
@@ -913,7 +924,7 @@ class RenderPipeline:
                 "resource": {
                     "buffer": self._globals_buffer,
                     "offset": 0,
-                    "size": 144,
+                    "size": 208,
                 },
             },
             {
