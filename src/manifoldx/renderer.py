@@ -26,6 +26,8 @@ class _BatchBuffers:
         self.scalar_values_capacity = 0
         self.radii_buf = None
         self.radii_capacity = 0
+        self.label_indices_buf = None
+        self.label_indices_capacity = 0
 
     def upload_transforms(self, data: "np.ndarray"):
         n_bytes = data.nbytes
@@ -56,6 +58,16 @@ class _BatchBuffers:
             )
             self.radii_capacity = n_bytes
         self._device.queue.write_buffer(self.radii_buf, 0, data.tobytes())
+
+    def upload_label_indices(self, data: "np.ndarray"):
+        n_bytes = data.nbytes
+        if self.label_indices_buf is None or self.label_indices_capacity < n_bytes:
+            self.label_indices_buf = self._device.create_buffer(
+                size=n_bytes,
+                usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
+            )
+            self.label_indices_capacity = n_bytes
+        self._device.queue.write_buffer(self.label_indices_buf, 0, data.tobytes())
 
 
 # =============================================================================
