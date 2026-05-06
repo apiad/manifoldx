@@ -283,24 +283,142 @@ class RenderPipeline:
         self._initialized = True
 
     def _get_or_create_pipeline(
-        self, device, texture_format, geometry_id, material, registry, sprite=False
+        self, device, texture_format, geometry_id, material, registry,
+        sprite=False, label=False,
     ):
         """Get or create a material-type specific pipeline.
 
         Pipeline cache key:
-            mesh:  (geometry_id, material_type)
+            mesh:   (geometry_id, material_type)
             sprite: (geometry_id, material_type, material_subtype, sprite)
+            label:  (geometry_id, material_type, material_subtype, "label")
         """
         material_type = type(material).__name__
         material_subtype = getattr(material, "pipeline_subtype", None)
 
-        if sprite:
+        if label:
+            key = (geometry_id, material_type, material_subtype, "label")
+        elif sprite:
             key = (geometry_id, material_type, material_subtype, True)
         else:
             key = (geometry_id, material_type)
 
         if key in self._pipelines:
             return self._pipelines[key], self._bind_group_layouts.get(key)
+
+        if label:
+            # 6 bindings: globals, transforms, material uniform, label_indices,
+            # atlas texture array, atlas sampler.
+            bind_group_entries = [
+                {
+                    "binding": 0,
+                    "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                },
+                {
+                    "binding": 1,
+                    "visibility": wgpu.ShaderStage.VERTEX,
+                    "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+                },
+                {
+                    "binding": 2,
+                    "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                },
+                {
+                    "binding": 3,
+                    "visibility": wgpu.ShaderStage.VERTEX,
+                    "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+                },
+                {
+                    "binding": 4,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "texture": {
+                        "sample_type": wgpu.TextureSampleType.float,
+                        "view_dimension": wgpu.TextureViewDimension.d2_array,
+                    },
+                },
+                {
+                    "binding": 5,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "sampler": {"type": wgpu.SamplerBindingType.filtering},
+                },
+            ]
+
+            bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
+            self._bind_group_layouts[key] = bind_group_layout
+
+            pipeline_layout = device.create_pipeline_layout(bind_group_layouts=[bind_group_layout])
+            self._pipeline_layouts[key] = pipeline_layout
+
+            shader_module = device.create_shader_module(code=material._compile())
+
+            pipeline = device.create_render_pipeline(
+                layout=pipeline_layout,
+                vertex={
+                    "module": shader_module,
+                    "entry_point": "vs_main",
+                    "buffers": [
+                        {
+                            "array_stride": 3 * 4,  # SPRITE_QUAD: position only
+                            "step_mode": wgpu.VertexStepMode.vertex,
+                            "attributes": [
+                                {
+                                    "format": wgpu.VertexFormat.float32x3,
+                                    "offset": 0,
+                                    "shader_location": 0,
+                                },
+                            ],
+                        }
+                    ],
+                },
+                primitive={
+                    "topology": wgpu.PrimitiveTopology.triangle_list,
+                    "front_face": wgpu.FrontFace.ccw,
+                    # Camera-facing billboard always points at the camera
+                    # by construction; back-face culling would just be a
+                    # hidden footgun.
+                    "cull_mode": wgpu.CullMode.none,
+                },
+                # Depth-test on (labels behind opaque geometry are occluded)
+                # but depth-write off (overlapping labels alpha-blend cleanly).
+                depth_stencil={
+                    "format": wgpu.TextureFormat.depth24plus,
+                    "depth_write_enabled": False,
+                    "depth_compare": wgpu.CompareFunction.less_equal,
+                },
+                fragment={
+                    "module": shader_module,
+                    "entry_point": "fs_main",
+                    "targets": [
+                        {
+                            "format": texture_format,
+                            "blend": {
+                                "color": {
+                                    "src_factor": wgpu.BlendFactor.src_alpha,
+                                    "dst_factor": wgpu.BlendFactor.one_minus_src_alpha,
+                                    "operation": wgpu.BlendOperation.add,
+                                },
+                                "alpha": {
+                                    "src_factor": wgpu.BlendFactor.one,
+                                    "dst_factor": wgpu.BlendFactor.one_minus_src_alpha,
+                                    "operation": wgpu.BlendOperation.add,
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+
+            self._pipelines[key] = pipeline
+
+            material_buffer = device.create_buffer(
+                size=16,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+            self._material_buffers[key] = material_buffer
+
+            return pipeline, bind_group_layout
 
         shader_source = material._compile()
         shader_module = device.create_shader_module(code=shader_source)

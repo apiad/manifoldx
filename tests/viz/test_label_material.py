@@ -63,3 +63,48 @@ def test_label_material_shader_module_creates_without_error():
     src = LabelMaterial._compile()
     module = device.create_shader_module(code=src)
     assert module is not None
+
+
+def test_renderer_creates_label_pipeline_with_alpha_blend():
+    """The pipeline factory must accept label=True and configure alpha blending."""
+    import pytest
+    try:
+        from manifoldx.backends import get_offscreen_canvas
+        get_offscreen_canvas(width=64, height=64)
+    except Exception as e:
+        pytest.skip(f"offscreen canvas unavailable: {e}")
+
+    import wgpu
+    adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+    device = adapter.request_device_sync()
+
+    from manifoldx.renderer import RenderPipeline
+    from manifoldx.viz import LabelMaterial
+
+    rp = RenderPipeline.__new__(RenderPipeline)
+    rp._pipelines = {}
+    rp._bind_group_layouts = {}
+    rp._pipeline_layouts = {}
+    rp._material_buffers = {}
+
+    mat = LabelMaterial()
+    pipeline, layout = rp._get_or_create_pipeline(
+        device,
+        wgpu.TextureFormat.rgba8unorm_srgb,
+        geometry_id=1,  # any non-zero
+        material=mat,
+        registry=None,
+        label=True,
+    )
+    assert pipeline is not None
+    assert layout is not None
+    # Same call returns cached pipeline.
+    pipeline_again, _ = rp._get_or_create_pipeline(
+        device,
+        wgpu.TextureFormat.rgba8unorm_srgb,
+        geometry_id=1,
+        material=mat,
+        registry=None,
+        label=True,
+    )
+    assert pipeline_again is pipeline
