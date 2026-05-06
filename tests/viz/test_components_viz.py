@@ -46,3 +46,18 @@ def test_radius_array_input():
     r = viz_components.Radius(radius=radii)
     data = r.get_data(n=3)
     np.testing.assert_array_equal(data[:, 0], radii)
+
+
+def test_point_cloud_marker_no_data():
+    """PointCloud is a marker — get_data returns an empty (n, 0) array."""
+    pc = viz_components.PointCloud()
+    data = pc.get_data(n=42)
+    assert data.shape == (42, 0)
+    assert data.dtype == np.float32
+
+
+def test_point_cloud_importable_from_viz():
+    from manifoldx.viz import PointCloud, ScalarValue, Radius
+    assert PointCloud is viz_components.PointCloud
+    assert ScalarValue is viz_components.ScalarValue
+    assert Radius is viz_components.Radius

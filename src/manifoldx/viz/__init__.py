@@ -7,3 +7,6 @@ Future plans add:
     TextLabel, AxisFrame, ScaleBar, LabelMaterial, AxisMaterial,
     point_cloud(), axes(), scale_bar(), colormap_legend()
 """
+from manifoldx.viz.components import PointCloud, Radius, ScalarValue
+
+__all__ = ["PointCloud", "ScalarValue", "Radius"]

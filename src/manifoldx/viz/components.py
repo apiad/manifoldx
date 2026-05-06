@@ -61,3 +61,17 @@ class Radius:
                 f"Radius: radius shape {v.shape} incompatible with n={n}"
             )
         return data
+
+
+class PointCloud:
+    """Marker component — tags entities for the sprite render path.
+
+    Carries no per-entity data. The renderer detects this component
+    and substitutes the SPRITE_QUAD geometry, ignoring any Mesh component.
+    """
+
+    def __init__(self):
+        pass
+
+    def get_data(self, n: int, registry=None) -> np.ndarray:
+        return np.zeros((n, 0), dtype=np.float32)
