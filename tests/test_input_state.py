@@ -44,3 +44,66 @@ def test_resize_event_fields():
     assert ev.pixel_ratio == 2.0
     with pytest.raises(FrozenInstanceError):
         ev.width = 0
+
+
+from manifoldx.input import InputState
+
+
+def test_is_pressed_reflects_live_state_without_frame_swap():
+    state = InputState()
+    assert not state.is_pressed("w")
+    state._record_key_down("w", modifiers=())
+    # Live: no _begin_frame call yet, but is_pressed still answers True.
+    assert state.is_pressed("w")
+    state._record_key_up("w", modifiers=())
+    assert not state.is_pressed("w")
+
+
+def test_just_pressed_visible_only_after_frame_swap():
+    state = InputState()
+    state._record_key_down("w", modifiers=())
+    # Before the swap, just_pressed is empty.
+    assert not state.just_pressed("w")
+    state._begin_frame()
+    assert state.just_pressed("w")
+    assert state.is_pressed("w")
+
+
+def test_just_pressed_clears_on_subsequent_frame():
+    state = InputState()
+    state._record_key_down("w", modifiers=())
+    state._begin_frame()
+    assert state.just_pressed("w")
+    state._begin_frame()
+    assert not state.just_pressed("w")
+    assert state.is_pressed("w")  # still held
+
+
+def test_just_released_visible_only_after_frame_swap():
+    state = InputState()
+    state._record_key_down("w", modifiers=())
+    state._begin_frame()
+    state._record_key_up("w", modifiers=())
+    assert not state.just_released("w")
+    state._begin_frame()
+    assert state.just_released("w")
+    assert not state.is_pressed("w")
+    state._begin_frame()
+    assert not state.just_released("w")
+
+
+def test_pressed_keys_returns_immutable_frozenset():
+    state = InputState()
+    state._record_key_down("a", modifiers=())
+    state._record_key_down("b", modifiers=())
+    keys = state.pressed_keys
+    assert isinstance(keys, frozenset)
+    assert keys == frozenset({"a", "b"})
+
+
+def test_modifiers_property_reflects_latest_event():
+    state = InputState()
+    state._record_key_down("a", modifiers=("Shift",))
+    assert state.modifiers == ("Shift",)
+    state._record_key_up("a", modifiers=())
+    assert state.modifiers == ()
