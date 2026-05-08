@@ -75,3 +75,33 @@ def test_unknown_handle_raises():
     reg = VolumeRegistry(device=None)
     with pytest.raises(KeyError, match="999"):
         reg.get(999)
+
+
+def test_engine_register_volume_returns_handle():
+    """engine.register_volume forwards to the registry."""
+    import manifoldx as mx
+    engine = mx.Engine("vol-test", width=64, height=64)
+    arr = _gaussian_blob(8)
+    handle = engine.register_volume(arr, name="blob")
+    assert handle == 1
+    assert engine._volume_registry.get(handle).data is arr
+
+
+def test_engine_update_volume_round_trip():
+    import manifoldx as mx
+    engine = mx.Engine("vol-test", width=64, height=64)
+    handle = engine.register_volume(_gaussian_blob(8))
+    engine._volume_registry.get(handle).dirty = False
+    new = _gaussian_blob(8)
+    engine.update_volume(handle, new)
+    assert engine._volume_registry.get(handle).data is new
+    assert engine._volume_registry.get(handle).dirty is True
+
+
+def test_engine_bind_compute_volume_is_v2_stub():
+    """bind_compute_volume exists in v1 but raises NotImplementedError."""
+    import manifoldx as mx
+    engine = mx.Engine("vol-test", width=64, height=64)
+    handle = engine.register_volume(_gaussian_blob(8))
+    with pytest.raises(NotImplementedError, match="v2"):
+        engine.bind_compute_volume(handle, "density")

@@ -11,7 +11,7 @@ import manifoldx.ecs as ecs
 from manifoldx.ecs import EntityStore
 from manifoldx.commands import CommandBuffer, Command, CommandType
 from manifoldx.systems import SystemRegistry
-from manifoldx.resources import GeometryRegistry, MaterialRegistry
+from manifoldx.resources import GeometryRegistry, MaterialRegistry, VolumeRegistry
 from manifoldx.renderer import RenderPipeline
 from manifoldx.components import Component, Transform, Mesh, Material
 from manifoldx.camera import Camera
@@ -56,6 +56,7 @@ class Engine:
         # Resource registries
         self._geometry_registry = GeometryRegistry(self._device)
         self._material_registry = MaterialRegistry(self._device)
+        self._volume_registry = VolumeRegistry(self._device)
 
         # Render pipeline
         self._render_pipeline = RenderPipeline(self.store, self._device)
@@ -142,6 +143,42 @@ class Engine:
         from manifoldx.ecs import _make_component_class
 
         return _make_component_class(cls, self)
+
+    def register_volume(
+        self,
+        data: "np.ndarray",
+        *,
+        name: str | None = None,
+    ) -> int:
+        """Register a 3D scalar field for volume rendering.
+
+        Args:
+            data: numpy array of shape (Nz, Ny, Nx), dtype=float32,
+                  C-contiguous. data[k, j, i] is the voxel at integer
+                  coordinates (i, j, k) along local-space (x, y, z).
+            name: optional diagnostic label.
+
+        Returns:
+            Integer handle to pass into `Volume(volume_id=handle)`.
+        """
+        return self._volume_registry.register(data, name=name)
+
+    def update_volume(self, handle: int, data: "np.ndarray") -> None:
+        """Replace voxel data for a registered volume. Same shape required.
+
+        Bumps the dirty bit; the renderer re-uploads on the next frame.
+        """
+        self._volume_registry.update(handle, data)
+
+    def bind_compute_volume(self, handle: int, kernel_field: str) -> None:
+        """v2: bind a Phase-2 compute kernel's `Writes[Volume3D]` field
+        to this volume's storage texture. v1 raises NotImplementedError —
+        the API is reserved here so v2 can land without a breaking change.
+        """
+        raise NotImplementedError(
+            "bind_compute_volume is reserved for v2; v1 supports only "
+            "CPU-uploaded volumes via register_volume()/update_volume()."
+        )
 
     def compute(self, cls):
         """Register a Compute subclass to run as part of the per-frame loop.
