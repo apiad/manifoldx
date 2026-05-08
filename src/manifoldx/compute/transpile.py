@@ -219,6 +219,114 @@ class TypeEnv:
         return self._bindings[name]
 
 
+# Builtin signature table. Each entry: name -> (arg_count or None, return_type).
+# return_type may be a string (concrete WGSL type) or a callable
+# `arg_types -> wgsl_type` for polymorphic builtins.
+_BUILTIN_RETURNS = {
+    "vec3":      (3, "vec3<f32>"),
+    "vec4":      (4, "vec4<f32>"),
+    "length":    (1, "f32"),
+    "dot":       (2, "f32"),
+    "cross":     (2, "vec3<f32>"),
+    "normalize": (1, lambda ts: ts[0]),
+    "sqrt":      (1, "f32"),
+    "pow":       (2, "f32"),
+    "floor":     (1, lambda ts: ts[0]),
+    "ceil":      (1, lambda ts: ts[0]),
+    "abs":       (1, lambda ts: ts[0]),
+    "min":       (2, lambda ts: ts[0]),
+    "max":       (2, lambda ts: ts[0]),
+    "clamp":     (3, lambda ts: ts[0]),
+}
+
+_CASTS = {"f32", "i32", "u32", "bool"}
+
+
+def _emit_expr(node, env: TypeEnv, src: str) -> tuple[str, str]:
+    """Emit (wgsl_text, wgsl_type) for an expression AST node."""
+    if isinstance(node, ast.Constant):
+        v = node.value
+        if isinstance(v, bool):
+            return ("true" if v else "false"), "bool"
+        if isinstance(v, int):
+            return str(v), "i32"
+        if isinstance(v, float):
+            return repr(v), "f32"
+        raise ComputeShaderCompileError(
+            category="unsupported-construct",
+            message=f"unsupported literal {v!r}",
+            filename="<expr>", line=node.lineno, col=node.col_offset,
+            source_line=None,
+        )
+
+    if isinstance(node, ast.Name):
+        return node.id, env.lookup(node.id)
+
+    if isinstance(node, ast.Attribute):
+        # self.<uniform> only — self.<binding>[i].<field> is handled by
+        # the Subscript case (added in Task 7).
+        if isinstance(node.value, ast.Name) and node.value.id == "self":
+            return f"uniforms.{node.attr}", env.lookup_uniform(node.attr)
+        raise ComputeShaderCompileError(
+            category="unsupported-construct",
+            message=f"unsupported attribute access: {ast.unparse(node)!r}",
+            filename="<expr>", line=node.lineno, col=node.col_offset,
+            source_line=None,
+        )
+
+    if isinstance(node, ast.Call):
+        # Pure-name calls only; method calls (self.helper()) come in Task 9.
+        if isinstance(node.func, ast.Name):
+            fname = node.func.id
+            arg_emits = [_emit_expr(a, env, src) for a in node.args]
+            arg_texts = [t for t, _ in arg_emits]
+            arg_types = [ty for _, ty in arg_emits]
+
+            if fname in _CASTS:
+                if len(node.args) != 1:
+                    raise ComputeShaderCompileError(
+                        category="unsupported-construct",
+                        message=f"{fname}() cast takes exactly one argument",
+                        filename="<expr>", line=node.lineno, col=node.col_offset,
+                        source_line=None,
+                    )
+                return f"{fname}({arg_texts[0]})", fname
+
+            if fname in _BUILTIN_RETURNS:
+                expected_arity, ret = _BUILTIN_RETURNS[fname]
+                if expected_arity is not None and len(node.args) != expected_arity:
+                    raise ComputeShaderCompileError(
+                        category="unsupported-construct",
+                        message=f"{fname} expects {expected_arity} args, got {len(node.args)}",
+                        filename="<expr>", line=node.lineno, col=node.col_offset,
+                        source_line=None,
+                    )
+                ret_type = ret(arg_types) if callable(ret) else ret
+                emit_name = ret_type if fname in {"vec3", "vec4"} else fname
+                return f"{emit_name}({', '.join(arg_texts)})", ret_type
+
+            raise ComputeShaderCompileError(
+                category="unknown-name",
+                message=f"unknown function {fname!r}; not a recognized builtin or cast",
+                filename="<expr>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+
+        raise ComputeShaderCompileError(
+            category="unsupported-construct",
+            message=f"unsupported call form: {ast.unparse(node)!r}",
+            filename="<expr>", line=node.lineno, col=node.col_offset,
+            source_line=None,
+        )
+
+    raise ComputeShaderCompileError(
+        category="unsupported-construct",
+        message=f"unsupported expression: {ast.unparse(node)!r}",
+        filename="<expr>", line=node.lineno, col=node.col_offset,
+        source_line=None,
+    )
+
+
 def transpile_compute(cls: type) -> str:
     """Walk the class's methods and emit a complete WGSL shader source.
 

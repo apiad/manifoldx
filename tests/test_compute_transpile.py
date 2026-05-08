@@ -237,3 +237,78 @@ def test_type_env_unknown_name_raises():
     env = TypeEnv()
     with pytest.raises(ComputeShaderCompileError, match="unknown-name"):
         env.lookup("ghost")
+
+
+def _parse_expr(src: str):
+    """Helper — parse a Python expression and return its AST node."""
+    import ast
+    return ast.parse(src, mode="eval").body
+
+
+def test_emit_expr_constants():
+    """Constant int/float/bool emit as their typed WGSL literals."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    assert _emit_expr(_parse_expr("0"), env, "0") == ("0", "i32")
+    assert _emit_expr(_parse_expr("42"), env, "42") == ("42", "i32")
+    assert _emit_expr(_parse_expr("0.0"), env, "0.0") == ("0.0", "f32")
+    assert _emit_expr(_parse_expr("3.14"), env, "3.14") == ("3.14", "f32")
+    assert _emit_expr(_parse_expr("True"), env, "True") == ("true", "bool")
+    assert _emit_expr(_parse_expr("False"), env, "False") == ("false", "bool")
+
+
+def test_emit_expr_name_lookup():
+    """Bare names look up in the TypeEnv."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_local("accel", "vec3<f32>")
+    env.set_param("i", "u32")
+    assert _emit_expr(_parse_expr("accel"), env, "accel") == ("accel", "vec3<f32>")
+    assert _emit_expr(_parse_expr("i"), env, "i") == ("i", "u32")
+
+
+def test_emit_expr_self_uniform():
+    """self.G → uniforms.G with the declared type."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_uniform("G", "f32")
+    assert _emit_expr(_parse_expr("self.G"), env, "self.G") == ("uniforms.G", "f32")
+
+
+def test_emit_expr_casts():
+    """f32(x) / i32(x) / u32(x) / bool(x) emit as WGSL casts."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_uniform("n", "f32")
+    text, typ = _emit_expr(_parse_expr("u32(self.n)"), env, "u32(self.n)")
+    assert text == "u32(uniforms.n)"
+    assert typ == "u32"
+
+    env.set_local("a", "i32")
+    text, typ = _emit_expr(_parse_expr("f32(a)"), env, "f32(a)")
+    assert text == "f32(a)" and typ == "f32"
+
+
+def test_emit_expr_builtin_calls():
+    """vec3, dot, length, sqrt, etc. emit as WGSL built-in calls with the right return type."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_local("d", "vec3<f32>")
+    env.set_local("r2", "f32")
+
+    text, typ = _emit_expr(_parse_expr("vec3(0.0, 0.0, 0.0)"), env, "vec3(0.0, 0.0, 0.0)")
+    assert text == "vec3<f32>(0.0, 0.0, 0.0)"
+    assert typ == "vec3<f32>"
+
+    text, typ = _emit_expr(_parse_expr("dot(d, d)"), env, "dot(d, d)")
+    assert text == "dot(d, d)"
+    assert typ == "f32"
+
+    text, typ = _emit_expr(_parse_expr("sqrt(r2)"), env, "sqrt(r2)")
+    assert text == "sqrt(r2)"
+    assert typ == "f32"
