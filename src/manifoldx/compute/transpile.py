@@ -176,6 +176,8 @@ class TypeEnv:
         self._locals: Dict[str, str] = {}
         self._uniforms: Dict[str, str] = {}
         self._bindings: Dict[str, str] = {}  # binding name → Component class name
+        self._method_sigs: Dict[str, Dict[str, str]] = {}
+        self._class_name: str = ""
 
     def set_param(self, name: str, wgsl: str) -> None:
         self._params[name] = wgsl
@@ -217,6 +219,92 @@ class TypeEnv:
                 filename="<expr>", line=0, col=0, source_line=None,
             )
         return self._bindings[name]
+
+    def set_method_sigs(self, sigs: Dict[str, Dict[str, str]], *, class_name: str) -> None:
+        self._method_sigs = sigs
+        self._class_name = class_name
+
+    def lookup_method(self, name: str) -> Dict[str, str]:
+        if name not in self._method_sigs:
+            raise ComputeShaderCompileError(
+                category="unknown-name",
+                message=f"method {name!r} not declared on Compute class {self._class_name!r}",
+                filename="<expr>", line=0, col=0, source_line=None,
+            )
+        return self._method_sigs[name]
+
+    @property
+    def class_name(self) -> str:
+        return self._class_name
+
+
+def _resolve_annotation(node, cls: type):
+    """Look up a Name/Attribute annotation in the class's defining module.
+
+    Fallback path used when only the AST is available; prefer reading the
+    live `func.__annotations__` dict instead, since Python has already
+    resolved names against the right namespace at function-def time.
+    """
+    import sys
+    mod = sys.modules.get(cls.__module__)
+    src = ast.unparse(node)
+    builtins = {"int": int, "float": float, "bool": bool}
+    if src in builtins:
+        return builtins[src]
+    if mod is not None and hasattr(mod, src):
+        return getattr(mod, src)
+    raise ComputeShaderCompileError(
+        category="unknown-name",
+        message=f"could not resolve annotation {src!r}; not a builtin or module-level name",
+        filename="<class>", line=getattr(node, "lineno", 0),
+        col=getattr(node, "col_offset", 0), source_line=None,
+    )
+
+
+def _build_method_signatures(cls: type) -> Dict[str, Dict[str, str]]:
+    """For each method on `cls`, derive {param_name → wgsl_type} + 'return'.
+
+    Reads the live `func.__annotations__` dict so closure-defined classes
+    work without a module-globals lookup.
+    """
+    methods = _collect_method_asts(cls)
+    sigs: Dict[str, Dict[str, str]] = {}
+    for name, fn in methods.items():
+        member = cls.__dict__[name]
+        live_annotations = getattr(member, "__annotations__", {})
+        sig: Dict[str, str] = {}
+        for arg in fn.args.args:
+            if arg.arg == "self":
+                continue
+            if arg.arg not in live_annotations and arg.annotation is None:
+                raise ComputeShaderCompileError(
+                    category="missing-annotation",
+                    message=f"parameter {arg.arg!r} of method {name!r} requires a type annotation",
+                    filename="<class>", line=arg.lineno, col=arg.col_offset,
+                    source_line=None,
+                )
+            tp = (
+                live_annotations[arg.arg]
+                if arg.arg in live_annotations
+                else _resolve_annotation(arg.annotation, cls)
+            )
+            sig[arg.arg] = _python_type_to_wgsl(tp)
+        if name != "main":
+            if "return" not in live_annotations and fn.returns is None:
+                raise ComputeShaderCompileError(
+                    category="missing-annotation",
+                    message=f"method {name!r} requires a return-type annotation",
+                    filename="<class>", line=fn.lineno, col=fn.col_offset,
+                    source_line=None,
+                )
+            ret_tp = (
+                live_annotations["return"]
+                if "return" in live_annotations
+                else _resolve_annotation(fn.returns, cls)
+            )
+            sig["return"] = _python_type_to_wgsl(ret_tp)
+        sigs[name] = sig
+    return sigs
 
 
 # Builtin signature table. Each entry: name -> (arg_count or None, return_type).
@@ -322,7 +410,18 @@ def _emit_expr(node, env: TypeEnv, src: str) -> tuple[str, str]:
         )
 
     if isinstance(node, ast.Call):
-        # Pure-name calls only; method calls (self.helper()) come in Task 9.
+        # self.<method>(args) → free WGSL function `_<ClassName>_<method>`.
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "self"
+        ):
+            method = node.func.attr
+            sig = env.lookup_method(method)
+            arg_emits = [_emit_expr(a, env, src) for a in node.args]
+            arg_texts = [t for t, _ in arg_emits]
+            return f"_{env.class_name}_{method}({', '.join(arg_texts)})", sig["return"]
+
         if isinstance(node.func, ast.Name):
             fname = node.func.id
             arg_emits = [_emit_expr(a, env, src) for a in node.args]

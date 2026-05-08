@@ -414,3 +414,53 @@ def test_emit_expr_pow_lowers_to_pow_call():
     env.set_local("y", "f32")
     text, typ = _emit_expr(_parse_expr("x ** y"), env, "x ** y")
     assert text == "pow(x, y)" and typ == "f32"
+
+
+def test_emit_expr_self_method_call():
+    """self.helper(x) → _<ClassName>_helper(x), return type from helper's annotation."""
+    from manifoldx.compute import Compute, ReadsWrites
+    from manifoldx.compute.transpile import TypeEnv, _build_method_signatures, _emit_expr
+    from manifoldx.compute.shader import vec3
+    from manifoldx.components import Transform
+
+    class K(Compute):
+        transforms: ReadsWrites[Transform]
+        workgroup_size = 64
+        dispatch = "entity_count"
+        def helper(self, x: vec3, k: float) -> vec3:
+            return x
+        def main(self, i: int):
+            return
+
+    sigs = _build_method_signatures(K)
+    env = TypeEnv()
+    env.set_local("x", "vec3<f32>")
+    env.set_local("k", "f32")
+    env.set_method_sigs(sigs, class_name="K")
+
+    text, typ = _emit_expr(_parse_expr("self.helper(x, k)"), env, "self.helper(x, k)")
+    assert text == "_K_helper(x, k)"
+    assert typ == "vec3<f32>"
+
+
+def test_emit_expr_self_method_unknown_raises():
+    """self.bogus(...) when bogus isn't a method raises unknown-name."""
+    from manifoldx.compute import Compute, ReadsWrites
+    from manifoldx.compute.transpile import (
+        ComputeShaderCompileError, TypeEnv,
+        _build_method_signatures, _emit_expr,
+    )
+    from manifoldx.components import Transform
+
+    class K(Compute):
+        transforms: ReadsWrites[Transform]
+        workgroup_size = 64
+        dispatch = "entity_count"
+        def main(self, i: int):
+            return
+
+    sigs = _build_method_signatures(K)
+    env = TypeEnv()
+    env.set_method_sigs(sigs, class_name="K")
+    with pytest.raises(ComputeShaderCompileError, match="unknown-name"):
+        _emit_expr(_parse_expr("self.bogus()"), env, "self.bogus()")
