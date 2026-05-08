@@ -1,5 +1,7 @@
 """Type definitions for ManifoldX ECS engine."""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 
@@ -54,16 +56,23 @@ class Vector4(np.ndarray):
 # =============================================================================
 
 
-class Float(float):
-    """Scalar float type marker for component annotations.
+if TYPE_CHECKING:
+    # Static-checker view: Float is a transparent alias for float so
+    # `value: Float = 0.0` type-checks (no float-into-Float covariance
+    # rejection). Runtime keeps the Float subclass for any code that
+    # uses it as a marker via isinstance / identity checks.
+    type Float = float
+else:
+    class Float(float):
+        """Scalar float type marker for component annotations.
 
-    Usage:
-        @component
-        class Custom:
-            value: Float  # Scalar value
-    """
+        Usage:
+            @component
+            class Custom:
+                value: Float  # Scalar value
+        """
 
-    pass
+        pass
 
 
 # =============================================================================

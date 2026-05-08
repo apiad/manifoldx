@@ -24,7 +24,6 @@ from manifoldx.components import Component, Material, Mesh, Transform
 from manifoldx.compute import Compute, ReadsWrites, Uniform, Writes
 from manifoldx.compute.shader import dot, sqrt, u32, vec3
 from manifoldx.resources import PointLight, StandardMaterial, sphere
-from manifoldx.types import Vector3
 from manifoldx.viz import (
     ColormapMaterial,
     PointCloud,
@@ -39,7 +38,7 @@ from manifoldx.viz import (
 # storage buffer.
 class Velocity(Component):
     """Per-entity velocity vector (3 floats)."""
-    vector: Vector3
+    vector: vec3
 
 
 # ── Simulation parameters ────────────────────────────────────────────────────
@@ -69,13 +68,13 @@ class OrbitKernel(Compute):
 
     GM:        Uniform[float] = GM
     softening: Uniform[float] = SOFTENING
-    dt:        Uniform[float] = "frame_dt"
-    n:         Uniform[float] = "entity_count"
+    dt:        Uniform[float] = "frame_dt"      # type: ignore[assignment]  # auto-bound
+    n:         Uniform[float] = "entity_count"  # type: ignore[assignment]  # auto-bound
 
     workgroup_size = 64
     dispatch = "entity_count"
 
-    def main(self, i: int):
+    def main(self, i: int) -> None:
         if i >= u32(self.n):
             return
         pos: vec3 = self.transforms[i].pos

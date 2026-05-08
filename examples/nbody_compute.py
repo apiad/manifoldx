@@ -19,18 +19,17 @@ from manifoldx.components import Component, Material, Mesh, Transform
 from manifoldx.compute import Compute, Reads, ReadsWrites, Uniform
 from manifoldx.compute.shader import dot, sqrt, u32, vec3
 from manifoldx.resources import PhongMaterial, sphere
-from manifoldx.types import Float, Vector3
 
 
 # ── Custom components ────────────────────────────────────────────────────────
 class Velocity(Component):
     """Per-entity velocity vector (3 floats)."""
-    vector: Vector3
+    vector: vec3
 
 
 class Mass(Component):
     """Per-entity gravitational mass (1 float)."""
-    value: Float = 1.0
+    value: float = 1.0
 
 
 # ── Simulation parameters ────────────────────────────────────────────────────
@@ -57,8 +56,8 @@ class GravityKernel(Compute):
 
     G:         Uniform[float] = G
     softening: Uniform[float] = SOFTENING
-    dt:        Uniform[float] = "frame_dt"      # auto-bound, re-uploaded each frame
-    n:         Uniform[float] = "entity_count"  # auto-bound, re-uploaded each frame
+    dt:        Uniform[float] = "frame_dt"      # type: ignore[assignment]  # auto-bound
+    n:         Uniform[float] = "entity_count"  # type: ignore[assignment]  # auto-bound
 
     workgroup_size = 64
     dispatch = "entity_count"
@@ -69,7 +68,7 @@ class GravityKernel(Compute):
         inv_r3: float = 1.0 / (r2 * sqrt(r2))
         return self.G * m_j * diff * inv_r3
 
-    def main(self, i: int):
+    def main(self, i: int) -> None:
         if i >= u32(self.n):
             return
         pos_i: vec3 = self.transforms[i].pos

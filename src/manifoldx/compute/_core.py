@@ -16,7 +16,7 @@ Spec: `.knowledge/analysis/2026-05-06-compute-systems-design.md`.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, Optional, TypeVar
 
 import numpy as np
 
@@ -30,16 +30,12 @@ import numpy as np
 # parameter; Compute.__init_subclass__ walks the annotations and records the
 # binding direction. The engine never instantiates these — they are pure
 # class-level metadata.
-
-
-class _MarkerMeta(type):
-    """Metaclass so subclasses get a working __class_getitem__."""
-
-    def __getitem__(cls, parameter):
-        # Return a parameterized marker. The class identity is what matters
-        # for direction (Reads / Writes / ReadsWrites / Uniform); the
-        # parameter is preserved so a future code-generator can read it.
-        return _ParameterizedMarker(cls, parameter)
+#
+# At runtime (the `else` branch below), they are simple non-generic classes
+# whose metaclass returns a `_ParameterizedMarker` on subscription. For
+# static type checkers, we expose them as Generic[T] storage-binding proxies
+# so kernel code like `self.transforms[i].pos` resolves properly, and
+# `Uniform[T]` resolves to `T` so `G: Uniform[float] = 1.0` type-checks.
 
 
 class _ParameterizedMarker:
@@ -53,32 +49,67 @@ class _ParameterizedMarker:
         return f"{self.base.__name__}[{self.parameter!r}]"
 
 
-class Reads(metaclass=_MarkerMeta):
-    """Marker for read-only component bindings (`storage<read>`)."""
+T = TypeVar("T")
 
 
-class Writes(metaclass=_MarkerMeta):
-    """Marker for write-only component bindings (`storage<read_write>`).
+if TYPE_CHECKING:
+    # Static-checker view: storage bindings are indexable proxies whose
+    # `[i]` returns a Component instance, and Uniform[T] is a transparent
+    # alias for T so class-level uniform defaults type-check.
+    class Reads(Generic[T]):
+        """Read-only storage binding. `self.binding[i] -> T`."""
 
-    The shader is expected to write each entity's slot. Since wgpu doesn't
-    distinguish read-only-write from read-write at the binding level,
-    `Writes` and `ReadsWrites` map to the same WGSL access mode; the
-    distinction is documentation for readers.
-    """
+        def __getitem__(self, idx: int) -> T: ...
 
+    class Writes(Generic[T]):
+        """Write-only storage binding. `self.binding[i] -> T`."""
 
-class ReadsWrites(metaclass=_MarkerMeta):
-    """Marker for read-write component bindings (`storage<read_write>`)."""
+        def __getitem__(self, idx: int) -> T: ...
 
+    class ReadsWrites(Generic[T]):
+        """Read-write storage binding. `self.binding[i] -> T`."""
 
-class Uniform(metaclass=_MarkerMeta):
-    """Marker for scalar uniform parameters (packed into a single uniform buffer).
+        def __getitem__(self, idx: int) -> T: ...
 
-    Defaults can be:
-    - A literal value (constant for the pipeline's lifetime).
-    - A sentinel string (`"frame_dt"`, `"entity_count"`, etc.) — re-uploaded
-      each frame, looked up in `_AUTO_BOUND_UNIFORMS`.
-    """
+    # PEP 695 type alias: Uniform[T] === T for type-checking purposes.
+    # Inside kernel bodies, `self.<uniform>` resolves to T so arithmetic
+    # on uniforms type-checks. The trade-off is that auto-bound
+    # sentinel-string defaults (e.g. `dt: Uniform[float] = "frame_dt"`)
+    # need a `# type: ignore[assignment]` at the class body — narrow T
+    # is preferred over `T | str` because arithmetic inside the kernel
+    # is the hot path and arises every line; the sentinel default lines
+    # arise once per uniform.
+    type Uniform[U] = U
+else:
+    class _MarkerMeta(type):
+        """Metaclass so subclasses get a working __class_getitem__."""
+
+        def __getitem__(cls, parameter):
+            return _ParameterizedMarker(cls, parameter)
+
+    class Reads(metaclass=_MarkerMeta):
+        """Marker for read-only component bindings (`storage<read>`)."""
+
+    class Writes(metaclass=_MarkerMeta):
+        """Marker for write-only component bindings (`storage<read_write>`).
+
+        The shader is expected to write each entity's slot. Since wgpu doesn't
+        distinguish read-only-write from read-write at the binding level,
+        `Writes` and `ReadsWrites` map to the same WGSL access mode; the
+        distinction is documentation for readers.
+        """
+
+    class ReadsWrites(metaclass=_MarkerMeta):
+        """Marker for read-write component bindings (`storage<read_write>`)."""
+
+    class Uniform(metaclass=_MarkerMeta):
+        """Marker for scalar uniform parameters (packed into a single uniform buffer).
+
+        Defaults can be:
+        - A literal value (constant for the pipeline's lifetime).
+        - A sentinel string (`"frame_dt"`, `"entity_count"`, etc.) — re-uploaded
+          each frame, looked up in `_AUTO_BOUND_UNIFORMS`.
+        """
 
 
 # =============================================================================

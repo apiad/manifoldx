@@ -1,6 +1,11 @@
 """Built-in components: Component (base), Transform, Mesh, Material."""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
+
+if TYPE_CHECKING:
+    from manifoldx.compute.shader import vec3, vec4
 
 
 # =============================================================================
@@ -14,18 +19,28 @@ _COMPONENT_CLASSES: dict = {}
 
 
 def _shape_from_annotation(tp) -> tuple:
-    """Map a type-marker annotation to a per-entity numpy shape."""
+    """Map a type-marker annotation to a per-entity numpy shape.
+
+    Accepts both the runtime numpy types (`Float`, `Vector3`, `Vector4`
+    from `manifoldx.types`) and the Phase-2 DSL types (`vec3`, `vec4`
+    from `manifoldx.compute.shader`). The DSL forms type-check cleanly
+    against compute-kernel arithmetic; the numpy forms predate Phase 2
+    and stay supported.
+    """
+    from manifoldx.compute.shader import vec3 as _vec3
+    from manifoldx.compute.shader import vec4 as _vec4
     from manifoldx.types import Float, Vector3, Vector4
 
     if tp is Float or tp is float:
         return (1,)
-    if tp is Vector3:
+    if tp is Vector3 or tp is _vec3:
         return (3,)
-    if tp is Vector4:
+    if tp is Vector4 or tp is _vec4:
         return (4,)
     raise TypeError(
         f"Unsupported component field type: {tp!r}. "
-        f"Use Float, Vector3, or Vector4 from manifoldx.types."
+        f"Use Float, Vector3/Vector4 (manifoldx.types), or vec3/vec4 "
+        f"(manifoldx.compute.shader)."
     )
 
 
@@ -175,6 +190,15 @@ class Transform:
 
     # Combined shape: position(3) + rotation(4) + scale(3) = 10 floats
     _layout = {"pos": (0, 3), "rot": (3, 4), "scale": (7, 3)}
+
+    if TYPE_CHECKING:
+        # Field stubs for Phase-2 compute kernels: `self.transforms[i].pos`
+        # type-checks against these. Runtime data lives in the SoA store,
+        # not on instances — these annotations exist solely so kernel
+        # bodies (which never run as Python) read coherently to mypy.
+        pos: vec3
+        rot: vec4
+        scale: vec3
 
     def __init__(self, pos=None, rot=None, scale=None):
         """Create Transform with optional position/rotation/scale."""

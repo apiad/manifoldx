@@ -588,9 +588,9 @@ def _resolve_annotation_simple(node) -> type:
         builtins = {"int": int, "float": float, "bool": bool}
         if node.id in builtins:
             return builtins[node.id]
-        if node.id == "vec3":
+        if node.id in {"vec3", "Vector3"}:
             return _shader.vec3
-        if node.id == "vec4":
+        if node.id in {"vec4", "Vector4"}:
             return _shader.vec4
     raise ComputeShaderCompileError(
         category="unsupported-construct",
