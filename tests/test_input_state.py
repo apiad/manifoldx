@@ -107,3 +107,93 @@ def test_modifiers_property_reflects_latest_event():
     assert state.modifiers == ("Shift",)
     state._record_key_up("a", modifiers=())
     assert state.modifiers == ()
+
+
+from manifoldx.input import PointerEvent, WheelEvent, ResizeEvent
+
+
+def _pmove(x: float, y: float, dx: float, dy: float) -> PointerEvent:
+    return PointerEvent(
+        x=x, y=y, dx=dx, dy=dy,
+        button=0, buttons=(), modifiers=(), phase="move",
+    )
+
+
+def _pdown(x: float, y: float, button: int) -> PointerEvent:
+    return PointerEvent(
+        x=x, y=y, dx=0.0, dy=0.0,
+        button=button, buttons=(button,), modifiers=(), phase="down",
+    )
+
+
+def _pup(x: float, y: float, button: int) -> PointerEvent:
+    return PointerEvent(
+        x=x, y=y, dx=0.0, dy=0.0,
+        button=button, buttons=(), modifiers=(), phase="up",
+    )
+
+
+def test_mouse_pos_reflects_latest_move_without_swap():
+    state = InputState()
+    assert state.mouse_pos == (0.0, 0.0)
+    state._record_pointer_move(_pmove(10.0, 20.0, 0.0, 0.0))
+    assert state.mouse_pos == (10.0, 20.0)
+    state._record_pointer_move(_pmove(15.0, 25.0, 5.0, 5.0))
+    assert state.mouse_pos == (15.0, 25.0)
+
+
+def test_mouse_delta_accumulates_across_events_then_resets():
+    state = InputState()
+    state._record_pointer_move(_pmove(10.0, 10.0, 2.0, 0.0))
+    state._record_pointer_move(_pmove(15.0, 10.0, 5.0, 0.0))
+    # Before swap: accumulator is internal; mouse_delta property reads the
+    # last finalized value (still (0,0) since no _begin_frame has happened).
+    assert state.mouse_delta == (0.0, 0.0)
+    state._begin_frame()
+    assert state.mouse_delta == (7.0, 0.0)
+    # Next frame with no events: delta resets to zero.
+    state._begin_frame()
+    assert state.mouse_delta == (0.0, 0.0)
+
+
+def test_wheel_delta_accumulates_then_resets():
+    state = InputState()
+    state._record_wheel(WheelEvent(dx=0.0, dy=100.0, x=0.0, y=0.0,
+                                   buttons=(), modifiers=()))
+    state._record_wheel(WheelEvent(dx=0.0, dy=-50.0, x=0.0, y=0.0,
+                                   buttons=(), modifiers=()))
+    assert state.wheel_delta == (0.0, 0.0)
+    state._begin_frame()
+    assert state.wheel_delta == (0.0, 50.0)
+    state._begin_frame()
+    assert state.wheel_delta == (0.0, 0.0)
+
+
+def test_mouse_button_pressed_lifecycle():
+    state = InputState()
+    state._record_pointer_down(_pdown(0.0, 0.0, button=1))
+    assert state.is_mouse_pressed(1)
+    state._begin_frame()
+    assert state.just_mouse_pressed(1)
+    assert state.is_mouse_pressed(1)
+    state._begin_frame()
+    assert not state.just_mouse_pressed(1)
+    assert state.is_mouse_pressed(1)
+    state._record_pointer_up(_pup(0.0, 0.0, button=1))
+    state._begin_frame()
+    assert state.just_mouse_released(1)
+    assert not state.is_mouse_pressed(1)
+
+
+def test_pressed_buttons_is_sorted_tuple():
+    state = InputState()
+    state._record_pointer_down(_pdown(0.0, 0.0, button=2))
+    state._record_pointer_down(_pdown(0.0, 0.0, button=1))
+    assert state.pressed_buttons == (1, 2)
+
+
+def test_resize_updates_viewport_size_immediately():
+    state = InputState()
+    assert state.viewport_size == (0, 0)
+    state._record_resize(ResizeEvent(width=800, height=600, pixel_ratio=1.0))
+    assert state.viewport_size == (800, 600)
