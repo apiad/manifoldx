@@ -44,9 +44,17 @@ class Engine:
         self._event_loop = None
         self._present_mode = "fifo"
         self._texture_format = wgpu.TextureFormat.bgra8unorm
-        self._startup_callbacks = []
-        self._shutdown_callbacks = []
-        self._update_callbacks = []
+        # Event-driven system (replaces _startup/_shutdown/_update_callbacks)
+        from manifoldx.events import EventBus, FrameWaiters
+
+        self._event_bus = EventBus()
+        self._aio_loop = asyncio.new_event_loop()
+        self._frame_waiters = FrameWaiters(self._aio_loop)
+        # Task error spool — populated by add_done_callback when an async
+        # handler raises (other than CancelledError). Drained by
+        # _pump_aio_loop, which re-raises the first error per the v1
+        # "errors crash the engine" policy.
+        self._task_errors: list[BaseException] = []
 
         # === ECS Infrastructure ===
         self.store = EntityStore(max_entities)
@@ -100,17 +108,54 @@ class Engine:
             self._label_atlas = LabelTextureAtlas()
         return self._label_atlas
 
-    def startup(self, func):
-        self._startup_callbacks.append(func)
-        return func
+    def on(self, event: str):
+        """Register a sync or async handler for an event.
 
-    def shutdown(self, func):
-        self._shutdown_callbacks.append(func)
-        return func
+        Usage:
+            @engine.on("startup")
+            def init(payload): ...
 
-    def update(self, func):
-        self._update_callbacks.append(func)
-        return func
+            @engine.on("frame")
+            async def each_frame(payload): ...
+        """
+        return self._event_bus.on(event)
+
+    def emit(self, event: str, payload=None) -> None:
+        """Queue an event for delivery at the start of the next frame."""
+        self._event_bus.emit(event, payload)
+
+    def tick(self):
+        """Return a future that resolves at the next frame boundary."""
+        return self._frame_waiters.add_tick()
+
+    def delay(self, seconds: float):
+        """Return a future that resolves after `seconds` of engine.elapsed."""
+        return self._frame_waiters.add_delay(seconds, self.elapsed)
+
+    def elapsed_at(self, target: float):
+        """Return a future that resolves once engine.elapsed >= target."""
+        return self._frame_waiters.add_elapsed_at(target)
+
+    async def run_blocking(self, fn, *args, **kwargs):
+        """Run a blocking callable in the default executor and await its result."""
+        import functools
+
+        return await self._aio_loop.run_in_executor(
+            None, functools.partial(fn, *args, **kwargs)
+        )
+
+    def _on_task_done(self, task) -> None:
+        """Done-callback wired onto every async-handler task.
+
+        Called synchronously when the task completes. We surface non-cancel
+        exceptions into _task_errors so _pump_aio_loop can re-raise them on
+        the next pump (per the v1 "errors crash the engine" policy).
+        """
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self._task_errors.append(exc)
 
     def system(self, func):
         """Decorator to register a system function.
@@ -461,9 +506,7 @@ class Engine:
 
         self._running = True
 
-        # Run startup callbacks
-        for callback in self._startup_callbacks:
-            callback()
+        # 'startup' dispatch wired in Task 7.
 
         # Register draw callback and run the canvas event loop
         from rendercanvas.glfw import loop as glfw_loop
@@ -476,8 +519,7 @@ class Engine:
             print(f"Event loop error: {e}")
         finally:
             self._running = False
-            for callback in self._shutdown_callbacks:
-                callback()
+            # 'shutdown' dispatch + asyncio teardown wired in Task 8.
 
     def render(
         self,
@@ -538,9 +580,7 @@ class Engine:
         # Set up video writer with imageio-ffmpeg
         writer = self._get_video_writer(output, fps, self.w, self.h, codec, quality)
 
-        # Run startup callbacks
-        for callback in self._startup_callbacks:
-            callback()
+        # 'startup' dispatch wired in Task 7.
 
         # Progress tracking
         pbar = None
@@ -581,9 +621,7 @@ class Engine:
 
         self._running = False
 
-        # Run shutdown callbacks
-        for callback in self._shutdown_callbacks:
-            callback()
+        # 'shutdown' dispatch + asyncio teardown wired in Task 8.
 
         print(f"Video saved: {output}")
 
