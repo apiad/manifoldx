@@ -661,6 +661,16 @@ def _emit_assign(target, value, *, op: str | None, env: TypeEnv, src: str,
     )
 
 
+def _emit_block(stmts: List[ast.stmt], env: TypeEnv, mut: Dict[str, int], src: str) -> str:
+    """Emit a sequence of statements, indented two spaces each."""
+    lines = []
+    for s in stmts:
+        text = _emit_stmt(s, env, mut, src)
+        for ln in text.splitlines():
+            lines.append(f"  {ln}")
+    return "\n".join(lines)
+
+
 def _emit_stmt(node, env: TypeEnv, mut: Dict[str, int], src: str) -> str:
     """Emit a WGSL statement string for a single AST stmt."""
     if isinstance(node, ast.AnnAssign):
@@ -709,6 +719,73 @@ def _emit_stmt(node, env: TypeEnv, mut: Dict[str, int], src: str) -> str:
             )
         return _emit_assign(node.target, node.value, op=op_str, env=env, src=src,
                              line=node.lineno, col=node.col_offset)
+
+    if isinstance(node, ast.If):
+        cond_text, _ = _emit_expr(node.test, env, src)
+        body_text = _emit_block(node.body, env, mut, src)
+        out = f"if ({cond_text}) {{\n{body_text}\n}}"
+        if node.orelse:
+            else_text = _emit_block(node.orelse, env, mut, src)
+            out += f" else {{\n{else_text}\n}}"
+        return out
+
+    if isinstance(node, ast.While):
+        cond_text, _ = _emit_expr(node.test, env, src)
+        body_text = _emit_block(node.body, env, mut, src)
+        return f"while ({cond_text}) {{\n{body_text}\n}}"
+
+    if isinstance(node, ast.For):
+        if not (
+            isinstance(node.iter, ast.Call)
+            and isinstance(node.iter.func, ast.Name)
+            and node.iter.func.id == "range"
+        ):
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message="for-loops must iterate over range(...) only",
+                filename="<stmt>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+        if not isinstance(node.target, ast.Name):
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message="for-loop target must be a plain name",
+                filename="<stmt>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+        args = node.iter.args
+        if len(args) == 1:
+            start_text, stop_text = "0u", _emit_expr(args[0], env, src)[0]
+        elif len(args) == 2:
+            start_text = _emit_expr(args[0], env, src)[0]
+            stop_text  = _emit_expr(args[1], env, src)[0]
+        else:
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message="range(start, stop, step) — step not supported in v1",
+                filename="<stmt>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+        env.set_local(node.target.id, "u32")
+        body_text = _emit_block(node.body, env, mut, src)
+        return (
+            f"for (var {node.target.id}: u32 = {start_text}; "
+            f"{node.target.id} < {stop_text}; "
+            f"{node.target.id} = {node.target.id} + 1u) {{\n"
+            f"{body_text}\n}}"
+        )
+
+    if isinstance(node, ast.Return):
+        if node.value is not None:
+            v_text, _ = _emit_expr(node.value, env, src)
+            return f"return {v_text};"
+        return "return;"
+
+    if isinstance(node, ast.Continue):
+        return "continue;"
+
+    if isinstance(node, ast.Break):
+        return "break;"
 
     raise ComputeShaderCompileError(
         category="unsupported-construct",

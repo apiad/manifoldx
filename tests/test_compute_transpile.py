@@ -568,3 +568,100 @@ def test_emit_expr_compare_and_boolop_and_unary():
     env.set_local("x", "f32")
     text, typ = _emit_expr(_parse_expr("-x"), env, "-x")
     assert text == "(-x)" and typ == "f32"
+
+
+def test_emit_stmt_if_simple():
+    from manifoldx.compute.transpile import TypeEnv, _emit_stmt, _scan_mutability
+    import ast as _ast
+
+    env = TypeEnv()
+    env.set_param("i", "u32")
+    env.set_uniform("n", "f32")
+    body = _ast.parse("if i >= u32(self.n):\n    return\n").body
+    mut = _scan_mutability(body)
+    out = _emit_stmt(body[0], env, mut, "if i >= u32(self.n): return")
+    assert out == "if ((i >= u32(uniforms.n))) {\n  return;\n}"
+
+
+def test_emit_stmt_if_else():
+    from manifoldx.compute.transpile import TypeEnv, _emit_stmt, _scan_mutability
+    import ast as _ast
+
+    env = TypeEnv()
+    env.set_local("x", "f32")
+    body = _ast.parse(
+        "if x > 0.0:\n"
+        "    x = 1.0\n"
+        "else:\n"
+        "    x = -1.0\n"
+    ).body
+    mut = _scan_mutability(body)
+    out = _emit_stmt(body[0], env, mut, "if x > 0.0: ...")
+    assert "if ((x > 0.0)) {" in out
+    assert "} else {" in out
+    assert "x = 1.0;" in out
+    assert "x = (-1.0);" in out
+
+
+def test_emit_stmt_for_range_stop_only():
+    from manifoldx.compute.transpile import TypeEnv, _emit_stmt, _scan_mutability
+    import ast as _ast
+
+    env = TypeEnv()
+    env.set_param("i", "u32")
+    env.set_uniform("n", "f32")
+    body = _ast.parse(
+        "for j in range(u32(self.n)):\n"
+        "    continue\n"
+    ).body
+    mut = _scan_mutability(body)
+    out = _emit_stmt(body[0], env, mut, "for j in range(u32(self.n)): continue")
+    assert out == (
+        "for (var j: u32 = 0u; j < u32(uniforms.n); j = j + 1u) {\n"
+        "  continue;\n"
+        "}"
+    )
+
+
+def test_emit_stmt_while():
+    from manifoldx.compute.transpile import TypeEnv, _emit_stmt, _scan_mutability
+    import ast as _ast
+
+    env = TypeEnv()
+    env.set_local("x", "f32")
+    body = _ast.parse("while x > 0.0:\n    x = x - 1.0\n").body
+    mut = _scan_mutability(body)
+    out = _emit_stmt(body[0], env, mut, "while …")
+    assert out.startswith("while ((x > 0.0)) {")
+    assert "x = (x - 1.0);" in out
+
+
+def test_emit_stmt_break_and_bare_return():
+    from manifoldx.compute.transpile import TypeEnv, _emit_stmt, _scan_mutability
+    import ast as _ast
+
+    env = TypeEnv()
+    body = _ast.parse("if True:\n    break\n").body
+    mut = _scan_mutability(body)
+    out = _emit_stmt(body[0], env, mut, "...")
+    assert "break;" in out
+
+    body = _ast.parse("if True:\n    return\n").body
+    mut = _scan_mutability(body)
+    out = _emit_stmt(body[0], env, mut, "...")
+    assert "return;" in out
+
+
+def test_emit_stmt_for_non_range_raises():
+    from manifoldx.compute.transpile import (
+        ComputeShaderCompileError, TypeEnv,
+        _emit_stmt, _scan_mutability,
+    )
+    import ast as _ast
+
+    env = TypeEnv()
+    env.set_local("xs", "vec3<f32>")
+    body = _ast.parse("for j in xs:\n    continue\n").body
+    mut = _scan_mutability(body)
+    with pytest.raises(ComputeShaderCompileError, match="unsupported-construct"):
+        _emit_stmt(body[0], env, mut, "for j in xs: ...")
