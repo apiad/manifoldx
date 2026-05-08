@@ -191,3 +191,49 @@ def test_transpile_compute_top_level_entry_point_exists():
     """transpile_compute(cls) is the public entry; for now any output is fine."""
     from manifoldx.compute.transpile import transpile_compute
     assert callable(transpile_compute)
+
+
+def test_python_type_to_wgsl_basic_scalars_and_vectors():
+    from manifoldx.compute.shader import vec3, vec4
+    from manifoldx.compute.transpile import _python_type_to_wgsl
+
+    assert _python_type_to_wgsl(int) == "i32"
+    assert _python_type_to_wgsl(float) == "f32"
+    assert _python_type_to_wgsl(bool) == "bool"
+    assert _python_type_to_wgsl(vec3) == "vec3<f32>"
+    assert _python_type_to_wgsl(vec4) == "vec4<f32>"
+
+
+def test_python_type_to_wgsl_unknown_raises():
+    from manifoldx.compute.transpile import (
+        ComputeShaderCompileError,
+        _python_type_to_wgsl,
+    )
+
+    with pytest.raises(ComputeShaderCompileError, match="unsupported-construct"):
+        _python_type_to_wgsl(list)
+
+
+def test_type_env_lookup_param_local_uniform_and_binding():
+    """TypeEnv knows the WGSL type of each name the transpiler emits."""
+    from manifoldx.compute.transpile import TypeEnv
+
+    env = TypeEnv()
+    env.set_param("i", "u32")
+    env.set_local("accel", "vec3<f32>")
+    env.set_uniform("G", "f32")
+    env.set_binding("transforms", component_name="Transform")
+
+    assert env.lookup("i") == "u32"
+    assert env.lookup("accel") == "vec3<f32>"
+    assert env.lookup_uniform("G") == "f32"
+    assert env.lookup_binding("transforms") == "Transform"
+
+
+def test_type_env_unknown_name_raises():
+    """Looking up an unknown name surfaces a clear error category."""
+    from manifoldx.compute.transpile import ComputeShaderCompileError, TypeEnv
+
+    env = TypeEnv()
+    with pytest.raises(ComputeShaderCompileError, match="unknown-name"):
+        env.lookup("ghost")

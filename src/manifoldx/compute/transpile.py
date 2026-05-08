@@ -144,6 +144,81 @@ def _check_no_recursion(methods: Dict[str, ast.FunctionDef]) -> None:
             dfs(name, fn)
 
 
+from manifoldx.compute import shader as _shader
+
+
+_TYPE_MAP = {
+    int:           "i32",
+    float:         "f32",
+    bool:          "bool",
+    _shader.vec3:  "vec3<f32>",
+    _shader.vec4:  "vec4<f32>",
+}
+
+
+def _python_type_to_wgsl(tp) -> str:
+    """Map a Python annotation tag to a WGSL type string."""
+    if tp in _TYPE_MAP:
+        return _TYPE_MAP[tp]
+    raise ComputeShaderCompileError(
+        category="unsupported-construct",
+        message=f"unsupported annotation type: {getattr(tp, '__name__', tp)!r}; "
+                f"use int, float, bool, vec3, or vec4",
+        filename="<annotation>", line=0, col=0, source_line=None,
+    )
+
+
+class TypeEnv:
+    """Lookup table for the WGSL type of each name in scope."""
+
+    def __init__(self) -> None:
+        self._params: Dict[str, str] = {}
+        self._locals: Dict[str, str] = {}
+        self._uniforms: Dict[str, str] = {}
+        self._bindings: Dict[str, str] = {}  # binding name → Component class name
+
+    def set_param(self, name: str, wgsl: str) -> None:
+        self._params[name] = wgsl
+
+    def set_local(self, name: str, wgsl: str) -> None:
+        self._locals[name] = wgsl
+
+    def set_uniform(self, name: str, wgsl: str) -> None:
+        self._uniforms[name] = wgsl
+
+    def set_binding(self, name: str, component_name: str) -> None:
+        self._bindings[name] = component_name
+
+    def lookup(self, name: str) -> str:
+        if name in self._locals:
+            return self._locals[name]
+        if name in self._params:
+            return self._params[name]
+        raise ComputeShaderCompileError(
+            category="unknown-name",
+            message=f"name {name!r} not in scope",
+            filename="<expr>", line=0, col=0, source_line=None,
+        )
+
+    def lookup_uniform(self, name: str) -> str:
+        if name not in self._uniforms:
+            raise ComputeShaderCompileError(
+                category="unknown-name",
+                message=f"uniform {name!r} not declared on Compute class",
+                filename="<expr>", line=0, col=0, source_line=None,
+            )
+        return self._uniforms[name]
+
+    def lookup_binding(self, name: str) -> str:
+        if name not in self._bindings:
+            raise ComputeShaderCompileError(
+                category="unknown-name",
+                message=f"binding {name!r} not declared on Compute class",
+                filename="<expr>", line=0, col=0, source_line=None,
+            )
+        return self._bindings[name]
+
+
 def transpile_compute(cls: type) -> str:
     """Walk the class's methods and emit a complete WGSL shader source.
 
