@@ -438,6 +438,18 @@ def test_emit_expr_binop_vec3_arithmetic():
     assert text == "(s * v)" and typ == "vec3<f32>"
 
 
+def test_emit_expr_binop_vec3_div_f32_broadcasts():
+    """vec3 / f32 → vec3 (used by elastic-collision normal: diff / dist)."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_local("diff", "vec3<f32>")
+    env.set_local("d", "f32")
+
+    text, typ = _emit_expr(_parse_expr("diff / d"), env, "diff / d")
+    assert text == "(diff / d)" and typ == "vec3<f32>"
+
+
 def test_emit_expr_binop_implicit_int_float_raises():
     """int + float without explicit cast raises implicit-promotion."""
     from manifoldx.compute.transpile import ComputeShaderCompileError, TypeEnv, _emit_expr
