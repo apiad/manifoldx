@@ -1,4 +1,4 @@
-from manifoldx.viz.components import AxisFrame, PointCloud, Radius, ScalarValue, TextLabel
+from manifoldx.viz.components import AxisFrame, PointCloud, Radius, ScalarValue, TextLabel, Volume
 from manifoldx.viz.materials import AxisMaterial, ColormapMaterial, LabelMaterial
 from manifoldx.viz.shims import (
     Chart,
@@ -21,6 +21,7 @@ __all__ = [
     "Radius",
     "TextLabel",
     "AxisFrame",
+    "Volume",
     "ColormapMaterial",
     "LabelMaterial",
     "AxisMaterial",

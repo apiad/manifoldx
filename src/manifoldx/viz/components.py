@@ -80,3 +80,17 @@ class AxisFrame(Component):
 
     extent: Float = 1.0
     thickness: Float = 1.0
+
+
+class Volume(Component):
+    """Per-entity reference to a registered 3D scalar field.
+
+    The voxel data itself lives in `Engine._volume_registry`, keyed by
+    the integer handle returned from `engine.register_volume(array)`.
+    Mirrors the resource-pointer pattern used by `Mesh.geometry_id` and
+    `Material.material_id`. Stored as Float (matching `TextLabel.index`)
+    so the field flows through the existing _FieldView path; the renderer
+    casts to u32 in the WGSL shader.
+    """
+
+    volume_id: Float = 0.0
