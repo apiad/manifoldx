@@ -465,6 +465,49 @@ def _emit_expr(node, env: TypeEnv, src: str) -> tuple[str, str]:
             source_line=None,
         )
 
+    if isinstance(node, ast.Compare):
+        if len(node.ops) != 1:
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message="chained comparisons not supported; use explicit and/or",
+                filename="<expr>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+        l_text, _ = _emit_expr(node.left, env, src)
+        r_text, _ = _emit_expr(node.comparators[0], env, src)
+        op_str = {
+            ast.Eq: "==", ast.NotEq: "!=",
+            ast.Lt: "<",  ast.LtE:   "<=",
+            ast.Gt: ">",  ast.GtE:   ">=",
+        }.get(type(node.ops[0]))
+        if op_str is None:
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message=f"unsupported comparison {type(node.ops[0]).__name__}",
+                filename="<expr>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+        return f"({l_text} {op_str} {r_text})", "bool"
+
+    if isinstance(node, ast.BoolOp):
+        op_str = "&&" if isinstance(node.op, ast.And) else "||"
+        emits = [_emit_expr(v, env, src)[0] for v in node.values]
+        joined = f" {op_str} ".join(emits)
+        return f"({joined})", "bool"
+
+    if isinstance(node, ast.UnaryOp):
+        v_text, v_type = _emit_expr(node.operand, env, src)
+        if isinstance(node.op, ast.USub):
+            return f"(-{v_text})", v_type
+        if isinstance(node.op, ast.Not):
+            return f"(!{v_text})", "bool"
+        raise ComputeShaderCompileError(
+            category="unsupported-construct",
+            message=f"unsupported unary op {type(node.op).__name__}",
+            filename="<expr>", line=node.lineno, col=node.col_offset,
+            source_line=None,
+        )
+
     if isinstance(node, ast.BinOp):
         l_text, l_type = _emit_expr(node.left, env, src)
         r_text, r_type = _emit_expr(node.right, env, src)
@@ -511,6 +554,166 @@ def _emit_expr(node, env: TypeEnv, src: str) -> tuple[str, str]:
         category="unsupported-construct",
         message=f"unsupported expression: {ast.unparse(node)!r}",
         filename="<expr>", line=node.lineno, col=node.col_offset,
+        source_line=None,
+    )
+
+
+def _scan_mutability(body: List[ast.stmt]) -> Dict[str, int]:
+    """Count assignments per local name. >1 OR any AugAssign → 'var' later."""
+    counts: Dict[str, int] = {}
+    aug_targets: set[str] = set()
+
+    def visit(stmts):
+        for s in stmts:
+            if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name):
+                counts[s.target.id] = counts.get(s.target.id, 0) + 1
+            elif isinstance(s, ast.Assign):
+                for t in s.targets:
+                    if isinstance(t, ast.Name):
+                        counts[t.id] = counts.get(t.id, 0) + 1
+            elif isinstance(s, ast.AugAssign) and isinstance(s.target, ast.Name):
+                aug_targets.add(s.target.id)
+                counts[s.target.id] = counts.get(s.target.id, 0) + 1
+            for child in ast.iter_child_nodes(s):
+                if isinstance(child, ast.stmt):
+                    visit([child])
+                elif hasattr(child, "body") and isinstance(getattr(child, "body"), list):
+                    visit(child.body)
+
+    visit(body)
+    return {**counts, **{k: 999 for k in aug_targets}}
+
+
+def _resolve_annotation_simple(node) -> type:
+    """Annotation→type for a Name annotation. Vec types resolve via shader module."""
+    if isinstance(node, ast.Name):
+        builtins = {"int": int, "float": float, "bool": bool}
+        if node.id in builtins:
+            return builtins[node.id]
+        if node.id == "vec3":
+            return _shader.vec3
+        if node.id == "vec4":
+            return _shader.vec4
+    raise ComputeShaderCompileError(
+        category="unsupported-construct",
+        message=f"unsupported annotation: {ast.unparse(node)!r}",
+        filename="<stmt>", line=getattr(node, "lineno", 0),
+        col=getattr(node, "col_offset", 0), source_line=None,
+    )
+
+
+def _emit_assign(target, value, *, op: str | None, env: TypeEnv, src: str,
+                 line: int, col: int) -> str:
+    """Emit a single assignment or augmented-assignment statement."""
+    rhs_text, rhs_type = _emit_expr(value, env, src)
+
+    # Storage-buffer field LHS: self.<binding>[idx].<field>.
+    if (
+        isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Subscript)
+        and isinstance(target.value.value, ast.Attribute)
+        and isinstance(target.value.value.value, ast.Name)
+        and target.value.value.value.id == "self"
+    ):
+        binding_name = target.value.value.attr
+        component_name = env.lookup_binding(binding_name)
+        from manifoldx.components import _COMPONENT_CLASSES, Material, Mesh, Transform
+        cls_lookup = {
+            "Transform": Transform, "Mesh": Mesh, "Material": Material,
+            **_COMPONENT_CLASSES,
+        }
+        comp_cls = cls_lookup[component_name]
+        layout = comp_cls._layout
+        if target.attr not in layout:
+            raise ComputeShaderCompileError(
+                category="unknown-name",
+                message=f"field {target.attr!r} not declared on component {component_name!r}",
+                filename="<stmt>", line=line, col=col, source_line=None,
+            )
+        offset, length = layout[target.attr]
+        stride = sum(L for _, L in layout.values())
+        idx_text, _ = _emit_expr(target.value.slice, env, src)
+
+        def slot(k): return f"{binding_name}[{idx_text} * {stride}u + {offset + k}u]"
+        components = ["x", "y", "z", "w"]
+
+        lines = []
+        for k in range(length):
+            lhs = slot(k)
+            rhs_part = rhs_text if length == 1 else f"{rhs_text}.{components[k]}"
+            if op is None:
+                lines.append(f"{lhs} = {rhs_part};")
+            else:
+                lines.append(f"{lhs} = ({lhs} {op} {rhs_part});")
+        return "\n".join(lines)
+
+    # Plain name target (reassignment).
+    if isinstance(target, ast.Name):
+        env.lookup(target.id)
+        if op is None:
+            return f"{target.id} = {rhs_text};"
+        return f"{target.id} = ({target.id} {op} {rhs_text});"
+
+    raise ComputeShaderCompileError(
+        category="unsupported-construct",
+        message=f"unsupported assignment target: {ast.unparse(target)!r}",
+        filename="<stmt>", line=line, col=col, source_line=None,
+    )
+
+
+def _emit_stmt(node, env: TypeEnv, mut: Dict[str, int], src: str) -> str:
+    """Emit a WGSL statement string for a single AST stmt."""
+    if isinstance(node, ast.AnnAssign):
+        if not isinstance(node.target, ast.Name):
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message="annotated assignment target must be a plain name",
+                filename="<stmt>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+        target_name = node.target.id
+        wgsl_type = _python_type_to_wgsl(_resolve_annotation_simple(node.annotation))
+        if node.value is None:
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message="annotated declarations require an initializer",
+                filename="<stmt>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+        rhs_text, _ = _emit_expr(node.value, env, src)
+        env.set_local(target_name, wgsl_type)
+        keyword = "var" if mut.get(target_name, 0) > 1 else "let"
+        return f"{keyword} {target_name}: {wgsl_type} = {rhs_text};"
+
+    if isinstance(node, ast.Assign):
+        if len(node.targets) != 1:
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message="multi-target assignment not supported",
+                filename="<stmt>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+        return _emit_assign(node.targets[0], node.value, op=None, env=env, src=src,
+                             line=node.lineno, col=node.col_offset)
+
+    if isinstance(node, ast.AugAssign):
+        op_str = {
+            ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.Mod: "%",
+        }.get(type(node.op))
+        if op_str is None:
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message=f"unsupported augmented op {type(node.op).__name__}",
+                filename="<stmt>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+        return _emit_assign(node.target, node.value, op=op_str, env=env, src=src,
+                             line=node.lineno, col=node.col_offset)
+
+    raise ComputeShaderCompileError(
+        category="unsupported-construct",
+        message=f"unsupported statement: {ast.unparse(node)!r}",
+        filename="<stmt>", line=node.lineno, col=node.col_offset,
         source_line=None,
     )
 

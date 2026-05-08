@@ -464,3 +464,107 @@ def test_emit_expr_self_method_unknown_raises():
     env.set_method_sigs(sigs, class_name="K")
     with pytest.raises(ComputeShaderCompileError, match="unknown-name"):
         _emit_expr(_parse_expr("self.bogus()"), env, "self.bogus()")
+
+
+def test_emit_stmt_annassign_let():
+    """Single-assign annotated local emits as `let`."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_stmt, _scan_mutability
+    import ast as _ast
+
+    env = TypeEnv()
+    env.set_local("a", "f32")  # known so RHS resolves
+    env.set_local("b", "f32")
+    body = _ast.parse("x: float = a + b").body
+    mut = _scan_mutability(body)
+    out = _emit_stmt(body[0], env, mut, "x: float = a + b")
+    assert out == "let x: f32 = (a + b);"
+    assert env.lookup("x") == "f32"
+
+
+def test_emit_stmt_annassign_var_when_reassigned():
+    """A name reassigned later in the body emits as `var` on first introduction."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_stmt, _scan_mutability
+    import ast as _ast
+
+    env = TypeEnv()
+    body = _ast.parse(
+        "x: float = 0.0\n"
+        "x = 1.0\n"
+    ).body
+    mut = _scan_mutability(body)
+    out = _emit_stmt(body[0], env, mut, "x: float = 0.0")
+    assert out == "var x: f32 = 0.0;"
+
+
+def test_emit_stmt_augassign_local_vector():
+    """vec3 += vec3 emits straight WGSL augmented assignment."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_stmt, _scan_mutability
+    import ast as _ast
+
+    env = TypeEnv()
+    env.set_local("accel", "vec3<f32>")
+    env.set_local("d", "vec3<f32>")
+    body = _ast.parse("accel += d").body
+    mut = _scan_mutability(body)
+    assert _emit_stmt(body[0], env, mut, "accel += d") == "accel = (accel + d);"
+
+
+def test_emit_stmt_augassign_storage_buffer_vector_field():
+    """self.transforms[i].pos += dv desugars to per-component load/op/store."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_stmt, _scan_mutability
+    import ast as _ast
+
+    env = TypeEnv()
+    env.set_param("i", "u32")
+    env.set_binding("transforms", component_name="Transform")
+    env.set_local("dv", "vec3<f32>")
+    body = _ast.parse("self.transforms[i].pos += dv").body
+    mut = _scan_mutability(body)
+    out = _emit_stmt(body[0], env, mut, "self.transforms[i].pos += dv")
+    expected = (
+        "transforms[i * 10u + 0u] = (transforms[i * 10u + 0u] + dv.x);\n"
+        "transforms[i * 10u + 1u] = (transforms[i * 10u + 1u] + dv.y);\n"
+        "transforms[i * 10u + 2u] = (transforms[i * 10u + 2u] + dv.z);"
+    )
+    assert out == expected
+
+
+def test_emit_stmt_assign_storage_buffer_scalar_field():
+    """self.masses[i].value = x emits a single store."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_stmt, _scan_mutability
+    from manifoldx.components import Component
+    from manifoldx.types import Float
+    import ast as _ast
+
+    class Mass(Component):
+        value: Float
+
+    env = TypeEnv()
+    env.set_param("i", "u32")
+    env.set_binding("masses", component_name="Mass")
+    env.set_local("x", "f32")
+    body = _ast.parse("self.masses[i].value = x").body
+    mut = _scan_mutability(body)
+    out = _emit_stmt(body[0], env, mut, "self.masses[i].value = x")
+    assert out == "masses[i * 1u + 0u] = x;"
+
+
+def test_emit_expr_compare_and_boolop_and_unary():
+    """Comparisons, and/or/not work."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_param("i", "u32")
+    env.set_uniform("n", "f32")
+
+    text, typ = _emit_expr(_parse_expr("i >= u32(self.n)"), env, "i >= u32(self.n)")
+    assert text == "(i >= u32(uniforms.n))" and typ == "bool"
+
+    env.set_local("a", "bool")
+    env.set_local("b", "bool")
+    text, typ = _emit_expr(_parse_expr("a and not b"), env, "a and not b")
+    assert text == "(a && (!b))" and typ == "bool"
+
+    env.set_local("x", "f32")
+    text, typ = _emit_expr(_parse_expr("-x"), env, "-x")
+    assert text == "(-x)" and typ == "f32"
