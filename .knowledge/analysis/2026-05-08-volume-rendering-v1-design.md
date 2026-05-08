@@ -333,18 +333,16 @@ The renderer's `_get_or_create_pipeline` cache is currently keyed by
 material kind. Add `"volume"` as a new kind. Volume pipelines never
 collide with mesh / sprite / label / axis pipelines.
 
-### Refactoring `renderer.py`
+### Refactoring `renderer.py` (deferred)
 
 `renderer.py` is currently 1532 lines, with `_render_mesh_batches`,
-`_render_sprite_batches`, `_render_label_pass`, `_render_axis_pass` all
-inlined. Adding `_render_volume_pass` makes that file even larger. The
-plan will split each pass into its own module under
-`src/manifoldx/render/passes/` (`mesh.py`, `sprite.py`, `label.py`,
-`axis.py`, `volume.py`), with `RenderPipeline.run` becoming a thin
-orchestrator. This is a targeted refactor *of code we're touching*
-(per CLAUDE.md "improvements as part of the design where existing code
-has problems that affect the work") — `renderer.py` has clearly grown
-into a god-file; volumes are the moment to split it.
+`_render_sprite_batches`, `_render_label_pass`, `_render_axis_pass`
+all inlined. The eventual right shape is to split each pass into its
+own module under `src/manifoldx/render/passes/` and reduce
+`RenderPipeline.run` to a thin orchestrator. **This refactor is
+deferred from v1 to a follow-up plan** so volumes ship without
+churning every other render path. v1 simply adds
+`_render_volume_pass` as a sibling of the existing four pass methods.
 
 ---
 
