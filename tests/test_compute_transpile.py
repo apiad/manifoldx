@@ -99,3 +99,95 @@ def test_compute_shader_compile_error_without_source_line():
     assert "kernel.py" in text
     assert "wgpu-validation" in text
     assert "invalid storage binding" in text
+
+
+def test_transpile_extracts_main_function_def():
+    """Given a Compute subclass with a `main` method, transpile parses the AST."""
+    from manifoldx.compute import Compute, ReadsWrites
+    from manifoldx.compute.transpile import _collect_method_asts
+    from manifoldx.components import Transform
+
+    class K(Compute):
+        transforms: ReadsWrites[Transform]
+        workgroup_size = 64
+        dispatch = "entity_count"
+        def main(self, i: int):
+            return
+
+    methods = _collect_method_asts(K)
+    assert "main" in methods
+    fn = methods["main"]
+    assert fn.name == "main"
+    assert [a.arg for a in fn.args.args] == ["self", "i"]
+
+
+def test_transpile_rejects_class_without_main():
+    """A Compute class with no `main` method raises ComputeShaderCompileError."""
+    from manifoldx.compute import Compute, ReadsWrites
+    from manifoldx.compute.transpile import (
+        ComputeShaderCompileError,
+        _collect_method_asts,
+    )
+    from manifoldx.components import Transform
+
+    class NoMain(Compute):
+        transforms: ReadsWrites[Transform]
+
+    with pytest.raises(ComputeShaderCompileError, match="must define a `main"):
+        _collect_method_asts(NoMain)
+
+
+def test_transpile_rejects_recursion_self_call():
+    """A `main` that calls itself (or a helper that calls itself) is rejected."""
+    from manifoldx.compute import Compute, ReadsWrites
+    from manifoldx.compute.transpile import (
+        ComputeShaderCompileError,
+        _check_no_recursion,
+        _collect_method_asts,
+    )
+    from manifoldx.components import Transform
+
+    class Recursive(Compute):
+        transforms: ReadsWrites[Transform]
+        workgroup_size = 64
+        dispatch = "entity_count"
+        def helper(self, n: int) -> int:
+            return self.helper(n)
+        def main(self, i: int):
+            self.helper(i)
+
+    methods = _collect_method_asts(Recursive)
+    with pytest.raises(ComputeShaderCompileError, match="recursion"):
+        _check_no_recursion(methods)
+
+
+def test_transpile_rejects_mutual_recursion():
+    """A → B → A is detected as recursion."""
+    from manifoldx.compute import Compute, ReadsWrites
+    from manifoldx.compute.transpile import (
+        ComputeShaderCompileError,
+        _check_no_recursion,
+        _collect_method_asts,
+    )
+    from manifoldx.components import Transform
+
+    class Mutual(Compute):
+        transforms: ReadsWrites[Transform]
+        workgroup_size = 64
+        dispatch = "entity_count"
+        def a(self, n: int) -> int:
+            return self.b(n)
+        def b(self, n: int) -> int:
+            return self.a(n)
+        def main(self, i: int):
+            self.a(i)
+
+    methods = _collect_method_asts(Mutual)
+    with pytest.raises(ComputeShaderCompileError, match="recursion"):
+        _check_no_recursion(methods)
+
+
+def test_transpile_compute_top_level_entry_point_exists():
+    """transpile_compute(cls) is the public entry; for now any output is fine."""
+    from manifoldx.compute.transpile import transpile_compute
+    assert callable(transpile_compute)
