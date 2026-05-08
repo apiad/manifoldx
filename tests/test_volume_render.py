@@ -70,3 +70,84 @@ def test_volume_registry_update_triggers_reupload():
     engine._volume_registry.upload_to_gpu(handle, engine._device.queue)
     assert res.dirty is False
     assert res.texture is tex_before    # reused, not reallocated
+
+
+def _render_one_frame(engine):
+    """Drive one frame and read back the framebuffer."""
+    engine._draw_frame()
+    return engine._render_canvas.draw()   # (H, W, 4) uint8
+
+
+def _capture_background(engine):
+    """Render the current scene without volumes and return a frame copy."""
+    return _render_one_frame(engine).copy()
+
+
+def test_centered_blob_renders_visible_pixels_at_origin():
+    """Spawn a 32^3 Gaussian blob centered at the origin; render one frame;
+    the framebuffer's central pixel must show the volume (non-clear color),
+    while the corner must remain unchanged from the clear color (`discard`
+    preserves the framebuffer outside the projected box bounds).
+    """
+    from manifoldx.components import Material, Transform
+    from manifoldx.viz import Volume, VolumeMaterial
+
+    engine = _make_offscreen_engine(width=64, height=64)
+    engine.camera.position = np.array([0.0, 0.0, 5.0], dtype=np.float32)
+
+    bg = _capture_background(engine)   # empty-scene background
+
+    n = 32
+    xs = np.linspace(-1, 1, n, dtype=np.float32)
+    X, Y, Z = np.meshgrid(xs, xs, xs, indexing="ij")
+    density = np.exp(-(X**2 + Y**2 + Z**2) / 0.1).astype(np.float32)
+
+    handle = engine.register_volume(density)
+    engine.spawn(
+        Volume(volume_id=handle),
+        Material(VolumeMaterial(
+            cmap="inferno",
+            opacity_stops=[(0.0, 0.0), (0.3, 0.05), (1.0, 0.6)],
+            step_size=0.02,
+        )),
+        Transform(pos=(0, 0, 0), scale=(2.0, 2.0, 2.0)),
+        n=1,
+    )
+
+    rgba = _render_one_frame(engine)
+    assert not np.array_equal(rgba[32, 32], bg[32, 32])   # center modified
+    assert np.array_equal(rgba[0, 0], bg[0, 0])           # corner unchanged
+
+
+def test_two_entities_share_volume_handle():
+    """Same vol_id with different Transform.pos → two visually separate regions."""
+    from manifoldx.components import Material, Transform
+    from manifoldx.viz import Volume, VolumeMaterial
+
+    engine = _make_offscreen_engine(width=128, height=64)
+    engine.camera.position = np.array([0.0, 0.0, 5.0], dtype=np.float32)
+
+    bg = _capture_background(engine)
+
+    arr = np.ones((4, 4, 4), dtype=np.float32)   # uniform-1 box
+    handle = engine.register_volume(arr)
+    for px in (-3.5, +3.5):
+        engine.spawn(
+            Volume(volume_id=handle),
+            Material(VolumeMaterial(
+                cmap="viridis",
+                opacity_stops=[(0.0, 0.0), (1.0, 1.0)],
+                step_size=0.05,
+            )),
+            Transform(pos=(px, 0, 0), scale=(1.0, 1.0, 1.0)),
+            n=1,
+        )
+
+    rgba = _render_one_frame(engine)
+    # Left and right halves must each have at least one modified pixel;
+    # the center column must be unchanged from the empty-scene background.
+    left_changed = (rgba[32, :32] != bg[32, :32]).any(axis=-1)
+    right_changed = (rgba[32, -32:] != bg[32, -32:]).any(axis=-1)
+    assert left_changed.any()
+    assert right_changed.any()
+    assert np.array_equal(rgba[32, 64], bg[32, 64])

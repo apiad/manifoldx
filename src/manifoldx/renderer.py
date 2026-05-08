@@ -893,11 +893,13 @@ class RenderPipeline:
         has_point_cloud = "PointCloud" in self._store._components
         has_text_label = "TextLabel" in self._store._components
         has_axis_frame = "AxisFrame" in self._store._components
+        has_volume = "Volume" in self._store._components
         if (
             not has_mesh
             and not has_point_cloud
             and not has_text_label
             and not has_axis_frame
+            and not has_volume
         ):
             return
 
@@ -920,6 +922,9 @@ class RenderPipeline:
         material_data = None
         if "Material" in self._store._components:
             material_data = self._store.get_component_data("Material", alive_indices)
+        volume_data = None
+        if has_volume:
+            volume_data = self._store.get_component_data("Volume", alive_indices)
 
         # Group by (geom_id, material_type) for mesh batches
         # Group by mat_id for sprite/label/axis batches
@@ -927,6 +932,7 @@ class RenderPipeline:
         sprite_batches = {}  # mat_id -> list of local indices
         label_batches = {}  # mat_id -> list of local indices
         axis_batches = {}   # (geom_id, mat_id) -> list of local indices
+        volume_batches = []  # list of (entity_local_idx, mat_id, vol_id)
 
         for i, entity_idx in enumerate(alive_indices):
             mat_id = int(material_data[i, 0]) if material_data is not None else 0
@@ -942,7 +948,15 @@ class RenderPipeline:
                 and has_text_label
                 and self._is_label_entity(entity_idx, mat_id, engine)
             )
-            is_sprite = (not is_axis) and (not is_label) and has_point_cloud and geom_id == 0
+            is_volume = (
+                (not is_axis) and (not is_label)
+                and has_volume
+                and self._is_volume_entity(entity_idx, mat_id, engine)
+            )
+            is_sprite = (
+                (not is_axis) and (not is_label) and (not is_volume)
+                and has_point_cloud and geom_id == 0
+            )
 
             if is_axis:
                 key = (geom_id, mat_id)
@@ -953,6 +967,10 @@ class RenderPipeline:
                 if mat_id not in label_batches:
                     label_batches[mat_id] = []
                 label_batches[mat_id].append(i)
+            elif is_volume:
+                vol_id = int(volume_data[i, 0]) if volume_data is not None else 0
+                if vol_id > 0:
+                    volume_batches.append((i, mat_id, vol_id))
             elif is_sprite:
                 if mat_id not in sprite_batches:
                     sprite_batches[mat_id] = []
@@ -1021,6 +1039,12 @@ class RenderPipeline:
             )
 
         # ---------------------------------------------------------------
+        # Draw volume batches (depth-test on, depth-write off, alpha-blend on)
+        # ---------------------------------------------------------------
+        if volume_batches:
+            self._render_volume_pass(engine, render_pass, volume_batches)
+
+        # ---------------------------------------------------------------
         # Draw label batches (depth-write off, alpha-blend on)
         # ---------------------------------------------------------------
         if label_batches:
@@ -1086,13 +1110,17 @@ class RenderPipeline:
             ],
         )
 
+        # Volume tex + opacity LUT use R32Float, which is non-filterable on most
+        # backends; pair them with non-filtering samplers (nearest-neighbor).
+        # Color LUT uses RGBA8Unorm (filterable) but shares the non-filtering
+        # sampler since both LUTs must come through one binding (per shader).
         bgl_volume = device.create_bind_group_layout(
             entries=[
                 {
                     "binding": 0,
                     "visibility": wgpu.ShaderStage.FRAGMENT,
                     "texture": {
-                        "sample_type": wgpu.TextureSampleType.float,
+                        "sample_type": wgpu.TextureSampleType.unfilterable_float,
                         "view_dimension": wgpu.TextureViewDimension.d3,
                         "multisampled": False,
                     },
@@ -1100,13 +1128,13 @@ class RenderPipeline:
                 {
                     "binding": 1,
                     "visibility": wgpu.ShaderStage.FRAGMENT,
-                    "sampler": {"type": wgpu.SamplerBindingType.filtering},
+                    "sampler": {"type": wgpu.SamplerBindingType.non_filtering},
                 },
                 {
                     "binding": 2,
                     "visibility": wgpu.ShaderStage.FRAGMENT,
                     "texture": {
-                        "sample_type": wgpu.TextureSampleType.float,
+                        "sample_type": wgpu.TextureSampleType.unfilterable_float,
                         "view_dimension": wgpu.TextureViewDimension.d2,
                         "multisampled": False,
                     },
@@ -1115,7 +1143,7 @@ class RenderPipeline:
                     "binding": 3,
                     "visibility": wgpu.ShaderStage.FRAGMENT,
                     "texture": {
-                        "sample_type": wgpu.TextureSampleType.float,
+                        "sample_type": wgpu.TextureSampleType.unfilterable_float,
                         "view_dimension": wgpu.TextureViewDimension.d2,
                         "multisampled": False,
                     },
@@ -1123,7 +1151,7 @@ class RenderPipeline:
                 {
                     "binding": 4,
                     "visibility": wgpu.ShaderStage.FRAGMENT,
-                    "sampler": {"type": wgpu.SamplerBindingType.filtering},
+                    "sampler": {"type": wgpu.SamplerBindingType.non_filtering},
                 },
                 {
                     "binding": 5,
@@ -1278,9 +1306,10 @@ class RenderPipeline:
         )
 
         if not hasattr(self, "_volume_sampler") or self._volume_sampler is None:
+            # Nearest-filter sampler (required for R32Float in v1).
             self._volume_sampler = self._device.create_sampler(
-                mag_filter=wgpu.FilterMode.linear,
-                min_filter=wgpu.FilterMode.linear,
+                mag_filter=wgpu.FilterMode.nearest,
+                min_filter=wgpu.FilterMode.nearest,
                 address_mode_u=wgpu.AddressMode.clamp_to_edge,
                 address_mode_v=wgpu.AddressMode.clamp_to_edge,
                 address_mode_w=wgpu.AddressMode.clamp_to_edge,
