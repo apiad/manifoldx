@@ -48,8 +48,12 @@ class Engine:
         from manifoldx.events import EventBus, FrameWaiters
 
         self._event_bus = EventBus()
-        self._aio_loop = asyncio.new_event_loop()
-        self._frame_waiters = FrameWaiters(self._aio_loop)
+        # Lazy fallback loop: only created when no asyncio loop is currently
+        # running (e.g. tests, render() to MP4). In interactive run() mode,
+        # rendercanvas is itself an asyncio loop and we adopt it instead —
+        # see _get_active_loop() below.
+        self._aio_loop: asyncio.AbstractEventLoop | None = None
+        self._frame_waiters = FrameWaiters(self._get_active_loop)
         # Task error spool — populated by add_done_callback when an async
         # handler raises (other than CancelledError). Drained by
         # _pump_aio_loop, which re-raises the first error per the v1
@@ -143,6 +147,20 @@ class Engine:
         return await self._aio_loop.run_in_executor(
             None, functools.partial(fn, *args, **kwargs)
         )
+
+    def _get_active_loop(self) -> asyncio.AbstractEventLoop:
+        """Return the asyncio loop async handlers should run on.
+
+        Prefers the currently-running loop (e.g. rendercanvas in interactive
+        run() mode). If no loop is running, lazily creates and returns a
+        private fallback (used by tests and the headless render() path).
+        """
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            if self._aio_loop is None or self._aio_loop.is_closed():
+                self._aio_loop = asyncio.new_event_loop()
+            return self._aio_loop
 
     def _on_task_done(self, task) -> None:
         """Done-callback wired onto every async-handler task.
@@ -280,34 +298,51 @@ class Engine:
         """Fire 'shutdown', cancel async tasks, drain the loop, close it.
 
         Idempotent: safe to call from quit() and from finalization paths.
+        Handles both interactive (rendercanvas-owned loop running) and
+        headless (private fallback) modes.
         """
-        if self._aio_loop.is_closed():
+        if getattr(self, "_shutdown_done", False):
             return
+        self._shutdown_done = True
 
         # 1. Sync 'shutdown' handlers run inline; async ones get scheduled
-        #    as tasks on the loop.
+        #    as tasks on whichever loop is active.
         self._event_bus.dispatch_immediate(self, "shutdown", {})
 
-        # 2. Cancel every outstanding task so while-True coroutines get
+        # 2. Determine which loop our tasks live on.
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+
+        target_loop = running if running is not None else self._aio_loop
+        if target_loop is None:
+            return  # nothing was ever async; nothing to clean up.
+
+        # 3. Cancel every outstanding task so while-True coroutines get
         #    CancelledError on their next await.
-        for task in list(asyncio.all_tasks(loop=self._aio_loop)):
+        for task in list(asyncio.all_tasks(loop=target_loop)):
             task.cancel()
 
-        # 3. Cancel any outstanding waiter futures so coroutines blocked
-        #    on engine.tick / delay / elapsed_at unblock with CancelledError.
+        # 4. Cancel any outstanding waiter futures.
         self._frame_waiters.cancel_all()
 
-        # 4. Pump the loop one final time to let try/finally cleanup run.
-        #    Done callbacks fire here, populating _task_errors for any
-        #    non-cancel exceptions raised during cleanup.
-        try:
-            self._aio_loop.run_until_complete(asyncio.sleep(0))
-        finally:
+        # 5. Pump the loop one final time so try/finally cleanup runs.
+        #    Only safe with run_until_complete when no loop is running;
+        #    when one is, the running loop will dispatch the cancellations
+        #    on its own and we just collect errors.
+        if running is None and not self._aio_loop.is_closed():
+            try:
+                self._aio_loop.run_until_complete(asyncio.sleep(0))
+            finally:
+                pending = self._task_errors
+                self._task_errors = []
+                self._aio_loop.close()
+        else:
             pending = self._task_errors
             self._task_errors = []
-            self._aio_loop.close()
 
-        # 5. Surface the first non-cancel exception (if any) per the v1
+        # 6. Surface the first non-cancel exception (if any) per the v1
         #    "errors propagate" policy.
         if pending:
             raise pending[0]
@@ -532,17 +567,31 @@ class Engine:
         return True  # Continue rendering
 
     def _pump_aio_loop(self) -> None:
-        """Drive the engine's asyncio loop until quiescent.
+        """Drive the engine's asyncio loop until quiescent (when applicable).
 
-        Runs all currently-runnable callbacks: woken futures from waiter
-        resolution, freshly-scheduled handler tasks, and I/O completions.
-        If any async handler raised an exception during this pump, the
-        first one is re-raised so the frame loop crashes per the v1
-        error policy. (Done tasks are no longer in asyncio.all_tasks(),
-        so we capture exceptions via add_done_callback in _invoke_async
-        and spool them on engine._task_errors.)
+        In headless mode (tests, render-to-MP4), there is no running asyncio
+        loop, so we drive our private fallback loop with run_until_complete.
+        In interactive run() mode, rendercanvas owns a running asyncio loop
+        and our async tasks were created on it; we MUST NOT call
+        run_until_complete on a different loop (RuntimeError) or recursively
+        on the same one. The running loop will pump our tasks naturally
+        between draw callbacks. Either way, we re-raise the first exception
+        spooled on _task_errors per the v1 error policy.
+
+        Trade-off documented in v1: in run() mode, an `await engine.tick()`
+        coroutine resumes between frames (after this _draw_frame returns,
+        before the next is scheduled), introducing up to one frame of
+        scheduling delay vs. headless mode where the resume happens inside
+        this same frame. The 1-frame difference is imperceptible at 60fps.
         """
-        self._aio_loop.run_until_complete(asyncio.sleep(0))
+        try:
+            asyncio.get_running_loop()
+            # A loop is running (rendercanvas). It pumps our tasks itself.
+        except RuntimeError:
+            # No running loop — drive our private fallback.
+            if self._aio_loop is not None and not self._aio_loop.is_closed():
+                self._aio_loop.run_until_complete(asyncio.sleep(0))
+
         if self._task_errors:
             exc = self._task_errors.pop(0)
             raise exc
@@ -696,7 +745,9 @@ class Engine:
 
         self._running = False
 
-        # 'shutdown' dispatch + asyncio teardown wired in Task 8.
+        # Fire 'shutdown' and tear down the asyncio loop cleanly so
+        # long-running async handlers don't leak as pending tasks.
+        self.shutdown_events()
 
         print(f"Video saved: {output}")
 

@@ -101,6 +101,33 @@ def test_async_handler_exception_propagates():
         engine._draw_frame()
 
 
+def test_pump_under_running_loop_does_not_recurse():
+    """Regression: in interactive run() mode, rendercanvas owns a running
+    asyncio loop. _draw_frame -> _pump_aio_loop must not call
+    run_until_complete on a different loop (RuntimeError) or recursively
+    on the same one. It should detect the running loop and skip its own
+    run_until_complete, leaving task scheduling to the host loop.
+    """
+    import asyncio
+
+    engine = _make_offscreen_engine()
+    log = []
+
+    @engine.on("frame")
+    def on_frame(payload):
+        log.append(payload["frame"])
+
+    async def driver():
+        # Inside this coroutine an asyncio loop is running. Calling
+        # _draw_frame should NOT raise "Cannot run the event loop while
+        # another loop is running".
+        engine._draw_frame()
+        engine._draw_frame()
+
+    asyncio.run(driver())
+    assert log == [0, 1]
+
+
 def test_sync_handler_exception_propagates_immediately():
     engine = _make_offscreen_engine()
 

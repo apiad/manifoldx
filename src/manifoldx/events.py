@@ -146,7 +146,8 @@ def _invoke_async(handler: Handler, payload, engine) -> None:
         coro = handler.func(payload, ReadOnlyView(view))
     else:
         coro = handler.func(payload)
-    task = engine._aio_loop.create_task(coro)
+    loop = engine._get_active_loop()
+    task = loop.create_task(coro)
     task.add_done_callback(engine._on_task_done)
 
 
@@ -157,25 +158,31 @@ class FrameWaiters:
     `resolve(elapsed)` walks the lists, sets futures whose predicates hold,
     and removes them from their lists. The lists are not standing
     subscriptions — coroutines that loop must call add_* again next frame.
+
+    The waiter does not own a loop. It accepts a `loop_provider` callable
+    (typically engine._get_active_loop), invoked each time we need to
+    create a future. This lets us adopt the running asyncio loop in
+    interactive mode (rendercanvas) and a private fallback in headless
+    mode (tests, render-to-MP4).
     """
 
-    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
-        self._loop = loop
+    def __init__(self, loop_provider) -> None:
+        self._loop_provider = loop_provider
         self._tick: list[asyncio.Future] = []
         self._deadlines: list[tuple[asyncio.Future, float]] = []  # delay + elapsed_at share storage
 
     def add_tick(self) -> asyncio.Future:
-        fut = self._loop.create_future()
+        fut = self._loop_provider().create_future()
         self._tick.append(fut)
         return fut
 
     def add_delay(self, seconds: float, current_elapsed: float) -> asyncio.Future:
-        fut = self._loop.create_future()
+        fut = self._loop_provider().create_future()
         self._deadlines.append((fut, current_elapsed + seconds))
         return fut
 
     def add_elapsed_at(self, target: float) -> asyncio.Future:
-        fut = self._loop.create_future()
+        fut = self._loop_provider().create_future()
         self._deadlines.append((fut, target))
         return fut
 

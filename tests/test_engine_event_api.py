@@ -12,7 +12,11 @@ def _engine():
 def test_engine_has_event_bus_and_loop():
     e = _engine()
     assert e._event_bus is not None
-    assert isinstance(e._aio_loop, asyncio.AbstractEventLoop)
+    # The loop is lazy: None until something async happens or _get_active_loop
+    # is called. _get_active_loop returns either a running loop or a private
+    # fallback.
+    loop = e._get_active_loop()
+    assert isinstance(loop, asyncio.AbstractEventLoop)
 
 
 def test_engine_on_emit_round_trip():
