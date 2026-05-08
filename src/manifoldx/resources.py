@@ -898,6 +898,43 @@ class VolumeRegistry:
             raise KeyError(f"unknown volume handle: {handle}")
         return self._volumes[handle]
 
+    def upload_to_gpu(self, handle: int, queue) -> None:
+        """Lazily create a `texture_3d` r32float for this volume and write
+        the current numpy data into it. Clears the dirty bit. Re-creates the
+        texture only if shape changed (which `update` already disallows).
+        """
+        if self._device is None or queue is None:
+            return
+        res = self.get(handle)
+        if not res.dirty and res.texture is not None:
+            return
+
+        nz, ny, nx = res.data.shape
+        if res.texture is None:
+            res.texture = self._device.create_texture(
+                size=(nx, ny, nz),
+                format=wgpu.TextureFormat.r32float,
+                usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
+                dimension=wgpu.TextureDimension.d3,
+                mip_level_count=1,
+                sample_count=1,
+            )
+
+        data_bytes = res.data.tobytes()
+        bytes_per_row = nx * 4   # 4 bytes per f32 voxel
+        rows_per_image = ny
+        queue.write_texture(
+            {"texture": res.texture, "mip_level": 0, "origin": (0, 0, 0)},
+            data_bytes,
+            {
+                "offset": 0,
+                "bytes_per_row": bytes_per_row,
+                "rows_per_image": rows_per_image,
+            },
+            (nx, ny, nz),
+        )
+        res.dirty = False
+
 
 __all__ = [
     "Material",

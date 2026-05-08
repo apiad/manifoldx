@@ -333,6 +333,7 @@ class Engine:
         # Update registries with device reference
         self._geometry_registry._device = self._device
         self._material_registry._device = self._device
+        self._volume_registry._device = self._device
 
         # Depth texture created lazily to match canvas size
         self._depth_texture = None
