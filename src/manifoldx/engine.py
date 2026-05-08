@@ -15,6 +15,7 @@ from manifoldx.resources import GeometryRegistry, MaterialRegistry, VolumeRegist
 from manifoldx.renderer import RenderPipeline
 from manifoldx.components import Component, Transform, Mesh, Material
 from manifoldx.camera import Camera
+from manifoldx.input import InputState, _InputBridge
 
 
 class Engine:
@@ -59,6 +60,11 @@ class Engine:
         # _pump_aio_loop, which re-raises the first error per the v1
         # "errors crash the engine" policy.
         self._task_errors: list[BaseException] = []
+
+        # Input layer — keyboard + mouse + resize. The bridge attaches to
+        # the canvas in _init_canvas; until then it is dormant.
+        self.input = InputState()
+        self._input_bridge = _InputBridge(self, self.input)
 
         # === ECS Infrastructure ===
         self.store = EntityStore(max_entities)
@@ -433,6 +439,9 @@ class Engine:
         """Initialize WebGPU context from a canvas (shared by run() and render())."""
         self._render_canvas = canvas
 
+        # Wire input event flow: rendercanvas → _InputBridge → bus + state.
+        self._input_bridge.attach(canvas)
+
         # Get the wgpu context from the canvas
         self._wgpu_context = canvas.get_wgpu_context()
 
@@ -482,6 +491,11 @@ class Engine:
 
         # Step 2: resolve frame waiters (tick / delay / elapsed_at)
         self._frame_waiters.resolve(self.elapsed)
+
+        # Step 2.5: input bridge frame swap — finalize this-frame
+        # just_pressed/just_released sets and delta accumulators before
+        # any handler or system runs.
+        self._input_bridge.begin_frame()
 
         # Clear command buffer ONCE at the head of the frame so events,
         # async handlers, and systems all contribute to the same buffer
