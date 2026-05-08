@@ -263,8 +263,55 @@ def _emit_expr(node, env: TypeEnv, src: str) -> tuple[str, str]:
         return node.id, env.lookup(node.id)
 
     if isinstance(node, ast.Attribute):
-        # self.<uniform> only — self.<binding>[i].<field> is handled by
-        # the Subscript case (added in Task 7).
+        # self.<binding>[idx].<field> — indexed component field access.
+        if (
+            isinstance(node.value, ast.Subscript)
+            and isinstance(node.value.value, ast.Attribute)
+            and isinstance(node.value.value.value, ast.Name)
+            and node.value.value.value.id == "self"
+        ):
+            binding_name = node.value.value.attr
+            component_name = env.lookup_binding(binding_name)
+            from manifoldx.components import _COMPONENT_CLASSES, Material, Mesh, Transform
+            cls_lookup = {
+                "Transform": Transform, "Mesh": Mesh, "Material": Material,
+                **_COMPONENT_CLASSES,
+            }
+            comp_cls = cls_lookup[component_name]
+            layout = comp_cls._layout
+            if node.attr not in layout:
+                raise ComputeShaderCompileError(
+                    category="unknown-name",
+                    message=f"field {node.attr!r} not declared on component {component_name!r}",
+                    filename="<expr>", line=node.lineno, col=node.col_offset,
+                    source_line=None,
+                )
+            offset, length = layout[node.attr]
+            stride = sum(L for _, L in layout.values())
+            idx_text, _ = _emit_expr(node.value.slice, env, src)
+            if length == 1:
+                wgsl = f"{binding_name}[{idx_text} * {stride}u + {offset}u]"
+                return wgsl, "f32"
+            if length == 3:
+                parts = ", ".join(
+                    f"{binding_name}[{idx_text} * {stride}u + {offset + k}u]"
+                    for k in range(3)
+                )
+                return f"vec3<f32>({parts})", "vec3<f32>"
+            if length == 4:
+                parts = ", ".join(
+                    f"{binding_name}[{idx_text} * {stride}u + {offset + k}u]"
+                    for k in range(4)
+                )
+                return f"vec4<f32>({parts})", "vec4<f32>"
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message=f"field {node.attr!r} has length {length}; only 1/3/4 supported",
+                filename="<expr>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+
+        # self.<uniform> — fall through to uniform branch.
         if isinstance(node.value, ast.Name) and node.value.id == "self":
             return f"uniforms.{node.attr}", env.lookup_uniform(node.attr)
         raise ComputeShaderCompileError(

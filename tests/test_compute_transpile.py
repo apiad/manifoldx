@@ -312,3 +312,50 @@ def test_emit_expr_builtin_calls():
     text, typ = _emit_expr(_parse_expr("sqrt(r2)"), env, "sqrt(r2)")
     assert text == "sqrt(r2)"
     assert typ == "f32"
+
+
+def test_emit_expr_binding_vector_field_read():
+    """self.transforms[i].pos → vec3<f32>(transforms[i*10u + 0u], …, …)."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_param("i", "u32")
+    env.set_binding("transforms", component_name="Transform")
+
+    text, typ = _emit_expr(
+        _parse_expr("self.transforms[i].pos"), env, "self.transforms[i].pos"
+    )
+    assert text == "vec3<f32>(transforms[i * 10u + 0u], transforms[i * 10u + 1u], transforms[i * 10u + 2u])"
+    assert typ == "vec3<f32>"
+
+
+def test_emit_expr_binding_scalar_field_read():
+    """self.masses[j].value → masses[j * 1u + 0u] with type f32."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+    from manifoldx.components import Component
+    from manifoldx.types import Float
+
+    class Mass(Component):
+        value: Float
+
+    env = TypeEnv()
+    env.set_param("j", "u32")
+    env.set_binding("masses", component_name="Mass")
+
+    text, typ = _emit_expr(
+        _parse_expr("self.masses[j].value"), env, "self.masses[j].value"
+    )
+    assert text == "masses[j * 1u + 0u]"
+    assert typ == "f32"
+
+
+def test_emit_expr_binding_unknown_field_raises():
+    """Accessing a field not in the Component's _layout raises a clear error."""
+    from manifoldx.compute.transpile import ComputeShaderCompileError, TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_param("i", "u32")
+    env.set_binding("transforms", component_name="Transform")
+
+    with pytest.raises(ComputeShaderCompileError, match="unknown-name"):
+        _emit_expr(_parse_expr("self.transforms[i].ghost"), env, "self.transforms[i].ghost")
