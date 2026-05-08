@@ -359,3 +359,58 @@ def test_emit_expr_binding_unknown_field_raises():
 
     with pytest.raises(ComputeShaderCompileError, match="unknown-name"):
         _emit_expr(_parse_expr("self.transforms[i].ghost"), env, "self.transforms[i].ghost")
+
+
+def test_emit_expr_binop_same_scalar_type():
+    """f32 + f32 emits cleanly with the shared type."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_local("a", "f32")
+    env.set_local("b", "f32")
+    text, typ = _emit_expr(_parse_expr("a + b"), env, "a + b")
+    assert text == "(a + b)" and typ == "f32"
+
+    text, typ = _emit_expr(_parse_expr("a * b - a / b"), env, "a * b - a / b")
+    assert text == "((a * b) - (a / b))" and typ == "f32"
+
+
+def test_emit_expr_binop_vec3_arithmetic():
+    """vec3 + vec3 → vec3, vec3 * f32 → vec3, f32 * vec3 → vec3 (WGSL native broadcast)."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_local("v", "vec3<f32>")
+    env.set_local("w", "vec3<f32>")
+    env.set_local("s", "f32")
+
+    text, typ = _emit_expr(_parse_expr("v + w"), env, "v + w")
+    assert text == "(v + w)" and typ == "vec3<f32>"
+
+    text, typ = _emit_expr(_parse_expr("v * s"), env, "v * s")
+    assert text == "(v * s)" and typ == "vec3<f32>"
+
+    text, typ = _emit_expr(_parse_expr("s * v"), env, "s * v")
+    assert text == "(s * v)" and typ == "vec3<f32>"
+
+
+def test_emit_expr_binop_implicit_int_float_raises():
+    """int + float without explicit cast raises implicit-promotion."""
+    from manifoldx.compute.transpile import ComputeShaderCompileError, TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_local("a", "i32")
+    env.set_local("b", "f32")
+    with pytest.raises(ComputeShaderCompileError, match="implicit-promotion"):
+        _emit_expr(_parse_expr("a + b"), env, "a + b")
+
+
+def test_emit_expr_pow_lowers_to_pow_call():
+    """`x ** y` emits as `pow(x, y)`."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_local("x", "f32")
+    env.set_local("y", "f32")
+    text, typ = _emit_expr(_parse_expr("x ** y"), env, "x ** y")
+    assert text == "pow(x, y)" and typ == "f32"

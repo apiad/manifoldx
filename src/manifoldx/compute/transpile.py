@@ -366,6 +366,48 @@ def _emit_expr(node, env: TypeEnv, src: str) -> tuple[str, str]:
             source_line=None,
         )
 
+    if isinstance(node, ast.BinOp):
+        l_text, l_type = _emit_expr(node.left, env, src)
+        r_text, r_type = _emit_expr(node.right, env, src)
+        op = node.op
+
+        if isinstance(op, ast.Pow):
+            return f"pow({l_text}, {r_text})", l_type
+
+        op_str = {
+            ast.Add:  "+",
+            ast.Sub:  "-",
+            ast.Mult: "*",
+            ast.Div:  "/",
+            ast.Mod:  "%",
+        }.get(type(op))
+        if op_str is None:
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message=f"unsupported binary op {type(op).__name__}",
+                filename="<expr>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+
+        # Strict promotion. Same-type → fine.
+        if l_type == r_type:
+            return f"({l_text} {op_str} {r_text})", l_type
+
+        # vec * scalar / scalar * vec native broadcast (WGSL).
+        VEC = {"vec3<f32>", "vec4<f32>"}
+        if l_type in VEC and r_type == "f32":
+            return f"({l_text} {op_str} {r_text})", l_type
+        if r_type in VEC and l_type == "f32":
+            return f"({l_text} {op_str} {r_text})", r_type
+
+        raise ComputeShaderCompileError(
+            category="implicit-promotion",
+            message=f"mixed types in binary op: {l_type} {op_str} {r_type}; "
+                    f"insert an explicit cast (e.g. f32(...))",
+            filename="<expr>", line=node.lineno, col=node.col_offset,
+            source_line=None,
+        )
+
     raise ComputeShaderCompileError(
         category="unsupported-construct",
         message=f"unsupported expression: {ast.unparse(node)!r}",
