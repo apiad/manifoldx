@@ -59,3 +59,43 @@ def test_shader_type_tags_still_raise_when_called_at_runtime():
         vec3(1.0, 2.0, 3.0)
     with pytest.raises(NotImplementedError, match="shader primitive"):
         vec4(1.0, 2.0, 3.0, 4.0)
+
+
+def test_compute_shader_compile_error_formats_with_source_line():
+    """ComputeShaderCompileError carries file/line/col/category and renders cleanly."""
+    from manifoldx.compute.transpile import ComputeShaderCompileError
+
+    err = ComputeShaderCompileError(
+        category="missing-annotation",
+        message="local 'x' used without annotation",
+        filename="<kernel>",
+        line=12,
+        col=8,
+        source_line="    x = 1.0",
+    )
+    text = str(err)
+    assert "<kernel>:12:8" in text
+    assert "missing-annotation" in text
+    assert "local 'x' used without annotation" in text
+    assert "    x = 1.0" in text
+    # Caret line indicates the column.
+    assert "^" in text
+    assert err.category == "missing-annotation"
+
+
+def test_compute_shader_compile_error_without_source_line():
+    """ComputeShaderCompileError tolerates missing source_line (e.g. wgpu-validation)."""
+    from manifoldx.compute.transpile import ComputeShaderCompileError
+
+    err = ComputeShaderCompileError(
+        category="wgpu-validation",
+        message="invalid storage binding",
+        filename="kernel.py",
+        line=0,
+        col=0,
+        source_line=None,
+    )
+    text = str(err)
+    assert "kernel.py" in text
+    assert "wgpu-validation" in text
+    assert "invalid storage binding" in text
