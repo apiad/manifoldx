@@ -22,8 +22,11 @@ class PointerEvent:
     """A pointer event delivered on `pointer_down` / `pointer_up` / `pointer_move`.
 
     `dx` / `dy` is the delta from the previous pointer position the bridge
-    saw. On `pointer_down` and `pointer_up` it is always 0.0 and the bridge
-    resets its "last position" tracker so a fresh drag starts clean.
+    saw on a `pointer_move`; on `pointer_down` and `pointer_up` it is always
+    0.0. The bridge re-anchors its "last position" tracker to `(x, y)` on
+    every pointer event, so the first `pointer_move` after a click produces
+    a delta measured from the click point — not from wherever the cursor
+    last reported during a previous drag.
     """
 
     x: float
