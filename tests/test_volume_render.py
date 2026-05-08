@@ -151,3 +151,72 @@ def test_two_entities_share_volume_handle():
     assert left_changed.any()
     assert right_changed.any()
     assert np.array_equal(rgba[32, 64], bg[32, 64])
+
+
+def test_step_size_invariance():
+    """Halving step_size produces nearly identical center-pixel rgba.
+
+    The `alpha *= step_size` term in the integration formula is what
+    makes this true. If someone refactors the shader and drops it,
+    visibility silently scales with quality settings.
+    """
+    from manifoldx.components import Material, Transform
+    from manifoldx.viz import Volume, VolumeMaterial
+
+    n = 32
+    xs = np.linspace(-1, 1, n, dtype=np.float32)
+    X, Y, Z = np.meshgrid(xs, xs, xs, indexing="ij")
+    density = np.exp(-(X**2 + Y**2 + Z**2) / 0.1).astype(np.float32)
+
+    def render_with_step(step):
+        engine = _make_offscreen_engine(width=64, height=64)
+        engine.camera.position = np.array([0.0, 0.0, 5.0], dtype=np.float32)
+        handle = engine.register_volume(density)
+        engine.spawn(
+            Volume(volume_id=handle),
+            Material(VolumeMaterial(
+                cmap="inferno",
+                opacity_stops=[(0.0, 0.0), (0.3, 0.05), (1.0, 0.6)],
+                step_size=step,
+            )),
+            Transform(pos=(0, 0, 0), scale=(2.0, 2.0, 2.0)),
+            n=1,
+        )
+        return _render_one_frame(engine)
+
+    rgba_coarse = render_with_step(0.04)
+    rgba_fine = render_with_step(0.02)
+    diff = abs(int(rgba_coarse[32, 32, 3]) - int(rgba_fine[32, 32, 3]))
+    assert diff < 13
+
+
+def test_update_volume_changes_pixels():
+    """update_volume() between frames produces different framebuffer content."""
+    from manifoldx.components import Material, Transform
+    from manifoldx.viz import Volume, VolumeMaterial
+
+    engine = _make_offscreen_engine(width=64, height=64)
+    engine.camera.position = np.array([0.0, 0.0, 5.0], dtype=np.float32)
+
+    arr_a = np.zeros((16, 16, 16), dtype=np.float32)
+    arr_a[8, 8, 8] = 1.0   # single bright voxel at center
+    handle = engine.register_volume(arr_a)
+    engine.spawn(
+        Volume(volume_id=handle),
+        Material(VolumeMaterial(
+            cmap="viridis",
+            opacity_stops=[(0.0, 0.0), (1.0, 1.0)],
+            step_size=0.05,
+            density_scale=20.0,
+        )),
+        Transform(pos=(0, 0, 0), scale=(2.0, 2.0, 2.0)),
+        n=1,
+    )
+    rgba_before = _render_one_frame(engine).copy()
+
+    arr_b = np.zeros_like(arr_a)
+    arr_b[2, 2, 2] = 1.0   # bright voxel at a different location
+    engine.update_volume(handle, arr_b)
+    rgba_after = _render_one_frame(engine)
+
+    assert not np.array_equal(rgba_before, rgba_after)
