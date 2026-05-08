@@ -216,3 +216,99 @@ class InputState:
         self._accum_mouse_dy = 0.0
         self._accum_wheel_dx = 0.0
         self._accum_wheel_dy = 0.0
+
+
+class _InputBridge:
+    """Forward rendercanvas events to the engine event bus and the InputState.
+
+    Attaches as a single `add_event_handler` callback for all input event
+    types we care about. Translates the rendercanvas dict into the matching
+    typed event dataclass, mutates `InputState` immediately (so live reads
+    are fresh), then `engine.emit(event_name, typed_event)` so the typed
+    event rides the standard one-frame-delayed bus queue.
+
+    Threading: rendercanvas marshals callbacks to the main thread before
+    invoking us, so `_on_event` always runs on the same thread that pumps
+    `_draw_frame`. No locking.
+    """
+
+    def __init__(self, engine, state: InputState) -> None:
+        self._engine = engine
+        self._state = state
+        self._last_pointer_pos: tuple[float, float] | None = None
+
+    def attach(self, canvas) -> None:
+        canvas.add_event_handler(
+            self._on_event,
+            "key_down",
+            "key_up",
+            "pointer_down",
+            "pointer_up",
+            "pointer_move",
+            "wheel",
+            "resize",
+        )
+
+    def begin_frame(self) -> None:
+        self._state._begin_frame()
+
+    def _on_event(self, rc: dict) -> None:
+        et = rc.get("event_type")
+        if et == "key_down":
+            ev = KeyEvent(key=rc["key"], modifiers=rc["modifiers"], is_down=True)
+            self._state._record_key_down(ev.key, ev.modifiers)
+            self._engine.emit("key_down", ev)
+        elif et == "key_up":
+            ev = KeyEvent(key=rc["key"], modifiers=rc["modifiers"], is_down=False)
+            self._state._record_key_up(ev.key, ev.modifiers)
+            self._engine.emit("key_up", ev)
+        elif et in ("pointer_down", "pointer_up", "pointer_move"):
+            ev = self._build_pointer_event(rc, et)
+            if et == "pointer_down":
+                self._state._record_pointer_down(ev)
+                self._last_pointer_pos = (ev.x, ev.y)
+            elif et == "pointer_up":
+                self._state._record_pointer_up(ev)
+                self._last_pointer_pos = (ev.x, ev.y)
+            else:  # pointer_move
+                self._state._record_pointer_move(ev)
+                self._last_pointer_pos = (ev.x, ev.y)
+            self._engine.emit(et, ev)
+        elif et == "wheel":
+            ev = WheelEvent(
+                dx=rc["dx"], dy=rc["dy"],
+                x=rc["x"], y=rc["y"],
+                buttons=rc["buttons"], modifiers=rc["modifiers"],
+            )
+            self._state._record_wheel(ev)
+            self._engine.emit("wheel", ev)
+        elif et == "resize":
+            ev = ResizeEvent(
+                width=rc["width"], height=rc["height"],
+                pixel_ratio=rc["pixel_ratio"],
+            )
+            self._state._record_resize(ev)
+            self._engine.emit("resize", ev)
+        # Other rendercanvas events (pointer_enter, pointer_leave,
+        # double_click, char, before_draw, animate) are ignored in v1.
+
+    def _build_pointer_event(self, rc: dict, et: str) -> PointerEvent:
+        x, y = rc["x"], rc["y"]
+        if et == "pointer_move" and self._last_pointer_pos is not None:
+            dx = x - self._last_pointer_pos[0]
+            dy = y - self._last_pointer_pos[1]
+        else:
+            dx = 0.0
+            dy = 0.0
+        phase = {
+            "pointer_down": "down",
+            "pointer_up": "up",
+            "pointer_move": "move",
+        }[et]
+        return PointerEvent(
+            x=x, y=y, dx=dx, dy=dy,
+            button=rc.get("button", 0),
+            buttons=rc["buttons"],
+            modifiers=rc["modifiers"],
+            phase=phase,
+        )
