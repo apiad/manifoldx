@@ -44,9 +44,21 @@ class Engine:
         self._event_loop = None
         self._present_mode = "fifo"
         self._texture_format = wgpu.TextureFormat.bgra8unorm
-        self._startup_callbacks = []
-        self._shutdown_callbacks = []
-        self._update_callbacks = []
+        # Event-driven system (replaces _startup/_shutdown/_update_callbacks)
+        from manifoldx.events import EventBus, FrameWaiters
+
+        self._event_bus = EventBus()
+        # Lazy fallback loop: only created when no asyncio loop is currently
+        # running (e.g. tests, render() to MP4). In interactive run() mode,
+        # rendercanvas is itself an asyncio loop and we adopt it instead —
+        # see _get_active_loop() below.
+        self._aio_loop: asyncio.AbstractEventLoop | None = None
+        self._frame_waiters = FrameWaiters(self._get_active_loop)
+        # Task error spool — populated by add_done_callback when an async
+        # handler raises (other than CancelledError). Drained by
+        # _pump_aio_loop, which re-raises the first error per the v1
+        # "errors crash the engine" policy.
+        self._task_errors: list[BaseException] = []
 
         # === ECS Infrastructure ===
         self.store = EntityStore(max_entities)
@@ -100,17 +112,68 @@ class Engine:
             self._label_atlas = LabelTextureAtlas()
         return self._label_atlas
 
-    def startup(self, func):
-        self._startup_callbacks.append(func)
-        return func
+    def on(self, event: str):
+        """Register a sync or async handler for an event.
 
-    def shutdown(self, func):
-        self._shutdown_callbacks.append(func)
-        return func
+        Usage:
+            @engine.on("startup")
+            def init(payload): ...
 
-    def update(self, func):
-        self._update_callbacks.append(func)
-        return func
+            @engine.on("frame")
+            async def each_frame(payload): ...
+        """
+        return self._event_bus.on(event)
+
+    def emit(self, event: str, payload=None) -> None:
+        """Queue an event for delivery at the start of the next frame."""
+        self._event_bus.emit(event, payload)
+
+    def tick(self):
+        """Return a future that resolves at the next frame boundary."""
+        return self._frame_waiters.add_tick()
+
+    def delay(self, seconds: float):
+        """Return a future that resolves after `seconds` of engine.elapsed."""
+        return self._frame_waiters.add_delay(seconds, self.elapsed)
+
+    def elapsed_at(self, target: float):
+        """Return a future that resolves once engine.elapsed >= target."""
+        return self._frame_waiters.add_elapsed_at(target)
+
+    async def run_blocking(self, fn, *args, **kwargs):
+        """Run a blocking callable in the default executor and await its result."""
+        import functools
+
+        return await self._aio_loop.run_in_executor(
+            None, functools.partial(fn, *args, **kwargs)
+        )
+
+    def _get_active_loop(self) -> asyncio.AbstractEventLoop:
+        """Return the asyncio loop async handlers should run on.
+
+        Prefers the currently-running loop (e.g. rendercanvas in interactive
+        run() mode). If no loop is running, lazily creates and returns a
+        private fallback (used by tests and the headless render() path).
+        """
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            if self._aio_loop is None or self._aio_loop.is_closed():
+                self._aio_loop = asyncio.new_event_loop()
+            return self._aio_loop
+
+    def _on_task_done(self, task) -> None:
+        """Done-callback wired onto every async-handler task.
+
+        Called synchronously when the task completes. We surface non-cancel
+        exceptions into _task_errors so _pump_aio_loop can re-raise them on
+        the next pump (per the v1 "errors crash the engine" policy).
+        """
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self._task_errors.append(exc)
 
     def system(self, func):
         """Decorator to register a system function.
@@ -220,7 +283,8 @@ class Engine:
 
     def quit(self):
         self._running = False
-        # Stop the event loop
+        self.shutdown_events()
+        # Stop the rendercanvas event loop
         if hasattr(self, "_event_loop") and self._event_loop is not None:
             self._event_loop.stop()
         # Also close the canvas
@@ -229,6 +293,59 @@ class Engine:
                 self._render_canvas.close()
             except Exception:
                 pass
+
+    def shutdown_events(self) -> None:
+        """Fire 'shutdown', cancel async tasks, drain the loop, close it.
+
+        Idempotent: safe to call from quit() and from finalization paths.
+        Handles both interactive (rendercanvas-owned loop running) and
+        headless (private fallback) modes.
+        """
+        if getattr(self, "_shutdown_done", False):
+            return
+        self._shutdown_done = True
+
+        # 1. Sync 'shutdown' handlers run inline; async ones get scheduled
+        #    as tasks on whichever loop is active.
+        self._event_bus.dispatch_immediate(self, "shutdown", {})
+
+        # 2. Determine which loop our tasks live on.
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+
+        target_loop = running if running is not None else self._aio_loop
+        if target_loop is None:
+            return  # nothing was ever async; nothing to clean up.
+
+        # 3. Cancel every outstanding task so while-True coroutines get
+        #    CancelledError on their next await.
+        for task in list(asyncio.all_tasks(loop=target_loop)):
+            task.cancel()
+
+        # 4. Cancel any outstanding waiter futures.
+        self._frame_waiters.cancel_all()
+
+        # 5. Pump the loop one final time so try/finally cleanup runs.
+        #    Only safe with run_until_complete when no loop is running;
+        #    when one is, the running loop will dispatch the cancellations
+        #    on its own and we just collect errors.
+        if running is None and not self._aio_loop.is_closed():
+            try:
+                self._aio_loop.run_until_complete(asyncio.sleep(0))
+            finally:
+                pending = self._task_errors
+                self._task_errors = []
+                self._aio_loop.close()
+        else:
+            pending = self._task_errors
+            self._task_errors = []
+
+        # 6. Surface the first non-cancel exception (if any) per the v1
+        #    "errors propagate" policy.
+        if pending:
+            raise pending[0]
 
     # === Timestep Configuration ===
     def set_fixed_timestep(self, dt: float):
@@ -361,21 +478,41 @@ class Engine:
             return False
 
         dt = self._compute_dt()
+        self._last_dt = dt
 
-        # 1. Clear command buffer for this frame
+        # Step 2: resolve frame waiters (tick / delay / elapsed_at)
+        self._frame_waiters.resolve(self.elapsed)
+
+        # Clear command buffer ONCE at the head of the frame so events,
+        # async handlers, and systems all contribute to the same buffer
+        # that gets flushed at step 6.
         self.commands.clear()
 
-        # 2. Run all user systems (they emit commands)
+        # Step 3: drain pending events (frame N-1's emits + this frame's 'frame')
+        frame_payload = {
+            "dt": dt,
+            "elapsed": self.elapsed,
+            "frame": self._frame_index,
+        }
+        # Inject the inline 'frame' event ahead of the user-emitted queue,
+        # so frame handlers see CURRENT-frame data (not last-frame's).
+        self._event_bus._pending.insert(0, ("frame", frame_payload))
+        self._event_bus.dispatch_pending(self)
+
+        # Step 4: pump asyncio loop (async handlers + waiter wakers).
+        self._pump_aio_loop()
+
+        # Step 5: run user systems (may emit commands).
         self.systems.run_all(self, dt)
 
-        # 3. Execute command buffer (apply all spawn/destroy/update)
+        # Step 6: flush command buffer (events + handlers + systems).
         self.commands.execute(self.store)
 
-        # 3b. Dispatch GPU compute systems (after CPU flush, before render).
+        # Step 7: GPU compute systems.
         self._compute_runner.run_all(dt)
         self._frame_index += 1
 
-        # 4. RENDER PIPELINE
+        # Step 8: render pipeline.
         self._render_pipeline.run(self, dt)
 
         # Ensure render pipeline is initialized
@@ -429,6 +566,36 @@ class Engine:
 
         return True  # Continue rendering
 
+    def _pump_aio_loop(self) -> None:
+        """Drive the engine's asyncio loop until quiescent (when applicable).
+
+        In headless mode (tests, render-to-MP4), there is no running asyncio
+        loop, so we drive our private fallback loop with run_until_complete.
+        In interactive run() mode, rendercanvas owns a running asyncio loop
+        and our async tasks were created on it; we MUST NOT call
+        run_until_complete on a different loop (RuntimeError) or recursively
+        on the same one. The running loop will pump our tasks naturally
+        between draw callbacks. Either way, we re-raise the first exception
+        spooled on _task_errors per the v1 error policy.
+
+        Trade-off documented in v1: in run() mode, an `await engine.tick()`
+        coroutine resumes between frames (after this _draw_frame returns,
+        before the next is scheduled), introducing up to one frame of
+        scheduling delay vs. headless mode where the resume happens inside
+        this same frame. The 1-frame difference is imperceptible at 60fps.
+        """
+        try:
+            asyncio.get_running_loop()
+            # A loop is running (rendercanvas). It pumps our tasks itself.
+        except RuntimeError:
+            # No running loop — drive our private fallback.
+            if self._aio_loop is not None and not self._aio_loop.is_closed():
+                self._aio_loop.run_until_complete(asyncio.sleep(0))
+
+        if self._task_errors:
+            exc = self._task_errors.pop(0)
+            raise exc
+
     def _run_loop(self):
         """Called each frame by the event loop (run() mode)."""
         self._draw_frame()
@@ -461,9 +628,8 @@ class Engine:
 
         self._running = True
 
-        # Run startup callbacks
-        for callback in self._startup_callbacks:
-            callback()
+        # Fire built-in 'startup' event before the first frame.
+        self._event_bus.dispatch_immediate(self, "startup", {})
 
         # Register draw callback and run the canvas event loop
         from rendercanvas.glfw import loop as glfw_loop
@@ -476,8 +642,7 @@ class Engine:
             print(f"Event loop error: {e}")
         finally:
             self._running = False
-            for callback in self._shutdown_callbacks:
-                callback()
+            self.shutdown_events()
 
     def render(
         self,
@@ -538,9 +703,8 @@ class Engine:
         # Set up video writer with imageio-ffmpeg
         writer = self._get_video_writer(output, fps, self.w, self.h, codec, quality)
 
-        # Run startup callbacks
-        for callback in self._startup_callbacks:
-            callback()
+        # Fire built-in 'startup' event before the first frame.
+        self._event_bus.dispatch_immediate(self, "startup", {})
 
         # Progress tracking
         pbar = None
@@ -581,9 +745,9 @@ class Engine:
 
         self._running = False
 
-        # Run shutdown callbacks
-        for callback in self._shutdown_callbacks:
-            callback()
+        # Fire 'shutdown' and tear down the asyncio loop cleanly so
+        # long-running async handlers don't leak as pending tasks.
+        self.shutdown_events()
 
         print(f"Video saved: {output}")
 
