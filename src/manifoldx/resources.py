@@ -827,12 +827,85 @@ class DirectionalLight:
         return data
 
 
+class _VolumeResource:
+    """Internal: one registered volume's CPU + (eventual) GPU state."""
+
+    __slots__ = ("data", "name", "dirty", "texture")
+
+    def __init__(self, data: np.ndarray, name: str):
+        self.data = data
+        self.name = name
+        self.dirty = True       # set on register/update; cleared post-upload
+        self.texture = None     # GPU texture; created lazily on first upload
+
+
+class VolumeRegistry:
+    """Cache of GPU 3D scalar field resources.
+
+    Mirrors the GeometryRegistry / MaterialRegistry shape:
+    - `register(numpy_array, name=...) -> int handle`
+    - `update(handle, numpy_array)` — same shape only; flips dirty bit.
+    - `get(handle) -> _VolumeResource`
+    - GPU texture creation is lazy (handled by the renderer at the
+      first frame in which the volume is needed).
+    """
+
+    def __init__(self, device=None):
+        self._device = device
+        self._volumes: Dict[int, _VolumeResource] = {}
+        self._next_id = 1
+
+    def register(self, data: np.ndarray, *, name: str | None = None) -> int:
+        if data.ndim != 3:
+            raise ValueError(
+                f"volume data must be 3D (Nz, Ny, Nx); got {data.ndim}D"
+            )
+        if data.dtype != np.float32:
+            raise ValueError(
+                f"volume data must be float32; got {data.dtype}. "
+                f"Convert with `array.astype(np.float32)`."
+            )
+        if not data.flags["C_CONTIGUOUS"]:
+            raise ValueError(
+                "volume data must be C-contiguous; "
+                "call `np.ascontiguousarray(array)` before registering."
+            )
+        handle = self._next_id
+        self._next_id += 1
+        self._volumes[handle] = _VolumeResource(
+            data=data, name=name or f"volume_{handle}"
+        )
+        return handle
+
+    def update(self, handle: int, data: np.ndarray) -> None:
+        res = self.get(handle)
+        if data.shape != res.data.shape:
+            raise ValueError(
+                f"update_volume: shape mismatch — registered {res.data.shape}, "
+                f"got {data.shape}. Re-register if you need a different size."
+            )
+        if data.dtype != np.float32:
+            raise ValueError(
+                f"volume data must be float32; got {data.dtype}."
+            )
+        if not data.flags["C_CONTIGUOUS"]:
+            raise ValueError("volume data must be C-contiguous.")
+        res.data = data
+        res.dirty = True
+
+    def get(self, handle: int) -> _VolumeResource:
+        if handle not in self._volumes:
+            raise KeyError(f"unknown volume handle: {handle}")
+        return self._volumes[handle]
+
+
 __all__ = [
     "Material",
     "BasicMaterial",
     "StandardMaterial",
     "GeometryRegistry",
     "MaterialRegistry",
+    "VolumeRegistry",
     "cube",
     "sphere",
     "plane",
