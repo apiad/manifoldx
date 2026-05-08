@@ -148,3 +148,61 @@ def _invoke_async(handler: Handler, payload, engine) -> None:
         coro = handler.func(payload)
     task = engine._aio_loop.create_task(coro)
     task.add_done_callback(engine._on_task_done)
+
+
+class FrameWaiters:
+    """Per-frame inboxes for tick / delay / elapsed_at futures.
+
+    Each call to add_* registers a fresh future on the appropriate list.
+    `resolve(elapsed)` walks the lists, sets futures whose predicates hold,
+    and removes them from their lists. The lists are not standing
+    subscriptions — coroutines that loop must call add_* again next frame.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._tick: list[asyncio.Future] = []
+        self._deadlines: list[tuple[asyncio.Future, float]] = []  # delay + elapsed_at share storage
+
+    def add_tick(self) -> asyncio.Future:
+        fut = self._loop.create_future()
+        self._tick.append(fut)
+        return fut
+
+    def add_delay(self, seconds: float, current_elapsed: float) -> asyncio.Future:
+        fut = self._loop.create_future()
+        self._deadlines.append((fut, current_elapsed + seconds))
+        return fut
+
+    def add_elapsed_at(self, target: float) -> asyncio.Future:
+        fut = self._loop.create_future()
+        self._deadlines.append((fut, target))
+        return fut
+
+    def resolve(self, elapsed: float) -> None:
+        # tick waiters resolve unconditionally
+        for fut in self._tick:
+            if not fut.done():
+                fut.set_result(None)
+        self._tick.clear()
+
+        # deadline waiters: resolve those whose deadline is reached
+        kept: list[tuple[asyncio.Future, float]] = []
+        for fut, deadline in self._deadlines:
+            if elapsed >= deadline:
+                if not fut.done():
+                    fut.set_result(None)
+            else:
+                kept.append((fut, deadline))
+        self._deadlines = kept
+
+    def cancel_all(self) -> None:
+        """Cancel every outstanding future (used at shutdown)."""
+        for fut in self._tick:
+            if not fut.done():
+                fut.cancel()
+        for fut, _ in self._deadlines:
+            if not fut.done():
+                fut.cancel()
+        self._tick.clear()
+        self._deadlines.clear()
