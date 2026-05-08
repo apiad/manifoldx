@@ -76,6 +76,26 @@ def test_emit_from_system_fires_next_frame():
     assert fired == [True]
 
 
+def test_startup_fires_once_before_first_frame():
+    engine = _make_offscreen_engine()
+    log = []
+
+    @engine.on("startup")
+    def on_start(payload):
+        log.append("start")
+
+    @engine.on("frame")
+    def on_frame(payload):
+        log.append(("frame", payload["frame"]))
+
+    # Mimic what run()/render() do: call dispatch_immediate('startup') once
+    # before the first _draw_frame.
+    engine._event_bus.dispatch_immediate(engine, "startup", {})
+    engine._draw_frame()
+
+    assert log == ["start", ("frame", 0)]
+
+
 def test_handler_with_query_view_is_readonly():
     from manifoldx.events import ReadOnlyView
     from manifoldx.systems import Query

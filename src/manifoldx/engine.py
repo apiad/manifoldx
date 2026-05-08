@@ -542,7 +542,8 @@ class Engine:
 
         self._running = True
 
-        # 'startup' dispatch wired in Task 7.
+        # Fire built-in 'startup' event before the first frame.
+        self._event_bus.dispatch_immediate(self, "startup", {})
 
         # Register draw callback and run the canvas event loop
         from rendercanvas.glfw import loop as glfw_loop
@@ -616,7 +617,8 @@ class Engine:
         # Set up video writer with imageio-ffmpeg
         writer = self._get_video_writer(output, fps, self.w, self.h, codec, quality)
 
-        # 'startup' dispatch wired in Task 7.
+        # Fire built-in 'startup' event before the first frame.
+        self._event_bus.dispatch_immediate(self, "startup", {})
 
         # Progress tracking
         pbar = None
