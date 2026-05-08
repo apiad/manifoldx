@@ -4,6 +4,13 @@ See `.knowledge/analysis/2026-05-08-compute-phase-2-shader-compiler-design.md`.
 """
 from __future__ import annotations
 
+import ast
+import inspect
+import textwrap
+from typing import Dict, List
+
+from manifoldx.compute import shader as _shader
+
 
 class ComputeShaderCompileError(Exception):
     """Raised when a Compute kernel cannot be transpiled to valid WGSL.
@@ -37,12 +44,6 @@ class ComputeShaderCompileError(Exception):
             return head
         caret = " " * self.col + "^"
         return f"{head}\n  {self.source_line}\n  {caret}"
-
-
-import ast
-import inspect
-import textwrap
-from typing import Dict, List
 
 
 def _collect_method_asts(cls: type) -> Dict[str, ast.FunctionDef]:
@@ -142,9 +143,6 @@ def _check_no_recursion(methods: Dict[str, ast.FunctionDef]) -> None:
     for name, fn in methods.items():
         if color[name] == WHITE:
             dfs(name, fn)
-
-
-from manifoldx.compute import shader as _shader
 
 
 _TYPE_MAP = {
