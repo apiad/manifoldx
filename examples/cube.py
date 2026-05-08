@@ -14,8 +14,8 @@ cube_material = mx.material.phong(mx.colors.RED)
 
 
 # This method gets executed at startup
-@engine.startup
-def create_cubes():
+@engine.on("startup")
+def create_cubes(_payload):
     # Instantiate a single cube
     engine.spawn(
         # These components just store indices to resources

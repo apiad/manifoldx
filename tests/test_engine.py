@@ -82,33 +82,31 @@ def test_engine_creation():
 
 
 def test_engine_startup_decorator():
-    """Engine startup decorator registers callbacks."""
+    """Engine startup handler registers via @engine.on('startup')."""
     engine = Engine("Test")
     call_count = 0
 
-    @engine.startup
-    def init():
+    @engine.on("startup")
+    def init(_payload):
         nonlocal call_count
         call_count += 1
 
-    # Startup callback should be registered
-    assert len(engine._startup_callbacks) == 1
-    assert init in engine._startup_callbacks
+    # Handler should be registered on the bus.
+    assert len(engine._event_bus._handlers["startup"]) == 1
 
 
 def test_engine_shutdown_decorator():
-    """Engine shutdown decorator registers callbacks."""
+    """Engine shutdown handler registers via @engine.on('shutdown')."""
     engine = Engine("Test")
     call_count = 0
 
-    @engine.shutdown
-    def close():
+    @engine.on("shutdown")
+    def close(_payload):
         nonlocal call_count
         call_count += 1
 
-    # Shutdown callback should be registered
-    assert len(engine._shutdown_callbacks) == 1
-    assert close in engine._shutdown_callbacks
+    # Handler should be registered on the bus.
+    assert len(engine._event_bus._handlers["shutdown"]) == 1
 
 
 def test_engine_quit():
@@ -181,27 +179,25 @@ def test_engine_has_wgpu_import():
         pytest.skip("wgpu-py not available")
 
 
-def test_engine_has_update_callbacks():
-    """Engine has update decorator and callback list."""
+def test_engine_has_frame_event():
+    """Engine has the 'frame' built-in event registered via engine.on('frame')."""
     engine = Engine("Test")
-    assert hasattr(engine, "_update_callbacks")
-    assert hasattr(engine, "update")
-    assert callable(engine.update)
+    assert hasattr(engine, "on")
+    assert callable(engine.on)
 
 
-def test_engine_calls_update_callbacks():
-    """Engine calls update callbacks in the main loop."""
+def test_engine_registers_frame_handlers():
+    """Engine registers per-frame handlers via @engine.on('frame')."""
     engine = Engine("Test")
     call_count = 0
 
-    @engine.update
-    def tick():
+    @engine.on("frame")
+    def tick(_payload):
         nonlocal call_count
         call_count += 1
 
-    # Verify callback registered
-    assert len(engine._update_callbacks) == 1
-    assert tick in engine._update_callbacks
+    # Verify handler registered on the bus
+    assert len(engine._event_bus._handlers["frame"]) == 1
 
 
 def test_engine_uses_rendercanvas():
