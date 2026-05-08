@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Features
+
+- **Compute systems Phase 2 — Python → WGSL shader compiler** — `Compute.compile()`'s default body now traces a typed-Python `def main(self, i)` body to WGSL via `manifoldx.compute.transpile`. Kernel authors write plain Python with PEP-526 annotations on every local; the transpiler emits the bind-group header, helper functions (`fn _<ClassName>_<name>`), and the `@compute @workgroup_size(W) fn main(...)` wrapper. `examples/nbody_compute.py` is now a Compute subclass with a `pair_accel(...) -> vec3` helper method instead of an inlined WGSL string; numerics agree with the Phase-1 hand-written kernel within `rtol=1e-5`.
+- **`engine.compute(cls)` validates synchronously** — WGSL is compiled via `device.create_shader_module(...)` at registration time. Errors surface as `ComputeShaderCompileError` (category `wgpu-validation`) before any frame runs, alongside Python-source-level transpiler errors (`unsupported-construct`, `missing-annotation`, `unknown-name`, `type-mismatch`, `implicit-promotion`, `recursion`).
+- **Per-Component `_layout` table** — `Component.__init_subclass__` now derives `{field_name: (offset_in_floats, length_in_floats)}` from the existing field annotations. Pre-base-class built-ins (`Transform`, `Mesh`, `Material`) ship explicit `_layout` class attrs. The transpiler reads this table to emit storage-buffer offset arithmetic without component-specific knowledge.
+
+### Refactors
+
+- **`compile()` override is the escape hatch, not the default.** Phase-1 user kernels that override `compile()` continue to work unchanged; only the default body changed.
+
 ## [0.8.0] - 2026-05-06
 
 ### Features
