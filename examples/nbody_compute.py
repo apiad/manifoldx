@@ -4,19 +4,12 @@ A side-by-side counterpart to examples/nbody.py: same physics, same
 visuals, but the all-pairs O(N²) gravity loop runs in a WGSL compute
 shader instead of pure-numpy on CPU.
 
-Demonstrates the compute-systems extensibility surface end-to-end:
-- Two custom Component subclasses (Velocity, Mass) used as compute
-  inputs / outputs.
-- A GravityKernel(Compute) subclass declares its bindings via
-  Reads/ReadsWrites/Uniform annotations and provides raw WGSL via
-  compile().
-- The engine auto-registers the components, compiles the pipeline
-  on first frame, dispatches every frame between CPU command flush
-  and the render pass.
+Demonstrates the Phase-2 Python-as-shader DSL: GravityKernel.main is
+plain typed Python; the engine traces it to WGSL on engine.compute(...)
+via manifoldx.compute.transpile.
 
-Phase 2 (still to design) will replace `compile()` with a Python
-`def main(self, i)` body that gets traced to WGSL by a code generator;
-the rest of this file stays identical.
+Phase 1 (raw WGSL via compile() override) still works — see the test
+suite for an explicit hand-written counterpart.
 """
 
 import manifoldx as mx
@@ -24,6 +17,7 @@ import numpy as np
 
 from manifoldx.components import Component, Material, Mesh, Transform
 from manifoldx.compute import Compute, Reads, ReadsWrites, Uniform
+from manifoldx.compute.shader import vec3, dot, sqrt
 from manifoldx.resources import PhongMaterial, sphere
 from manifoldx.types import Float, Vector3
 
@@ -47,70 +41,18 @@ SPHERE_RADIUS = 0.5
 SIZE = 5 * NUM_BODIES ** (1 / 3)
 
 
-# ── GPU compute kernel ───────────────────────────────────────────────────────
-_GRAVITY_WGSL = """
-struct Uniforms { G: f32, softening: f32, dt: f32, n: f32, };
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var<storage, read> masses: array<f32>;
-@group(0) @binding(2) var<storage, read_write> transforms: array<f32>;
-@group(0) @binding(3) var<storage, read_write> velocities: array<f32>;
-
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
-    let n = u32(uniforms.n);
-    if (i >= n) { return; }
-
-    // Transform layout: pos.xyz (3) + rot.xyzw (4) + scale.xyz (3) = 10 floats.
-    let stride_t = 10u;
-    // Velocity layout: vector.xyz (3 floats).
-    let stride_v = 3u;
-
-    let pos_i = vec3<f32>(
-        transforms[i * stride_t + 0u],
-        transforms[i * stride_t + 1u],
-        transforms[i * stride_t + 2u],
-    );
-
-    // All-pairs gravity. One thread per body; sum forces from all others.
-    var accel = vec3<f32>(0.0);
-    for (var j = 0u; j < n; j = j + 1u) {
-        if (i == j) { continue; }
-        let pos_j = vec3<f32>(
-            transforms[j * stride_t + 0u],
-            transforms[j * stride_t + 1u],
-            transforms[j * stride_t + 2u],
-        );
-        let diff = pos_j - pos_i;
-        let r2 = dot(diff, diff) + uniforms.softening * uniforms.softening;
-        let inv_r3 = 1.0 / (r2 * sqrt(r2));
-        accel = accel + uniforms.G * masses[j] * diff * inv_r3;
-    }
-
-    // Integrate velocity, then position.
-    var vel = vec3<f32>(
-        velocities[i * stride_v + 0u],
-        velocities[i * stride_v + 1u],
-        velocities[i * stride_v + 2u],
-    );
-    vel = vel + accel * uniforms.dt;
-
-    velocities[i * stride_v + 0u] = vel.x;
-    velocities[i * stride_v + 1u] = vel.y;
-    velocities[i * stride_v + 2u] = vel.z;
-
-    transforms[i * stride_t + 0u] = pos_i.x + vel.x * uniforms.dt;
-    transforms[i * stride_t + 1u] = pos_i.y + vel.y * uniforms.dt;
-    transforms[i * stride_t + 2u] = pos_i.z + vel.z * uniforms.dt;
-}
-""".strip()
-
-
+# ── GPU compute kernel — plain typed Python ──────────────────────────────────
 class GravityKernel(Compute):
-    """N-body gravity + velocity-and-position integration on the GPU."""
+    """N-body gravity + velocity-and-position integration on the GPU.
 
-    masses:     Reads[Mass]
+    Each thread handles one body, sums gravitational pull from every
+    other body, then integrates velocity and position. The kernel body
+    is plain typed Python — manifoldx.compute.transpile traces it to
+    WGSL when engine.compute(GravityKernel) is called.
+    """
+
     transforms: ReadsWrites[Transform]
+    masses:     Reads[Mass]
     velocities: ReadsWrites[Velocity]
 
     G:         Uniform[float] = G
@@ -121,12 +63,27 @@ class GravityKernel(Compute):
     workgroup_size = 64
     dispatch = "entity_count"
 
-    def compile(self) -> str:
-        return _GRAVITY_WGSL
+    def pair_accel(self, pos_i: vec3, pos_j: vec3, m_j: float) -> vec3:
+        diff:   vec3  = pos_j - pos_i
+        r2:     float = dot(diff, diff) + self.softening * self.softening
+        inv_r3: float = 1.0 / (r2 * sqrt(r2))
+        return self.G * m_j * diff * inv_r3
+
+    def main(self, i: int):
+        if i >= u32(self.n):
+            return
+        pos_i: vec3 = self.transforms[i].pos
+        accel: vec3 = vec3(0.0, 0.0, 0.0)
+        for j in range(u32(self.n)):
+            if i == j:
+                continue
+            accel += self.pair_accel(pos_i, self.transforms[j].pos, self.masses[j].value)
+        self.velocities[i].vector += accel * self.dt
+        self.transforms[i].pos    += self.velocities[i].vector * self.dt
 
 
 # ── Engine setup ─────────────────────────────────────────────────────────────
-engine = mx.Engine("N-Body Compute")
+engine = mx.Engine("N-Body Compute (transpiled)")
 engine.camera.fit(SIZE)
 
 positions = mx.random.positions_in_box(NUM_BODIES, half_size=SIZE, rng=7)
