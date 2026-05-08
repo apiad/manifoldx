@@ -265,7 +265,8 @@ class Engine:
 
     def quit(self):
         self._running = False
-        # Stop the event loop
+        self.shutdown_events()
+        # Stop the rendercanvas event loop
         if hasattr(self, "_event_loop") and self._event_loop is not None:
             self._event_loop.stop()
         # Also close the canvas
@@ -274,6 +275,42 @@ class Engine:
                 self._render_canvas.close()
             except Exception:
                 pass
+
+    def shutdown_events(self) -> None:
+        """Fire 'shutdown', cancel async tasks, drain the loop, close it.
+
+        Idempotent: safe to call from quit() and from finalization paths.
+        """
+        if self._aio_loop.is_closed():
+            return
+
+        # 1. Sync 'shutdown' handlers run inline; async ones get scheduled
+        #    as tasks on the loop.
+        self._event_bus.dispatch_immediate(self, "shutdown", {})
+
+        # 2. Cancel every outstanding task so while-True coroutines get
+        #    CancelledError on their next await.
+        for task in list(asyncio.all_tasks(loop=self._aio_loop)):
+            task.cancel()
+
+        # 3. Cancel any outstanding waiter futures so coroutines blocked
+        #    on engine.tick / delay / elapsed_at unblock with CancelledError.
+        self._frame_waiters.cancel_all()
+
+        # 4. Pump the loop one final time to let try/finally cleanup run.
+        #    Done callbacks fire here, populating _task_errors for any
+        #    non-cancel exceptions raised during cleanup.
+        try:
+            self._aio_loop.run_until_complete(asyncio.sleep(0))
+        finally:
+            pending = self._task_errors
+            self._task_errors = []
+            self._aio_loop.close()
+
+        # 5. Surface the first non-cancel exception (if any) per the v1
+        #    "errors propagate" policy.
+        if pending:
+            raise pending[0]
 
     # === Timestep Configuration ===
     def set_fixed_timestep(self, dt: float):
@@ -556,7 +593,7 @@ class Engine:
             print(f"Event loop error: {e}")
         finally:
             self._running = False
-            # 'shutdown' dispatch + asyncio teardown wired in Task 8.
+            self.shutdown_events()
 
     def render(
         self,
