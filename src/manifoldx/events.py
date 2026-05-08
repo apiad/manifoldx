@@ -55,3 +55,96 @@ class ReadOnlyView:
 
     def get_component_data(self, component_name):
         return self._view.get_component_data(component_name)
+
+
+@dataclass
+class Handler:
+    func: Callable
+    is_async: bool
+    query_components: list[str] | None = None
+
+
+def _parse_query_components(func) -> list[str] | None:
+    """Parse Query[A, B] annotation from a function's signature.
+
+    Returns the list of component names if found, else None.
+    Mirrors the logic in Engine.system().
+    """
+    from manifoldx.systems import Query
+
+    hints = getattr(func, "__annotations__", {})
+    for hint in hints.values():
+        if isinstance(hint, Query):
+            comps = hint.components
+            if not isinstance(comps, tuple):
+                comps = (comps,)
+            names = []
+            for c in comps:
+                if isinstance(c, str):
+                    names.append(c)
+                elif hasattr(c, "__name__"):
+                    names.append(c.__name__)
+            return names
+    return None
+
+
+class EventBus:
+    """Per-frame queued event bus.
+
+    Emits go into `_pending`; `dispatch_pending` drains and delivers them.
+    `dispatch_immediate` is for the engine's own 'startup' / 'shutdown'
+    phase events, which must not wait a frame.
+    """
+
+    def __init__(self) -> None:
+        self._handlers: dict[str, list[Handler]] = {}
+        self._pending: list[tuple[str, Any]] = []
+
+    def on(self, event: str):
+        def decorator(func):
+            handler = Handler(
+                func=func,
+                is_async=inspect.iscoroutinefunction(func),
+                query_components=_parse_query_components(func),
+            )
+            self._handlers.setdefault(event, []).append(handler)
+            return func
+
+        return decorator
+
+    def emit(self, event: str, payload: Any = None) -> None:
+        self._pending.append((event, payload))
+
+    def dispatch_pending(self, engine) -> None:
+        drained = self._pending
+        self._pending = []
+        for event, payload in drained:
+            self._deliver(engine, event, payload)
+
+    def dispatch_immediate(self, engine, event: str, payload: Any = None) -> None:
+        self._deliver(engine, event, payload)
+
+    def _deliver(self, engine, event: str, payload: Any) -> None:
+        for handler in self._handlers.get(event, ()):
+            if handler.is_async:
+                _invoke_async(handler, payload, engine)
+            else:
+                _invoke_sync(handler, payload, engine)
+
+
+def _invoke_sync(handler: Handler, payload, engine) -> None:
+    if handler.query_components:
+        view = engine.store.get_component_view(handler.query_components, engine)
+        handler.func(payload, ReadOnlyView(view))
+    else:
+        handler.func(payload)
+
+
+def _invoke_async(handler: Handler, payload, engine) -> None:
+    if handler.query_components:
+        view = engine.store.get_component_view(handler.query_components, engine)
+        coro = handler.func(payload, ReadOnlyView(view))
+    else:
+        coro = handler.func(payload)
+    task = engine._aio_loop.create_task(coro)
+    task.add_done_callback(engine._on_task_done)
