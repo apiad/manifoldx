@@ -400,6 +400,29 @@ def _emit_expr(node, env: TypeEnv, src: str) -> tuple[str, str]:
         # self.<uniform> — fall through to uniform branch.
         if isinstance(node.value, ast.Name) and node.value.id == "self":
             return f"uniforms.{node.attr}", env.lookup_uniform(node.attr)
+
+        # Swizzle read on a vec3/vec4-typed expression: `accel.x`,
+        # `next_pos.y`, `self.transforms[i].pos.z`, etc. Returns f32.
+        if node.attr in {"x", "y", "z", "w"}:
+            inner_text, inner_type = _emit_expr(node.value, env, src)
+            if inner_type == "vec3<f32>":
+                if node.attr == "w":
+                    raise ComputeShaderCompileError(
+                        category="unsupported-construct",
+                        message="cannot access .w on vec3<f32>; use vec4 if a 4th component is needed",
+                        filename="<expr>", line=node.lineno, col=node.col_offset,
+                        source_line=None,
+                    )
+                return f"{inner_text}.{node.attr}", "f32"
+            if inner_type == "vec4<f32>":
+                return f"{inner_text}.{node.attr}", "f32"
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message=f"swizzle .{node.attr} requires a vec3/vec4 expression; got {inner_type}",
+                filename="<expr>", line=node.lineno, col=node.col_offset,
+                source_line=None,
+            )
+
         raise ComputeShaderCompileError(
             category="unsupported-construct",
             message=f"unsupported attribute access: {ast.unparse(node)!r}",

@@ -349,6 +349,50 @@ def test_emit_expr_binding_scalar_field_read():
     assert typ == "f32"
 
 
+def test_emit_expr_swizzle_read_on_local_vec3():
+    """`accel.x` on a local vec3 emits as `accel.x` with type f32."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_local("accel", "vec3<f32>")
+    text, typ = _emit_expr(_parse_expr("accel.x"), env, "accel.x")
+    assert text == "accel.x" and typ == "f32"
+    text, typ = _emit_expr(_parse_expr("accel.y"), env, "accel.y")
+    assert text == "accel.y" and typ == "f32"
+    text, typ = _emit_expr(_parse_expr("accel.z"), env, "accel.z")
+    assert text == "accel.z" and typ == "f32"
+
+
+def test_emit_expr_swizzle_read_on_vec4_includes_w():
+    """vec4 supports .w; vec3 does not."""
+    from manifoldx.compute.transpile import ComputeShaderCompileError, TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_local("q", "vec4<f32>")
+    text, typ = _emit_expr(_parse_expr("q.w"), env, "q.w")
+    assert text == "q.w" and typ == "f32"
+
+    env.set_local("v", "vec3<f32>")
+    with pytest.raises(ComputeShaderCompileError, match="unsupported-construct"):
+        _emit_expr(_parse_expr("v.w"), env, "v.w")
+
+
+def test_emit_expr_swizzle_on_indexed_binding_field():
+    """Compound: self.transforms[i].pos.x — swizzle on top of binding read."""
+    from manifoldx.compute.transpile import TypeEnv, _emit_expr
+
+    env = TypeEnv()
+    env.set_param("i", "u32")
+    env.set_binding("transforms", component_name="Transform")
+    text, typ = _emit_expr(
+        _parse_expr("self.transforms[i].pos.x"), env, "self.transforms[i].pos.x"
+    )
+    # Whole vec3 reconstruction then `.x`. WGSL accepts this.
+    assert text.startswith("vec3<f32>(transforms[")
+    assert text.endswith(").x")
+    assert typ == "f32"
+
+
 def test_emit_expr_binding_unknown_field_raises():
     """Accessing a field not in the Component's _layout raises a clear error."""
     from manifoldx.compute.transpile import ComputeShaderCompileError, TypeEnv, _emit_expr
