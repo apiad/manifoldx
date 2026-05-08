@@ -52,11 +52,21 @@ def _fade(t: np.ndarray) -> np.ndarray:
     return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
 
-def perlin3(x: np.ndarray, y: np.ndarray, z: np.ndarray, perm: np.ndarray) -> np.ndarray:
-    """3D Perlin gradient noise. Inputs are float arrays of any matching shape."""
-    xi = np.floor(x).astype(np.int32) & 255
-    yi = np.floor(y).astype(np.int32) & 255
-    zi = np.floor(z).astype(np.int32) & 255
+def perlin3_tileable(
+    x: np.ndarray, y: np.ndarray, z: np.ndarray,
+    perm: np.ndarray, period: int,
+) -> np.ndarray:
+    """3D Perlin gradient noise that tiles seamlessly with period `period`
+    on the lattice. Lattice cell coordinates are reduced modulo `period`
+    before they index `perm`, so the noise field is identical at lattice
+    positions `i` and `i + period`.
+    """
+    xi = np.floor(x).astype(np.int32) % period
+    yi = np.floor(y).astype(np.int32) % period
+    zi = np.floor(z).astype(np.int32) % period
+    xi1 = (xi + 1) % period
+    yi1 = (yi + 1) % period
+    zi1 = (zi + 1) % period
     xf = x - np.floor(x)
     yf = y - np.floor(y)
     zf = z - np.floor(z)
@@ -64,21 +74,21 @@ def perlin3(x: np.ndarray, y: np.ndarray, z: np.ndarray, perm: np.ndarray) -> np
     v = _fade(yf)
     w = _fade(zf)
 
-    a = perm[xi]
-    b = perm[xi + 1]
-    aa = perm[(a + yi) & 255]
-    ab = perm[(a + yi + 1) & 255]
-    ba = perm[(b + yi) & 255]
-    bb = perm[(b + yi + 1) & 255]
+    a   = perm[xi  & 255]
+    a1  = perm[xi1 & 255]
+    aa  = perm[(a  + (yi  & 255)) & 255]
+    aa1 = perm[(a  + (yi1 & 255)) & 255]
+    a1a = perm[(a1 + (yi  & 255)) & 255]
+    a1a1 = perm[(a1 + (yi1 & 255)) & 255]
 
-    h000 = perm[(aa + zi) & 255] % 12
-    h001 = perm[(aa + zi + 1) & 255] % 12
-    h010 = perm[(ab + zi) & 255] % 12
-    h011 = perm[(ab + zi + 1) & 255] % 12
-    h100 = perm[(ba + zi) & 255] % 12
-    h101 = perm[(ba + zi + 1) & 255] % 12
-    h110 = perm[(bb + zi) & 255] % 12
-    h111 = perm[(bb + zi + 1) & 255] % 12
+    h000 = perm[(aa   + (zi  & 255)) & 255] % 12
+    h001 = perm[(aa   + (zi1 & 255)) & 255] % 12
+    h010 = perm[(aa1  + (zi  & 255)) & 255] % 12
+    h011 = perm[(aa1  + (zi1 & 255)) & 255] % 12
+    h100 = perm[(a1a  + (zi  & 255)) & 255] % 12
+    h101 = perm[(a1a  + (zi1 & 255)) & 255] % 12
+    h110 = perm[(a1a1 + (zi  & 255)) & 255] % 12
+    h111 = perm[(a1a1 + (zi1 & 255)) & 255] % 12
 
     def dot(h: np.ndarray, dx: np.ndarray, dy: np.ndarray, dz: np.ndarray) -> np.ndarray:
         g = _GRAD3[h]
@@ -102,17 +112,28 @@ def perlin3(x: np.ndarray, y: np.ndarray, z: np.ndarray, perm: np.ndarray) -> np
     return (y0 + w * (y1 - y0)).astype(np.float32)
 
 
-def perlin_fbm3(
+def perlin_fbm3_tileable(
     x: np.ndarray, y: np.ndarray, z: np.ndarray,
-    perm: np.ndarray, octaves: int = 4, persistence: float = 0.5, lacunarity: float = 2.0,
+    perm: np.ndarray, octaves: int = 4, base_period: int = 3,
+    persistence: float = 0.5, lacunarity: int = 2,
 ) -> np.ndarray:
-    """4-octave fractal Brownian motion of 3D Perlin noise. Output normalized to [-1, 1]."""
+    """Tileable FBM of 3D Perlin noise.
+
+    Each octave's lattice has period `base_period * lacunarity**k`, so the
+    sum is intrinsically periodic with period `base_period * lacunarity**(octaves-1)`
+    in lattice coordinates. Caller is responsible for choosing source
+    coordinates that step exactly `base_period` units across the source
+    volume so the volume tiles cleanly.
+    """
     total = np.zeros_like(x)
     amplitude = 1.0
-    frequency = 1.0
+    frequency = 1
     norm = 0.0
     for _ in range(octaves):
-        total += amplitude * perlin3(x * frequency, y * frequency, z * frequency, perm)
+        period = base_period * frequency
+        total += amplitude * perlin3_tileable(
+            x * frequency, y * frequency, z * frequency, perm, period
+        )
         norm += amplitude
         amplitude *= persistence
         frequency *= lacunarity
@@ -122,19 +143,36 @@ def perlin_fbm3(
 # ── Pre-compute the smoke field ──────────────────────────────────────────────
 N_WINDOW = 64        # uploaded volume size
 N_SOURCE = 96        # pre-computed source size; drift window slides through it
-NOISE_SCALE = 3.0    # spatial frequency at octave 0 — bigger = finer wisps
+OCTAVES = 4
+BASE_PERIOD = 3      # tile period (in lattice cells) at octave 0
+# At octave k, the lattice has BASE_PERIOD * 2**k cells per tile. The largest
+# octave is BASE_PERIOD * 2**(OCTAVES-1) = 24 cells; N_SOURCE=96 must be an
+# integer multiple of that for clean tiling. 96 / 24 = 4. ✓
 
-print(f"Pre-computing {N_SOURCE}³ Perlin FBM (4 octaves)…")
-xs = (np.linspace(0.0, NOISE_SCALE, N_SOURCE)).astype(np.float32)
+print(f"Pre-computing {N_SOURCE}³ tileable Perlin FBM ({OCTAVES} octaves)…")
+# `endpoint=False` is critical: voxel N_SOURCE would be at lattice position
+# BASE_PERIOD = 3.0, which equals lattice 0.0 in the periodic noise. So
+# voxels [0, N_SOURCE-1] cover one full tile without duplicating endpoints.
+xs = np.linspace(0.0, float(BASE_PERIOD), N_SOURCE, endpoint=False, dtype=np.float32)
 SX, SY, SZ = np.meshgrid(xs, xs, xs, indexing="ij")
 PERM = _make_perm_table(seed=42)
-DENSITY_SOURCE = perlin_fbm3(SX, SY, SZ, PERM, octaves=4, persistence=0.55)
+DENSITY_SOURCE = perlin_fbm3_tileable(
+    SX, SY, SZ, PERM, octaves=OCTAVES, base_period=BASE_PERIOD, persistence=0.55,
+)
 # Normalize to [0, 1]
 DENSITY_SOURCE = (DENSITY_SOURCE - DENSITY_SOURCE.min()) / (
     np.ptp(DENSITY_SOURCE) + 1e-9
 )
 DENSITY_SOURCE = DENSITY_SOURCE.astype(np.float32)
 print(f"  source range: [{DENSITY_SOURCE.min():.3f}, {DENSITY_SOURCE.max():.3f}]")
+
+# Pad with `mode='wrap'` by N_WINDOW+1 cells so plain integer slicing into
+# DENSITY_PADDED works for any window starting at offset [0, N_SOURCE-1] —
+# crossing the periodic boundary is now a continuous slice, not a hard cut.
+PAD = N_WINDOW + 1
+DENSITY_PADDED = np.pad(
+    DENSITY_SOURCE, ((0, PAD), (0, PAD), (0, PAD)), mode="wrap"
+).astype(np.float32)
 
 # Soft envelope so the smoke fades at the box edges instead of clipping flat.
 # Anisotropic: tighter falloff in y so the column rises and dissipates,
@@ -145,17 +183,20 @@ ENVELOPE = np.exp(-(LX * LX * 0.7 + LY * LY * 0.4 + LZ * LZ * 0.7)).astype(np.fl
 
 
 def extract_window(fx: float, fy: float, fz: float) -> np.ndarray:
-    """Trilinear-interpolated 64³ slice of DENSITY_SOURCE starting at (fx, fy, fz).
+    """Trilinear-interpolated 64³ slice of the smoke field at (fx, fy, fz).
 
-    Wraps periodically so the offset can drift forever without bumping into
-    the source bounds. Cost: 8 numpy slices + 7 fused lerps over N_WINDOW³.
+    Reads from `DENSITY_PADDED` (= `DENSITY_SOURCE` periodically extended
+    by N_WINDOW+1 voxels), so the integer base offset can be anywhere in
+    [0, N_SOURCE) and the slice never bumps into the array bound — the
+    periodic wrap is continuous. Cost: 8 numpy slices + 7 fused lerps.
     """
-    margin = N_SOURCE - N_WINDOW - 1  # inclusive max integer offset
-    fx %= margin; fy %= margin; fz %= margin
-    ix = int(fx); iy = int(fy); iz = int(fz)
-    ax = np.float32(fx - ix); ay = np.float32(fy - iy); az = np.float32(fz - iz)
+    fx_w = fx - N_SOURCE * np.floor(fx / N_SOURCE)
+    fy_w = fy - N_SOURCE * np.floor(fy / N_SOURCE)
+    fz_w = fz - N_SOURCE * np.floor(fz / N_SOURCE)
+    ix = int(fx_w); iy = int(fy_w); iz = int(fz_w)
+    ax = np.float32(fx_w - ix); ay = np.float32(fy_w - iy); az = np.float32(fz_w - iz)
 
-    s = DENSITY_SOURCE
+    s = DENSITY_PADDED
     n = N_WINDOW
     v000 = s[ix     : ix + n,     iy     : iy + n,     iz     : iz + n]
     v001 = s[ix     : ix + n,     iy     : iy + n,     iz + 1 : iz + 1 + n]
@@ -204,10 +245,10 @@ engine.spawn(
 
 
 # ── Animation system ─────────────────────────────────────────────────────────
-# Drift velocities through the source lattice (lattice cells per second).
+# Drift velocities through the source lattice (voxels per second).
 # y-component is largest → smoke "rises"; x is a steady breeze; z is a
-# slower swirl. Keep these << margin per frame so each step trilinearly
-# interpolates a nearby slice.
+# slower swirl. The source is fully periodic, so any integer multiple of
+# N_SOURCE is invisible — drift can run forever without seam.
 _DRIFT = np.array([4.5, 9.0, 2.5], dtype=np.float32)
 
 
