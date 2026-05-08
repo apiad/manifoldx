@@ -103,6 +103,27 @@ def clamp(x, lo, hi):
     """Element-wise clamp. WGSL: `clamp(x, lo, hi)`."""
 
 
+# WGSL numeric casts. The transpiler emits these as bare WGSL casts
+# (see _CASTS in transpile.py); the Python sentinels exist so kernel
+# authors can write `u32(x)` / `i32(x)` / `f32(x)` without lint
+# complaining about an undefined name. Calling at runtime raises.
+
+
+@_shader_only
+def u32(x):
+    """WGSL u32 cast. Inside a kernel only."""
+
+
+@_shader_only
+def i32(x):
+    """WGSL i32 cast. Inside a kernel only."""
+
+
+@_shader_only
+def f32(x):
+    """WGSL f32 cast. Inside a kernel only."""
+
+
 # Set of recognized shader-builtin names. The AST walker uses this to
 # identify calls that should map to WGSL primitives.
 BUILTINS = {
@@ -113,4 +134,4 @@ BUILTINS = {
 }
 
 
-__all__ = list(BUILTINS) + ["BUILTINS"]
+__all__ = list(BUILTINS) + ["BUILTINS", "u32", "i32", "f32"]

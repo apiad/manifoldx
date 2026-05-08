@@ -17,7 +17,7 @@ import numpy as np
 
 from manifoldx.components import Component, Material, Mesh, Transform
 from manifoldx.compute import Compute, Reads, ReadsWrites, Uniform
-from manifoldx.compute.shader import vec3, dot, sqrt
+from manifoldx.compute.shader import dot, sqrt, u32, vec3
 from manifoldx.resources import PhongMaterial, sphere
 from manifoldx.types import Float, Vector3
 
