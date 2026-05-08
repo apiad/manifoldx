@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Refactors
 
 - **`compile()` override is the escape hatch, not the default.** Phase-1 user kernels that override `compile()` continue to work unchanged; only the default body changed.
+- **`renderer.py` split by render pass** — `_render_mesh_batches`, `_render_sprite_batches`, `_render_label_pass`, `_render_axis_pass`, `_render_volume_pass` and their pass-private helpers move out of `RenderPipeline` into `src/manifoldx/render/passes/{mesh,sprite,label,axis,volume}.py` as module-level functions taking the renderer as their first argument. `RenderPipeline.render` becomes a thin dispatcher; cross-pass shared state (pipeline cache, `_BatchBuffers`, `TransformCache`, `_get_or_create_pipeline`) stays in `renderer.py`. `renderer.py` shrinks from 1991 → 964 lines; full test suite (392) and `examples/volume_demo.py` smoke-render unchanged.
 
 ## [0.8.0] - 2026-05-06
 
