@@ -37,3 +37,25 @@ def test_builtin_mesh_and_material_layouts():
 
     assert Mesh._layout == {"geometry_id": (0, 1)}
     assert Material._layout == {"material_id": (0, 1)}
+
+
+def test_shader_type_tags_usable_as_annotations():
+    """vec3 and vec4 work as PEP-526 annotation tags inside kernel bodies."""
+    from manifoldx.compute.shader import vec3, vec4
+
+    # The transpiler will look up each annotation as a name reference; the
+    # tag's identity is what matters.
+    def example(x: vec3, y: vec4) -> vec3:
+        return x
+
+    assert example.__annotations__ == {"x": vec3, "y": vec4, "return": vec3}
+
+
+def test_shader_type_tags_still_raise_when_called_at_runtime():
+    """The tags remain shader-only — calling outside a kernel still raises."""
+    from manifoldx.compute.shader import vec3, vec4
+
+    with pytest.raises(NotImplementedError, match="shader primitive"):
+        vec3(1.0, 2.0, 3.0)
+    with pytest.raises(NotImplementedError, match="shader primitive"):
+        vec4(1.0, 2.0, 3.0, 4.0)
