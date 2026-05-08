@@ -58,6 +58,7 @@ class Component:
     _shape: tuple = (0,)
     _field_specs: tuple = ()
     _field_defaults: dict = {}
+    _layout: dict = {}
 
     _gpu_only: bool = False
 
@@ -79,6 +80,16 @@ class Component:
         cls._field_defaults = defaults
         total = sum(int(np.prod(s)) for _, s in fields)
         cls._shape = (total,)
+        # Derive per-field offset table for the Phase-2 transpiler. Each
+        # field maps to (offset_in_floats, length_in_floats) within the
+        # interleaved per-entity row.
+        layout: dict[str, tuple[int, int]] = {}
+        offset = 0
+        for name, shape in fields:
+            length = int(np.prod(shape))
+            layout[name] = (offset, length)
+            offset += length
+        cls._layout = layout
         _COMPONENT_CLASSES[cls.__name__] = cls
 
     def __init__(self, **kwargs):
@@ -163,6 +174,7 @@ class Transform:
     """
 
     # Combined shape: position(3) + rotation(4) + scale(3) = 10 floats
+    _layout = {"pos": (0, 3), "rot": (3, 4), "scale": (7, 3)}
 
     def __init__(self, pos=None, rot=None, scale=None):
         """Create Transform with optional position/rotation/scale."""
@@ -260,6 +272,8 @@ class Mesh:
     Storage: Single uint32 (geometry_id)
     """
 
+    _layout = {"geometry_id": (0, 1)}
+
     def __init__(self, geometry):
         """Create Mesh component with geometry."""
         # Store geometry object for later registration
@@ -300,6 +314,8 @@ class Material:
 
     Storage: Single uint32 (material_id)
     """
+
+    _layout = {"material_id": (0, 1)}
 
     def __init__(self, material):
         """Create Material component with material."""
