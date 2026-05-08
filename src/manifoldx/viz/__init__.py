@@ -1,5 +1,5 @@
 from manifoldx.viz.components import AxisFrame, PointCloud, Radius, ScalarValue, TextLabel, Volume
-from manifoldx.viz.materials import AxisMaterial, ColormapMaterial, LabelMaterial
+from manifoldx.viz.materials import AxisMaterial, ColormapMaterial, LabelMaterial, VolumeMaterial
 from manifoldx.viz.shims import (
     Chart,
     Mark,
@@ -25,6 +25,7 @@ __all__ = [
     "ColormapMaterial",
     "LabelMaterial",
     "AxisMaterial",
+    "VolumeMaterial",
     "LabelTextureAtlas",
     # Plan 4 declarative shim
     "Chart",

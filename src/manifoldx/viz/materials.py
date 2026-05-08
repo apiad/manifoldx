@@ -478,3 +478,90 @@ class AxisMaterial(Material):
             dtype=np.float32,
         )
         return np.broadcast_to(row, (n, 8)).copy()
+
+
+class VolumeMaterial(Material):
+    """Direct volume rendering material — colormap LUT + opacity LUT.
+
+    See `.knowledge/analysis/2026-05-08-volume-rendering-v1-design.md`
+    for the full transfer-function semantics.
+    """
+
+    pipeline_subtype: str | None = "volume"
+    binding_slot = 4
+
+    def __init__(
+        self,
+        cmap: str = "viridis",
+        *,
+        vmin: float = 0.0,
+        vmax: float = 1.0,
+        opacity_stops=None,
+        density_scale: float = 1.0,
+        step_size: float | None = None,
+        max_steps: int = 256,
+    ):
+        from manifoldx.viz.colormaps import _LUTS
+
+        if cmap not in _LUTS:
+            raise ValueError(
+                f"unknown cmap: {cmap!r}; available: {sorted(_LUTS)}"
+            )
+        if not (vmin < vmax):
+            raise ValueError(f"vmin must be < vmax; got vmin={vmin}, vmax={vmax}")
+        if step_size is not None and step_size <= 0.0:
+            raise ValueError(f"step_size must be > 0; got {step_size}")
+        if max_steps <= 0:
+            raise ValueError(f"max_steps must be > 0; got {max_steps}")
+
+        self.cmap = cmap
+        self.vmin = float(vmin)
+        self.vmax = float(vmax)
+        self.density_scale = float(density_scale)
+        self.step_size = step_size
+        self.max_steps = int(max_steps)
+        self.opacity_lut = self._bake_opacity(opacity_stops)
+        super().__init__()
+
+    @staticmethod
+    def _bake_opacity(stops) -> np.ndarray:
+        """Produce a (256,) float32 array of alpha values in [0, 1]."""
+        if stops is None:
+            return np.linspace(0.0, 1.0, 256, dtype=np.float32)
+
+        if isinstance(stops, np.ndarray):
+            if stops.shape != (256,):
+                raise ValueError(
+                    f"opacity_stops array must have shape (256,); got {stops.shape}"
+                )
+            return stops.astype(np.float32, copy=False)
+
+        xs = [float(s) for s, _ in stops]
+        ys = [float(a) for _, a in stops]
+        for i in range(1, len(xs)):
+            if xs[i] < xs[i - 1]:
+                raise ValueError(
+                    "opacity_stops scalars must be in ascending order; "
+                    f"got {xs}"
+                )
+        sample_xs = np.linspace(0.0, 1.0, 256, dtype=np.float32)
+        return np.interp(sample_xs, xs, ys).astype(np.float32)
+
+    @classmethod
+    def _compile(cls) -> str:
+        # Real shader source lives in renderer.py for v1; this class
+        # carries only CPU-side parameters and the LUT bake.
+        return ""
+
+    @classmethod
+    def uniform_type(cls) -> Dict[str, str]:
+        return {
+            "vmin": "f32",
+            "vmax": "f32",
+            "density_scale": "f32",
+            "step_size": "f32",
+            "max_steps": "u32",
+            "_pad0": "f32",
+            "_pad1": "f32",
+            "_pad2": "f32",
+        }
