@@ -1054,6 +1054,282 @@ class RenderPipeline:
         from manifoldx.viz import LabelMaterial
         return isinstance(mat_obj, LabelMaterial)
 
+    def _is_volume_entity(self, entity_idx, mat_id, engine):
+        if mat_id <= 0:
+            return False
+        mat_obj = engine._material_registry.get(mat_id)
+        if mat_obj is None:
+            return False
+        from manifoldx.viz import VolumeMaterial
+        return isinstance(mat_obj, VolumeMaterial)
+
+    def _get_or_create_volume_pipeline(self, device, texture_format):
+        """Return (pipeline, bgl_globals, bgl_volume) for the volume DVR pass.
+
+        Cache key: ("volume",) — independent of mesh/sprite/label/axis caches.
+        Pipeline state: depth-test LESS_EQUAL, depth-write OFF, alpha-blend ON.
+        """
+        cache_key = ("volume",)
+        cached = self._pipelines.get(cache_key)
+        if cached is not None:
+            return cached
+
+        shader = device.create_shader_module(code=VOLUME_SHADER_SOURCE)
+
+        bgl_globals = device.create_bind_group_layout(
+            entries=[
+                {
+                    "binding": 0,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {"type": wgpu.BufferBindingType.uniform},
+                },
+            ],
+        )
+
+        bgl_volume = device.create_bind_group_layout(
+            entries=[
+                {
+                    "binding": 0,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "texture": {
+                        "sample_type": wgpu.TextureSampleType.float,
+                        "view_dimension": wgpu.TextureViewDimension.d3,
+                        "multisampled": False,
+                    },
+                },
+                {
+                    "binding": 1,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "sampler": {"type": wgpu.SamplerBindingType.filtering},
+                },
+                {
+                    "binding": 2,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "texture": {
+                        "sample_type": wgpu.TextureSampleType.float,
+                        "view_dimension": wgpu.TextureViewDimension.d2,
+                        "multisampled": False,
+                    },
+                },
+                {
+                    "binding": 3,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "texture": {
+                        "sample_type": wgpu.TextureSampleType.float,
+                        "view_dimension": wgpu.TextureViewDimension.d2,
+                        "multisampled": False,
+                    },
+                },
+                {
+                    "binding": 4,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "sampler": {"type": wgpu.SamplerBindingType.filtering},
+                },
+                {
+                    "binding": 5,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "buffer": {
+                        "type": wgpu.BufferBindingType.uniform,
+                        "min_binding_size": 160,
+                    },
+                },
+            ],
+        )
+
+        layout = device.create_pipeline_layout(
+            bind_group_layouts=[bgl_globals, bgl_volume]
+        )
+
+        pipeline = device.create_render_pipeline(
+            layout=layout,
+            vertex={"module": shader, "entry_point": "vs_main", "buffers": []},
+            fragment={
+                "module": shader,
+                "entry_point": "fs_main",
+                "targets": [{
+                    "format": texture_format,
+                    "blend": {
+                        "color": {
+                            "src_factor": wgpu.BlendFactor.one,
+                            "dst_factor": wgpu.BlendFactor.one_minus_src_alpha,
+                            "operation": wgpu.BlendOperation.add,
+                        },
+                        "alpha": {
+                            "src_factor": wgpu.BlendFactor.one,
+                            "dst_factor": wgpu.BlendFactor.one_minus_src_alpha,
+                            "operation": wgpu.BlendOperation.add,
+                        },
+                    },
+                    "write_mask": wgpu.ColorWrite.ALL,
+                }],
+            },
+            primitive={
+                "topology": wgpu.PrimitiveTopology.triangle_list,
+                "cull_mode": wgpu.CullMode.none,
+            },
+            depth_stencil={
+                "format": wgpu.TextureFormat.depth24plus,
+                "depth_write_enabled": False,
+                "depth_compare": wgpu.CompareFunction.less_equal,
+            },
+            multisample={"count": 1, "mask": 0xFFFFFFFF, "alpha_to_coverage_enabled": False},
+        )
+        self._pipelines[cache_key] = (pipeline, bgl_globals, bgl_volume)
+        return pipeline, bgl_globals, bgl_volume
+
+    def _get_or_create_color_lut_view(self, cmap_name: str):
+        """Cache 256x1 RGBA8 colormap textures by name."""
+        cache = getattr(self, "_volume_color_lut_views", None)
+        if cache is None:
+            cache = {}
+            self._volume_color_lut_views = cache
+        if cmap_name in cache:
+            return cache[cmap_name]
+        from manifoldx.viz.colormaps import get_colormap
+        lut = get_colormap(cmap_name)   # (256, 4) uint8
+        tex = self._device.create_texture(
+            size=(256, 1, 1),
+            format=wgpu.TextureFormat.rgba8unorm,
+            usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
+            dimension=wgpu.TextureDimension.d2,
+        )
+        self._device.queue.write_texture(
+            {"texture": tex, "mip_level": 0, "origin": (0, 0, 0)},
+            lut.tobytes(),
+            {"offset": 0, "bytes_per_row": 256 * 4, "rows_per_image": 1},
+            (256, 1, 1),
+        )
+        view = tex.create_view()
+        cache[cmap_name] = view
+        return view
+
+    def _get_or_create_opacity_lut_view(self, mat_id: int, lut: np.ndarray):
+        """Cache 256x1 R32F opacity textures by material id."""
+        cache = getattr(self, "_volume_opacity_lut_views", None)
+        if cache is None:
+            cache = {}
+            self._volume_opacity_lut_views = cache
+        if mat_id in cache:
+            return cache[mat_id]
+        tex = self._device.create_texture(
+            size=(256, 1, 1),
+            format=wgpu.TextureFormat.r32float,
+            usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
+            dimension=wgpu.TextureDimension.d2,
+        )
+        self._device.queue.write_texture(
+            {"texture": tex, "mip_level": 0, "origin": (0, 0, 0)},
+            lut.astype(np.float32).tobytes(),
+            {"offset": 0, "bytes_per_row": 256 * 4, "rows_per_image": 1},
+            (256, 1, 1),
+        )
+        view = tex.create_view()
+        cache[mat_id] = view
+        return view
+
+    def _get_or_create_volume_uniform_buffer(self, mat_id: int):
+        """Per-material uniform buffer (160 bytes; rewritten each frame)."""
+        cache = getattr(self, "_volume_uniform_buffers", None)
+        if cache is None:
+            cache = {}
+            self._volume_uniform_buffers = cache
+        if mat_id not in cache:
+            cache[mat_id] = self._device.create_buffer(
+                size=160,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+        return cache[mat_id]
+
+    def _write_volume_uniforms(self, buf, entity_local_idx, mat_obj, vol_res, engine):
+        """Pack and upload the VolumeUniforms struct (160 bytes)."""
+        model = self._transform_cache.get_transforms(
+            self._store, np.array([entity_local_idx], dtype=np.int64)
+        )[0].reshape(4, 4)
+        inv_model = np.linalg.inv(model)
+
+        nz, ny, nx = vol_res.data.shape
+        scale_diag = np.array([model[0, 0], model[1, 1], model[2, 2]], dtype=np.float32)
+        voxel_dims = scale_diag / np.array([nx, ny, nz], dtype=np.float32)
+        auto_step = float(np.min(np.abs(voxel_dims)) * 0.5)
+        step_size = mat_obj.step_size if mat_obj.step_size is not None else auto_step
+
+        packed = np.zeros(160 // 4, dtype=np.float32)
+        # column-major mat4 (WGSL convention)
+        packed[0:16]  = model.T.astype(np.float32).ravel()
+        packed[16:32] = inv_model.T.astype(np.float32).ravel()
+        packed[32]    = mat_obj.vmin
+        packed[33]    = mat_obj.vmax
+        packed[34]    = mat_obj.density_scale
+        packed[35]    = step_size
+        u32_view = packed.view(np.uint32)
+        u32_view[36] = mat_obj.max_steps
+        # slots 37, 38, 39 are pad (already zero).
+        self._device.queue.write_buffer(buf, 0, packed.tobytes())
+
+    def _render_volume_pass(self, engine, render_pass, volume_batches):
+        """One draw call per volume entity. Each entity is a fullscreen triangle
+        whose fragment shader raymarches the entity-local AABB.
+        """
+        if not volume_batches:
+            return
+
+        pipeline, bgl_globals, bgl_volume = self._get_or_create_volume_pipeline(
+            self._device, engine._texture_format
+        )
+
+        if not hasattr(self, "_volume_sampler") or self._volume_sampler is None:
+            self._volume_sampler = self._device.create_sampler(
+                mag_filter=wgpu.FilterMode.linear,
+                min_filter=wgpu.FilterMode.linear,
+                address_mode_u=wgpu.AddressMode.clamp_to_edge,
+                address_mode_v=wgpu.AddressMode.clamp_to_edge,
+                address_mode_w=wgpu.AddressMode.clamp_to_edge,
+            )
+
+        globals_bg = self._device.create_bind_group(
+            layout=bgl_globals,
+            entries=[
+                {
+                    "binding": 0,
+                    "resource": {"buffer": self._globals_buffer, "offset": 0, "size": 224},
+                },
+            ],
+        )
+
+        for entity_local_idx, mat_id, vol_id in volume_batches:
+            mat_obj = engine._material_registry.get(mat_id)
+            res = engine._volume_registry.get(vol_id)
+            engine._volume_registry.upload_to_gpu(vol_id, self._device.queue)
+            volume_view = res.texture.create_view()
+
+            color_view = self._get_or_create_color_lut_view(mat_obj.cmap)
+            opacity_view = self._get_or_create_opacity_lut_view(mat_id, mat_obj.opacity_lut)
+
+            mat_uniform_buf = self._get_or_create_volume_uniform_buffer(mat_id)
+            self._write_volume_uniforms(mat_uniform_buf, entity_local_idx, mat_obj, res, engine)
+
+            volume_bg = self._device.create_bind_group(
+                layout=bgl_volume,
+                entries=[
+                    {"binding": 0, "resource": volume_view},
+                    {"binding": 1, "resource": self._volume_sampler},
+                    {"binding": 2, "resource": color_view},
+                    {"binding": 3, "resource": opacity_view},
+                    {"binding": 4, "resource": self._volume_sampler},
+                    {
+                        "binding": 5,
+                        "resource": {
+                            "buffer": mat_uniform_buf, "offset": 0, "size": 160,
+                        },
+                    },
+                ],
+            )
+
+            render_pass.set_pipeline(pipeline)
+            render_pass.set_bind_group(0, globals_bg, [], 0, 0)
+            render_pass.set_bind_group(1, volume_bg, [], 0, 0)
+            render_pass.draw(3, 1, 0, 0)   # fullscreen triangle
+
     def _render_mesh_batches(
         self, engine, render_pass, mesh_batches, model_matrices, material_data
     ):
