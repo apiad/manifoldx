@@ -428,8 +428,7 @@ class Engine:
         self._event_bus.dispatch_pending(self)
 
         # Step 4: pump asyncio loop (async handlers + waiter wakers).
-        # Wired in Task 6.
-        # self._pump_aio_loop()
+        self._pump_aio_loop()
 
         # Step 5: run user systems (may emit commands).
         self.systems.run_all(self, dt)
@@ -494,6 +493,22 @@ class Engine:
         self._device.queue.submit([command_encoder.finish()])
 
         return True  # Continue rendering
+
+    def _pump_aio_loop(self) -> None:
+        """Drive the engine's asyncio loop until quiescent.
+
+        Runs all currently-runnable callbacks: woken futures from waiter
+        resolution, freshly-scheduled handler tasks, and I/O completions.
+        If any async handler raised an exception during this pump, the
+        first one is re-raised so the frame loop crashes per the v1
+        error policy. (Done tasks are no longer in asyncio.all_tasks(),
+        so we capture exceptions via add_done_callback in _invoke_async
+        and spool them on engine._task_errors.)
+        """
+        self._aio_loop.run_until_complete(asyncio.sleep(0))
+        if self._task_errors:
+            exc = self._task_errors.pop(0)
+            raise exc
 
     def _run_loop(self):
         """Called each frame by the event loop (run() mode)."""
