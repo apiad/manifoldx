@@ -751,3 +751,47 @@ def test_transpile_compute_emits_helper_methods():
     assert "return vec3<f32>(0.0, 0.0, 0.0);" in wgsl
     # Helpers come before main.
     assert wgsl.index("_K_make_zero") < wgsl.index("fn main(")
+
+
+def test_compute_default_compile_uses_transpiler():
+    """A Compute subclass without an override now compiles via transpile_compute."""
+    from manifoldx.compute import Compute, ReadsWrites
+    from manifoldx.components import Transform
+
+    class K(Compute):
+        transforms: ReadsWrites[Transform]
+        workgroup_size = 64
+        dispatch = "entity_count"
+        def main(self, i: int):
+            return
+
+    wgsl = K().compile()
+    assert "@compute @workgroup_size(64)" in wgsl
+
+
+def test_engine_compute_validates_at_registration():
+    """engine.compute(cls) raises ComputeShaderCompileError synchronously for a bogus kernel."""
+    from manifoldx.compute import Compute, ReadsWrites
+    from manifoldx.compute.transpile import ComputeShaderCompileError
+    from manifoldx.components import Transform
+
+    try:
+        from manifoldx.backends import get_offscreen_canvas
+        canvas = get_offscreen_canvas(width=64, height=64)
+    except Exception:
+        pytest.skip("no offscreen wgpu backend available")
+
+    import manifoldx as mx
+    engine = mx.Engine("k", width=64, height=64)
+    engine._init_canvas(canvas)
+
+    class Bogus(Compute):
+        transforms: ReadsWrites[Transform]
+        workgroup_size = 64
+        dispatch = "entity_count"
+        def main(self, i: int):
+            ghost = 1.0  # plain Assign without prior AnnAssign — error.
+            return
+
+    with pytest.raises(ComputeShaderCompileError):
+        engine.compute(Bogus)

@@ -169,17 +169,12 @@ class Compute:
     # --- API ---------------------------------------------------------------
 
     def compile(self) -> str:
-        """Return the WGSL source for this compute kernel.
+        """Default: trace `main` (and any helpers) to WGSL via the Phase-2 transpiler.
 
-        Phase 1: subclasses override this to return a raw WGSL string.
-        Phase 2 will provide a default implementation that traces
-        `self.main` to WGSL automatically.
+        Override for hand-written WGSL kernels.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} must override compile() with raw WGSL "
-            f"source (Phase 1) or override main() and rely on the base-class "
-            f"transpiler (Phase 2)."
-        )
+        from manifoldx.compute.transpile import transpile_compute
+        return transpile_compute(type(self))
 
     # --- Internals (used by the engine) ------------------------------------
 

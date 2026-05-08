@@ -58,13 +58,19 @@ def test_compute_workgroup_size_and_dispatch_defaults():
 
 
 def test_compute_compile_must_be_implemented():
-    """Subclasses must override compile(); the base raises NotImplementedError."""
+    """Subclasses without an override OR a `main` method raise on compile().
+
+    Phase-2: the default compile() transpiles `main` to WGSL via the
+    Python-as-shader DSL. A class with neither a custom compile() nor a
+    main() raises ComputeShaderCompileError from the transpiler.
+    """
     from manifoldx.compute import Compute, Reads
+    from manifoldx.compute.transpile import ComputeShaderCompileError
 
     class IncompleteCompute(Compute):
         x: Reads[int]
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ComputeShaderCompileError):
         IncompleteCompute().compile()
 
 

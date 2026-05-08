@@ -152,10 +152,24 @@ class Engine:
 
             engine.compute(Gravity)
 
-        Pipeline compilation is deferred to the first frame after registration
-        so the engine's wgpu device is ready. Each registered Compute runs once
-        per frame between CPU command flush and the render pass.
+        Validates the kernel synchronously when the wgpu device is available:
+        compiles the WGSL via `cls().compile()` and feeds it through
+        `device.create_shader_module()` so transpile + validation errors
+        surface at registration time, not on first frame.
         """
+        if self._device is not None:
+            instance = cls()
+            wgsl = instance.compile()
+            try:
+                self._device.create_shader_module(code=wgsl)
+            except Exception as e:
+                from manifoldx.compute.transpile import ComputeShaderCompileError
+                raise ComputeShaderCompileError(
+                    category="wgpu-validation",
+                    message=str(e),
+                    filename=getattr(cls, "__module__", "<class>"),
+                    line=0, col=0, source_line=None,
+                )
         self._compute_runner.register(cls)
         return cls
 

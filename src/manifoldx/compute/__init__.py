@@ -16,6 +16,10 @@ from manifoldx.compute._core import (
     _DISPATCH_SYMBOLS,
 )
 from manifoldx.compute import shader
+from manifoldx.compute.transpile import (
+    ComputeShaderCompileError,
+    transpile_compute,
+)
 
 __all__ = [
     "Compute",
@@ -25,4 +29,6 @@ __all__ = [
     "ReadsWrites",
     "Uniform",
     "shader",
+    "ComputeShaderCompileError",
+    "transpile_compute",
 ]
