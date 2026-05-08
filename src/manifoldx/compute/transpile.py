@@ -795,6 +795,102 @@ def _emit_stmt(node, env: TypeEnv, mut: Dict[str, int], src: str) -> str:
     )
 
 
+def _resolve_class_bindings(cls: type) -> Dict[str, str]:
+    """{binding_name: ComponentClassName} from cls._reads + cls._writes."""
+    out: Dict[str, str] = {}
+    for name, comp in {**cls._reads, **cls._writes}.items():
+        if not isinstance(comp, type):
+            raise ComputeShaderCompileError(
+                category="unsupported-construct",
+                message=f"binding {name!r} parameter {comp!r} is not a class",
+                filename="<class>", line=0, col=0, source_line=None,
+            )
+        out[name] = comp.__name__
+    return out
+
+
+def _resolve_class_uniforms(cls: type) -> Dict[str, str]:
+    """{uniform_name: wgsl_type} from cls._uniforms.
+
+    v1: every Uniform[T] emits as f32 (matches Phase-1 packing exactly).
+    """
+    out: Dict[str, str] = {}
+    for name, _param in cls._uniforms.items():
+        out[name] = "f32"
+    return out
+
+
+def _emit_header(
+    uniforms: Dict[str, str],
+    reads: List[str],
+    writes: List[str],
+) -> str:
+    lines: List[str] = []
+    slot = 0
+    if uniforms:
+        struct_fields = ", ".join(f"{n}: {t}" for n, t in uniforms.items())
+        lines.append(f"struct Uniforms {{ {struct_fields}, }};")
+        lines.append(f"@group(0) @binding({slot}) var<uniform> uniforms: Uniforms;")
+        slot += 1
+    for name in reads:
+        lines.append(
+            f"@group(0) @binding({slot}) var<storage, read> {name}: array<f32>;"
+        )
+        slot += 1
+    for name in writes:
+        lines.append(
+            f"@group(0) @binding({slot}) var<storage, read_write> {name}: array<f32>;"
+        )
+        slot += 1
+    return "\n".join(lines)
+
+
+def _build_env(cls: type, sigs, bindings, uniforms, *, fn_params) -> TypeEnv:
+    env = TypeEnv()
+    env.set_method_sigs(sigs, class_name=cls.__name__)
+    for n, t in uniforms.items():
+        env.set_uniform(n, t)
+    for n, comp_name in bindings.items():
+        env.set_binding(n, component_name=comp_name)
+    for n, t in fn_params.items():
+        env.set_param(n, t)
+    return env
+
+
+def _emit_helper(cls, name, fn, sigs, bindings, uniforms) -> str:
+    sig = sigs[name]
+    params = {k: v for k, v in sig.items() if k != "return"}
+    env = _build_env(cls, sigs, bindings, uniforms, fn_params=params)
+
+    mut = _scan_mutability(fn.body)
+    body_lines = []
+    for s in fn.body:
+        body_lines.append(_emit_stmt(s, env, mut, ast.unparse(s)))
+    body = "\n".join(f"  {ln}" for chunk in body_lines for ln in chunk.splitlines())
+
+    param_list = ", ".join(f"{k}: {v}" for k, v in params.items())
+    return (
+        f"fn _{cls.__name__}_{name}({param_list}) -> {sig['return']} {{\n"
+        f"{body}\n}}"
+    )
+
+
+def _emit_main(cls, fn, sigs, bindings, uniforms) -> str:
+    env = _build_env(cls, sigs, bindings, uniforms, fn_params={"i": "u32"})
+    mut = _scan_mutability(fn.body)
+    body_lines = []
+    for s in fn.body:
+        body_lines.append(_emit_stmt(s, env, mut, ast.unparse(s)))
+    body = "\n".join(f"  {ln}" for chunk in body_lines for ln in chunk.splitlines())
+
+    return (
+        f"@compute @workgroup_size({cls.workgroup_size})\n"
+        f"fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\n"
+        f"  let i: u32 = gid.x;\n"
+        f"{body}\n}}"
+    )
+
+
 def transpile_compute(cls: type) -> str:
     """Walk the class's methods and emit a complete WGSL shader source.
 
@@ -804,6 +900,20 @@ def transpile_compute(cls: type) -> str:
     """
     methods = _collect_method_asts(cls)
     _check_no_recursion(methods)
-    raise NotImplementedError(
-        "transpile_compute body filled in by subsequent tasks"
-    )
+
+    sigs = _build_method_signatures(cls)
+    bindings = _resolve_class_bindings(cls)
+    uniforms = _resolve_class_uniforms(cls)
+
+    header = _emit_header(uniforms, list(cls._reads), list(cls._writes))
+
+    helper_chunks: List[str] = []
+    for name, fn in methods.items():
+        if name == "main":
+            continue
+        helper_chunks.append(_emit_helper(cls, name, fn, sigs, bindings, uniforms))
+
+    main_chunk = _emit_main(cls, methods["main"], sigs, bindings, uniforms)
+
+    parts = [header, *helper_chunks, main_chunk]
+    return "\n\n".join(p for p in parts if p)

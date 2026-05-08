@@ -665,3 +665,89 @@ def test_emit_stmt_for_non_range_raises():
     mut = _scan_mutability(body)
     with pytest.raises(ComputeShaderCompileError, match="unsupported-construct"):
         _emit_stmt(body[0], env, mut, "for j in xs: ...")
+
+
+def test_transpile_compute_emits_uniforms_struct():
+    """transpile_compute(cls) emits the Uniforms struct from class _uniforms."""
+    from manifoldx.compute import Compute, ReadsWrites, Uniform
+    from manifoldx.compute.transpile import transpile_compute
+    from manifoldx.components import Transform
+
+    class K(Compute):
+        transforms: ReadsWrites[Transform]
+        G: Uniform[float] = 1.0
+        n: Uniform[float] = "entity_count"
+        workgroup_size = 64
+        dispatch = "entity_count"
+        def main(self, i: int):
+            return
+
+    wgsl = transpile_compute(K)
+    assert "struct Uniforms" in wgsl
+    assert "G: f32" in wgsl
+    assert "n: f32" in wgsl
+
+
+def test_transpile_compute_emits_bindings():
+    from manifoldx.compute import Compute, Reads, ReadsWrites, Uniform
+    from manifoldx.compute.transpile import transpile_compute
+    from manifoldx.components import Transform, Component
+    from manifoldx.types import Float
+
+    class Mass(Component):
+        value: Float = 1.0
+
+    class K(Compute):
+        transforms: ReadsWrites[Transform]
+        masses:     Reads[Mass]
+        G: Uniform[float] = 1.0
+        workgroup_size = 64
+        dispatch = "entity_count"
+        def main(self, i: int):
+            return
+
+    wgsl = transpile_compute(K)
+    assert "@group(0) @binding(0) var<uniform> uniforms: Uniforms;" in wgsl
+    assert "@group(0) @binding(1) var<storage, read> masses: array<f32>;" in wgsl
+    assert "@group(0) @binding(2) var<storage, read_write> transforms: array<f32>;" in wgsl
+
+
+def test_transpile_compute_wraps_main():
+    from manifoldx.compute import Compute, ReadsWrites
+    from manifoldx.compute.transpile import transpile_compute
+    from manifoldx.components import Transform
+
+    class K(Compute):
+        transforms: ReadsWrites[Transform]
+        workgroup_size = 32
+        dispatch = "entity_count"
+        def main(self, i: int):
+            return
+
+    wgsl = transpile_compute(K)
+    assert "@compute @workgroup_size(32)" in wgsl
+    assert "fn main(@builtin(global_invocation_id) gid: vec3<u32>)" in wgsl
+    assert "let i: u32 = gid.x;" in wgsl
+
+
+def test_transpile_compute_emits_helper_methods():
+    from manifoldx.compute import Compute, ReadsWrites
+    from manifoldx.compute.transpile import transpile_compute
+    from manifoldx.compute.shader import vec3
+    from manifoldx.components import Transform
+
+    class K(Compute):
+        transforms: ReadsWrites[Transform]
+        workgroup_size = 64
+        dispatch = "entity_count"
+        def make_zero(self) -> vec3:
+            return vec3(0.0, 0.0, 0.0)
+        def main(self, i: int):
+            v: vec3 = self.make_zero()
+            return
+
+    wgsl = transpile_compute(K)
+    assert "fn _K_make_zero() -> vec3<f32> {" in wgsl
+    assert "return vec3<f32>(0.0, 0.0, 0.0);" in wgsl
+    # Helpers come before main.
+    assert wgsl.index("_K_make_zero") < wgsl.index("fn main(")
