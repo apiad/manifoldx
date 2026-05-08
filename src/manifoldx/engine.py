@@ -406,21 +406,42 @@ class Engine:
             return False
 
         dt = self._compute_dt()
+        self._last_dt = dt
 
-        # 1. Clear command buffer for this frame
+        # Step 2: resolve frame waiters (tick / delay / elapsed_at)
+        self._frame_waiters.resolve(self.elapsed)
+
+        # Clear command buffer ONCE at the head of the frame so events,
+        # async handlers, and systems all contribute to the same buffer
+        # that gets flushed at step 6.
         self.commands.clear()
 
-        # 2. Run all user systems (they emit commands)
+        # Step 3: drain pending events (frame N-1's emits + this frame's 'frame')
+        frame_payload = {
+            "dt": dt,
+            "elapsed": self.elapsed,
+            "frame": self._frame_index,
+        }
+        # Inject the inline 'frame' event ahead of the user-emitted queue,
+        # so frame handlers see CURRENT-frame data (not last-frame's).
+        self._event_bus._pending.insert(0, ("frame", frame_payload))
+        self._event_bus.dispatch_pending(self)
+
+        # Step 4: pump asyncio loop (async handlers + waiter wakers).
+        # Wired in Task 6.
+        # self._pump_aio_loop()
+
+        # Step 5: run user systems (may emit commands).
         self.systems.run_all(self, dt)
 
-        # 3. Execute command buffer (apply all spawn/destroy/update)
+        # Step 6: flush command buffer (events + handlers + systems).
         self.commands.execute(self.store)
 
-        # 3b. Dispatch GPU compute systems (after CPU flush, before render).
+        # Step 7: GPU compute systems.
         self._compute_runner.run_all(dt)
         self._frame_index += 1
 
-        # 4. RENDER PIPELINE
+        # Step 8: render pipeline.
         self._render_pipeline.run(self, dt)
 
         # Ensure render pipeline is initialized
