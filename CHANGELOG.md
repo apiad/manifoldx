@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-10
+
 ### Features
 
 - **Input layer v1** — keyboard, mouse, and resize events ride the event bus from event-driven-system v1. New `manifoldx.input` module exposes `KeyEvent`, `PointerEvent`, `WheelEvent`, and `ResizeEvent` dataclasses (re-exported from the package root). Handlers register the same way as any other event: `@engine.on("key_down")`, `@engine.on("pointer_move")`, etc. Alongside discrete events, a polling state at `engine.input` exposes Bevy-style `is_pressed(key)` / `just_pressed(key)` / `just_released(key)` for keys and mouse buttons, plus `mouse_pos`, `mouse_delta`, `wheel_delta`, and `viewport_size`. Polling state is updated immediately on every event (so `is_pressed` reads are live), while `just_*` sets and `*_delta` accumulators are this-frame-bound and reset at the new step 2.5 of `_draw_frame`. New `examples/input_orbit.py` (drag-to-orbit + wheel-zoom via events) and `examples/input_fly.py` (WASD fly cam via polling). Design: `.knowledge/analysis/2026-05-08-input-events-design.md`.
@@ -19,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **vec3/vec4 swizzle reads in compute kernels** — `accel.x`, `next_pos.y`, `self.transforms[i].pos.z` and similar `.x/.y/.z[/w]` attribute access on vec3/vec4-typed expressions now lower to WGSL component access, returning f32. Compound forms (swizzle on top of an indexed binding read) work too.
 - **`examples/gas_compute.py`** — ideal-gas box-bounce demo ported to a Phase-2 compute kernel. First example to use vec3 swizzle inside a kernel: per-axis bounce conditions read individual components (`if next_pos.x < -self.half_size`). Pairwise elastic collisions are now also on GPU, reformulated to be race-free: each thread `i` surveys all neighbours and accumulates *its own* impulse from approaching overlaps; thread `j` independently computes the equal-and-opposite impulse for itself, so no thread ever writes another thread's velocity. Also the first example to exercise `vec3 / f32` broadcast (collision normal `diff / dist`).
 - **Phase-2 DSL is now mypy-clean in kernel bodies** — `vec3`/`vec4` are real classes with arithmetic dunders; math builtins (`dot`, `cross`, `length`, `sqrt`, `pow`, `abs`, etc.) carry proper PEP-484 signatures; `Reads` / `Writes` / `ReadsWrites` are `Generic[T]` with `__getitem__(int) -> T` under TYPE_CHECKING; `Uniform[T]` is a PEP-695 type alias for `T`; `Float` is a TYPE_CHECKING alias for `float`. Both compute examples now type-check at zero errors against `mypy`. Auto-bound sentinel-string uniforms (e.g. `dt: Uniform[float] = "frame_dt"`) keep needing a `# type: ignore[assignment]` per uniform.
+- **`examples/smoke_demo.py`** — tileable Perlin-FBM volumetric smoke, exercising the volume pass with a moving camera and a wrap-padded source for seamless looping.
 
 ### Refactors
 
