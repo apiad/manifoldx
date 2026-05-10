@@ -54,4 +54,8 @@ Procedure docs in `know-how/` encode how to do things in this repo. Match the cu
 
 ## Sub-projects in flight
 
-- **Sci-viz primitives v1** — `manifoldx.viz` subpackage. Plan 1 (foundation: PointCloud + ColormapMaterial + ScalarValue + Radius + sprite path) and Plan 2 (text rendering: TextLabel + LabelMaterial + LabelTextureAtlas + label pass) are landed. Plan 3 onward not yet specced. Plans live at `.knowledge/plans/2026-05-*-sci-viz-primitives-v1-*.md`.
+- **Sci-viz primitives v1** — `manifoldx.viz` subpackage. Plans 1–3 landed (foundation, text rendering, axes/scale-bar/legend). Plan 4 (functional shim API: `point_cloud()`, `axes()`, `scale_bar()`, `colormap_legend()`) and Plan 5 (visual regression infrastructure) are not yet specced. Plans live at `.knowledge/plans/2026-05-*-sci-viz-primitives-v1-*.md`.
+- **Event-driven engine v1** — landed. `engine.emit(...)` / `@engine.on(...)` event bus with sync + async handlers. Replaces legacy `@engine.startup`/`@engine.shutdown`/`@engine.update`.
+- **Input layer v1** — landed on top of the event bus. Keyboard, mouse, wheel, resize events + Bevy-style `engine.input` polling state.
+- **Volume rendering v1** — landed. DVR via fragment-shader raymarching, `Volume` component + `VolumeMaterial` with reusable colormap LUT and per-material 256-sample opacity LUT.
+- **Compute systems Phase 2** — landed. Python→WGSL transpiler so kernel authors write annotated Python instead of WGSL strings. Phase 3 (multi-pass / cross-kernel deps) not yet specced.

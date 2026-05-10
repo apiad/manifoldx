@@ -207,15 +207,27 @@ The `examples/boids.py` demo shows **emergent behavior** from simple local rules
 
 All three use **pure numpy** — zero Python loops in the hot path. The ECS overhead is ~microseconds/frame; the bottleneck is GPU fill-rate, not CPU physics.
 
-| Example          | Description                                                |
-| ---------------- | ---------------------------------------------------------- |
-| `hello_world.py` | Minimal empty window                                       |
-| `cube.py`        | Rotating cube with Phong material                          |
-| `pbr_demo.py`    | 3×2 grid demonstrating PBR materials + 3 orbiting lights   |
-| `spheres.py`     | Many spheres with physics-like behavior                    |
-| `nbody.py`       | 500-body gravitational simulation with pure-numpy physics  |
-| `gas.py`         | 500-particle ideal gas with collisions and virtual walls   |
-| `boids.py`       | 300-agent flocking simulation with emergent swarm behavior |
+| Example                  | Description                                                                |
+| ------------------------ | -------------------------------------------------------------------------- |
+| `hello_world.py`         | Minimal empty window                                                       |
+| `cube.py`                | Rotating cube with Phong material                                          |
+| `pbr_demo.py`            | 3×2 grid demonstrating PBR materials + 3 orbiting lights                   |
+| `spheres.py`             | Many spheres with physics-like behavior                                    |
+| `nbody.py`               | 500-body gravitational simulation with pure-numpy physics                  |
+| `gas.py`                 | 500-particle ideal gas with collisions and virtual walls                   |
+| `boids.py`               | 300-agent flocking simulation with emergent swarm behavior                 |
+| `scatter_plot.py`        | Declarative `manifoldx.viz` API: 500-particle scatter in ~30 lines         |
+| `nbody_compute.py`       | N-body simulation ported to a GPU compute kernel (Phase-2 transpiler)      |
+| `gas_compute.py`         | Ideal-gas demo on the GPU, including race-free pairwise collisions         |
+| `point_cloud_demo.py`    | Sci-viz `PointCloud` + `ColormapMaterial` sprite path                      |
+| `point_cloud_compute.py` | Protoplanetary disk: 10000 particles, GPU kinematics, colormapped on speed |
+| `axes_demo.py`           | World-anchored axes, screen-anchored HUD, scale bar, colormap legend       |
+| `volume_demo.py`         | Direct volume rendering of a 64³ Gaussian blob                             |
+| `smoke_demo.py`          | Tileable Perlin FBM volumetric smoke with camera motion                    |
+| `event_dolly.py`         | Async camera dolly with `await engine.delay(...)`                          |
+| `event_pulse.py`         | Sync handler emitting `engine.spawn` on a custom event                     |
+| `input_orbit.py`         | Drag-to-orbit + wheel-zoom via the input event bus                         |
+| `input_fly.py`           | WASD fly cam through a procedural city skyline, via input polling          |
 
 Run an example:
 
@@ -244,6 +256,10 @@ python examples/nbody.py --render 60  # Render 60s video to nbody.mp4
   - Roughness/metallic workflow
   - Multiple point lights with inverse-square attenuation
   - Reinhard tonemapping + gamma correction
+- **ColormapMaterial** — sprite path, 1D LUT lookup on a per-instance scalar; six built-in colormaps (viridis, magma, plasma, inferno, turbo, gray); optional Lambert shading
+- **LabelMaterial** — camera-facing billboard text rasterized through a shared `LabelTextureAtlas`; world- or screen-anchored
+- **AxisMaterial** — line-list material for axes; world- or screen-anchored
+- **VolumeMaterial** — direct volume rendering with a colormap LUT + 256-sample opacity LUT
 - **External lights** — passed to engine like camera (not in ECS)
 
 ### Camera
@@ -252,9 +268,37 @@ python examples/nbody.py --render 60  # Render 60s video to nbody.mp4
 - Fit/fit_bounds for automatic framing
 
 ### Geometries
-- Cube (with normals)
-- UV Sphere (with normals, CCW winding)
-- Plane (with normals)
+- Cube, UV Sphere, Plane (with normals)
+- `SPRITE_QUAD` for the camera-facing sprite path (sci-viz point clouds)
+- `axis_line_x` / `axis_line_y` / `axis_line_z` for the line-list axis pipeline
+
+### Sci-viz primitives (`manifoldx.viz`)
+- **PointCloud + ColormapMaterial** — large-N particle clouds, per-particle scalar attribute mapped through a colormap LUT, per-particle world-space radius
+- **TextLabel + LabelMaterial** — camera-facing billboard text via a PIL-rasterized `LabelTextureAtlas`
+- **AxisFrame + AxisMaterial** — world- or screen-anchored axes; screen anchoring gives scale bars without a dedicated component
+- **Colormap legends** — `LabelTextureAtlas.register_colormap_legend(...)` rasterizes any colormap into the atlas, rendered through the screen-anchored label path
+
+### Event-driven engine
+- Pub/sub event bus parallel to the frame loop: `engine.emit(name, payload)` and `@engine.on(name)`
+- Sync handlers run inline at the head of the next frame; async handlers progress between draw callbacks
+- Async waiters: `await engine.tick()`, `await engine.delay(seconds)`, `await engine.elapsed_at(target)`, plus `await engine.run_blocking(fn, ...)` for blocking work
+- Lifecycle decorators (`startup`, `shutdown`, `frame`) ride the same bus
+
+### Input layer
+- Typed event dataclasses on the bus: `KeyEvent`, `PointerEvent`, `WheelEvent`, `ResizeEvent`
+- Bevy-style polling state at `engine.input`: `is_pressed(key)` / `just_pressed(key)` / `just_released(key)`, plus `mouse_pos`, `mouse_delta`, `wheel_delta`, `viewport_size`
+- Polling state is updated immediately on every event; `just_*` and delta accumulators are this-frame-bound
+
+### GPU compute systems
+- Author kernels as a typed-Python `def main(self, i)` body — no inline WGSL strings required
+- Python → WGSL transpiler emits the bind-group header, helper functions, and the `@compute` wrapper
+- `engine.compute(cls)` validates synchronously: shader-compile errors and Python-source-level transpiler errors surface at registration time
+- Mypy-clean kernel bodies: vec3/vec4 are real classes with arithmetic dunders; math builtins carry PEP-484 signatures
+
+### Volume rendering
+- `Volume` ECS component (handle into a per-engine `VolumeRegistry`); `engine.register_volume(numpy_array)` for CPU upload
+- Front-to-back composite raymarching in a fragment shader, with depth-test on / depth-write off and pre-multiplied alpha blending
+- Reusable colormap LUT + per-material 256-sample opacity LUT (built from piecewise stops or a numpy array)
 
 ### Video Rendering
 
@@ -293,7 +337,7 @@ The ECS uses numpy arrays for all component data. When you call `query[Transform
 ## Limitations (Known)
 
 - ❌ No shadows
-- ❌ No texture support
+- ❌ No general texture support (label atlas is the only `texture_2d_array` path)
 - ❌ No environment/IBL mapping
 - ❌ Single material params per draw call (not per-instance)
 - ❌ Only point lights in PBR shader
@@ -348,7 +392,7 @@ make test
 python -m pytest tests/test_ecs.py -v
 ```
 
-Current test coverage: **162 tests** covering ECS operations, components, materials, rendering, camera, and video output.
+Current test coverage: **457 tests** covering ECS operations, components, materials, rendering passes (mesh, sprite, label, axis, volume), camera, sci-viz primitives, the event bus, input layer, GPU compute kernels, the WGSL transpiler, and video output.
 
 ## License
 
