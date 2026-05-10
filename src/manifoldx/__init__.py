@@ -8,6 +8,7 @@ from manifoldx.ecs import EntityStore, ComponentView
 from manifoldx.systems import Query
 from manifoldx.components import Transform, Mesh, Material, Colors
 from manifoldx.camera import Camera
+from manifoldx.input import KeyEvent, PointerEvent, WheelEvent, ResizeEvent
 from manifoldx.resources import cube, sphere, plane, basic, phong, standard
 from manifoldx import compute  # noqa: E402, F401
 from manifoldx import physics  # noqa: E402, F401
@@ -116,4 +117,8 @@ __all__ = [
     "physics",
     "random",
     "viz",
+    "KeyEvent",
+    "PointerEvent",
+    "WheelEvent",
+    "ResizeEvent",
 ]
