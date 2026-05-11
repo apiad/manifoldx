@@ -17,10 +17,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from manifoldx.gui.button import Button
 from manifoldx.gui.layout import LayoutBox
 from manifoldx.gui.style import parse_color
 from manifoldx.gui.value_display import ValueDisplay
-from manifoldx.gui.widgets import Panel, Text, Widget
+from manifoldx.gui.widgets import Panel, Text, Widget, _measure_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,4 +119,28 @@ def paint(
             font_size=int(s["font_size"]),
             fg=parse_color(s["fg"]),
         )
-    # Plan 2 will add Button / Slider / Toggle branches.
+    elif isinstance(widget, Button):
+        s = widget.effective_style()
+        painter.draw_rect(
+            box=box,
+            fill=parse_color(s["bg"]),
+            border_color=parse_color(s["border_color"]),
+            border=float(s["border"]),
+            radius=float(s["radius"]),
+        )
+        # Center the label inside the button box.
+        font_size = int(s["font_size"])
+        lw, lh = _measure_text(widget.label, font_size)
+        text_box = LayoutBox(
+            box.x + (box.w - lw) * 0.5,
+            box.y + (box.h - lh) * 0.5,
+            lw,
+            lh,
+        )
+        painter.draw_text(
+            box=text_box,
+            text=widget.label,
+            font_size=font_size,
+            fg=parse_color(s["fg"]),
+        )
+    # Slider / Toggle branches added in Tasks 4–5.
