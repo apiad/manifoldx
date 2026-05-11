@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
-- **GUI v1 — foundation (in progress)** — new `manifoldx.gui` package with `Panel`, `Text`, `ValueDisplay`, stack + flex layout, theme + named-class styling, and a gui render pass driven by `RectMaterial` (signed-distance rounded rect) plus a glyph path that reuses `LabelTextureAtlas`. No interactivity yet — Plan 2 will add `Button`/`Slider`/`Toggle` + the `_GuiBridge`.
+- **GUI v1** — in-engine retained-mode GUI for sim controls + HUD readouts. New `manifoldx.gui` package: `Panel`, `Text`, `ValueDisplay`, `Button`, `Slider`, `Toggle`; stack + flex layout; theme + named-class styling with per-widget overrides. Rendering via a new `gui` render pass at the end of the order, using `RectMaterial` (WGSL signed-distance rounded rect) for backgrounds and the existing `LabelTextureAtlas` for glyphs (no new font dependency). Interaction via `_GuiBridge` — subscribes to pointer events on the bus, hit-tests the widget tree top-down, dispatches per-widget state mutations, and exposes `engine.gui.pointer_over_gui` for cooperative consume by user systems. Slider supports drag capture and emits `:change` continuously plus `:commit` on pointer-up. Example at `examples/gui_demo.py`.
 
 ## [0.9.0] - 2026-05-10
 
