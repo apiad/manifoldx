@@ -34,6 +34,30 @@ class _GuiBridge:
         self._engine.gui.pointer_over_gui = False
 
     def _on_pointer(self, ev: Any, phase: str) -> None:
-        """Stub — routing logic lands in Task 2 (hit-test) and Tasks 3–5
-        (per-widget handling). For now the bridge silently swallows events."""
-        return
+        """Route a pointer event through hit-test to widget handlers."""
+        gui = self._engine.gui
+
+        # Drag capture takes precedence over hit-test.
+        if self._captured is not None and phase != "down":
+            self._dispatch(self._captured, ev, phase)
+            gui.pointer_over_gui = True
+            if phase == "up":
+                self._captured = None
+            return
+
+        from manifoldx.gui.hit_test import hit_test
+        from manifoldx.gui.layout import LayoutBox
+        viewport = LayoutBox(0.0, 0.0, float(self._engine.w), float(self._engine.h))
+        widget = hit_test(list(gui), ev.x, ev.y, viewport=viewport)
+        if widget is None:
+            return
+        gui.pointer_over_gui = True
+        self._dispatch(widget, ev, phase)
+        if phase == "down" and getattr(widget, "_gui_captures_pointer", False):
+            self._captured = widget
+
+    def _dispatch(self, widget: Any, ev: Any, phase: str) -> None:
+        """Default dispatch — defer to widget if it implements the hook."""
+        hook = getattr(widget, f"_on_pointer_{phase}", None)
+        if hook is not None:
+            hook(ev, self._engine)

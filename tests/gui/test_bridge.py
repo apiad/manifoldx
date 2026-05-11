@@ -65,3 +65,41 @@ def test_bridge_begin_frame_clears_pointer_over_gui_flag():
     eng.gui.pointer_over_gui = True
     bridge.begin_frame()
     assert eng.gui.pointer_over_gui is False
+
+
+def test_pointer_event_over_interactive_widget_sets_flag():
+    import pytest
+    try:
+        from manifoldx.backends import get_offscreen_canvas
+        canvas = get_offscreen_canvas(width=128, height=128)
+    except Exception as e:
+        pytest.skip(f"offscreen canvas unavailable: {e}")
+    import manifoldx as mx
+    from manifoldx.gui.widgets import Widget
+
+    class _Marker(Widget):
+        _is_gui_interactive = True
+        def intrinsic_size(self):
+            return (10.0, 10.0)
+
+    engine = mx.Engine("test", width=128, height=128)
+    engine._init_canvas(canvas)
+    engine._running = True
+
+    panel = Panel(
+        children=[_Marker()],
+        anchor="top-left",
+        offset=(0, 0),
+        style_overrides={"width": 50, "height": 50, "padding": 0},
+    )
+    engine.gui.append(panel)
+
+    engine._render_canvas.submit_event({
+        "event_type": "pointer_down",
+        "x": 10.0, "y": 10.0,
+        "button": 1, "buttons": (1,),
+        "modifiers": (), "ntouches": 0, "touches": {},
+    })
+    engine._render_canvas._process_events()
+    engine._draw_frame()
+    assert engine.gui.pointer_over_gui is True
