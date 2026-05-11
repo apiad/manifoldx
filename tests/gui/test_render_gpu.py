@@ -65,3 +65,24 @@ def test_gui_pass_renders_panel_rect_into_framebuffer():
         f"outside pixel should be much less red than inside: inside={inside.tolist()}, "
         f"outside={outside.tolist()}"
     )
+
+
+def test_gui_pass_renders_text_widget():
+    from manifoldx.gui import Text
+    style.set_theme({"bg": "#000000ff", "fg": "#ffffffff", "font_size": 16,
+                     "padding": 2, "gap": 0})
+    engine, canvas = _make_offscreen_engine(width=160, height=64)
+    panel = Panel(
+        children=[Text("hello")],
+        anchor="top-left",
+        offset=(0, 0),
+        style_overrides={"width": 100, "height": 40},
+    )
+    engine.gui.append(panel)
+    engine._draw_frame()
+    frame = np.asarray(canvas.draw())
+    # Sum brightness over the text region — non-empty means glyphs drew.
+    region = frame[6:30, 4:96, :3].astype(np.int32).sum()
+    assert region > 5000, (
+        f"expected glyphs to brighten the panel region; got region sum={region}"
+    )
