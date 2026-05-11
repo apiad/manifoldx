@@ -13,7 +13,7 @@ import numpy as np
 
 NUM_BODIES = 200
 G = 20.0  # gravitational constant (mutable via slider)
-DT = 0.01  # timestep (mutable via slider)
+DT = 0.02  # timestep (mutable via slider) — chosen for visible motion at typical FPS
 SOFTENING = 0.05  # prevents singularities at close range
 MAX_SPEED = 20.0  # velocity clamp
 SPHERE_RADIUS = 0.5  # base mesh radius
@@ -56,22 +56,27 @@ def reset_positions():
 
 @engine.system
 def nbody_gravity(query: mx.Query[Transform], dt: float):
-    """Physics step: compute gravity, integrate velocities and positions."""
-    global velocities, positions
+    """Physics step: compute gravity, integrate velocities and positions.
+
+    Writes go through `query[Transform].pos += ...` (the ECS operator overload
+    that routes through the command buffer) — direct `pos.data[:]` writes hit
+    a returned-by-value copy and don't propagate to the entities.
+    """
+    global velocities
     if needs_reset[0]:
-        positions[:] = mx.random.positions_in_box(NUM_BODIES, half_size=SIZE, rng=7)
+        new_pos = mx.random.positions_in_box(NUM_BODIES, half_size=SIZE, rng=7)
+        current = query[Transform].pos.data
+        query[Transform].pos += new_pos - current
         velocities[:] = 0
-        query[Transform].pos.data[:NUM_BODIES] = positions
         needs_reset[0] = False
+        return
     pos = query[Transform].pos.data
     accel = mx.physics.gravity(pos, masses=masses, G=G_ref[0], softening=SOFTENING)
     velocities += accel * dt_ref[0]
-    # Clamp speed to prevent runaway
     speeds = np.linalg.norm(velocities, axis=1, keepdims=True)
     scale = np.minimum(1.0, MAX_SPEED / np.maximum(speeds, 1e-6))
     velocities *= scale
-    pos += velocities * dt_ref[0]
-    query[Transform].pos.data[:] = pos
+    query[Transform].pos += velocities * dt_ref[0]
 
 
 # Build GUI panel (docked top-right, but we'll use top-left + offset for safety)

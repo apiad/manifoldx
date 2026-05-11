@@ -107,18 +107,26 @@ def paint(
             paint(child, child_spec, boxes, painter)
     elif isinstance(widget, Text):
         s = widget.effective_style()
+        font_size = int(s["font_size"])
+        lw, lh = _measure_text(widget.text, font_size)
+        # Paint at intrinsic dimensions; the layout box's cross-axis fill
+        # would otherwise stretch the glyph horizontally.
+        text_box = LayoutBox(box.x, box.y, lw, lh)
         painter.draw_text(
-            box=box,
+            box=text_box,
             text=widget.text,
-            font_size=int(s["font_size"]),
+            font_size=font_size,
             fg=parse_color(s["fg"]),
         )
     elif isinstance(widget, ValueDisplay):
         s = widget.effective_style()
+        font_size = int(s["font_size"])
+        lw, lh = _measure_text(widget.text, font_size)
+        text_box = LayoutBox(box.x, box.y, lw, lh)
         painter.draw_text(
-            box=box,
+            box=text_box,
             text=widget.text,
-            font_size=int(s["font_size"]),
+            font_size=font_size,
             fg=parse_color(s["fg"]),
         )
     elif isinstance(widget, Button):
@@ -168,11 +176,11 @@ def paint(
                 radius=1.0,
             )
         font_size = int(s["font_size"])
-        _lw, lh = _measure_text(widget.label, font_size)
+        lw, lh = _measure_text(widget.label, font_size)
         text_box = LayoutBox(
             box.x + cb_size + 6.0,
             box.y + (box.h - lh) * 0.5,
-            box.w - cb_size - 6.0,
+            lw,
             lh,
         )
         painter.draw_text(
