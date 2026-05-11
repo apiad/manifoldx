@@ -37,13 +37,17 @@ class _GuiBridge:
         """Route a pointer event through hit-test to widget handlers."""
         gui = self._engine.gui
 
-        # Drag capture takes precedence over hit-test.
-        if self._captured is not None and phase != "down":
-            self._dispatch(self._captured, ev, phase)
-            gui.pointer_over_gui = True
-            if phase == "up":
+        # Captured drag has highest priority.
+        if self._captured is not None:
+            if phase == "down":
+                # New down while captured: end old capture, fall through to hit-test.
                 self._captured = None
-            return
+            else:
+                self._dispatch(self._captured, ev, phase)
+                gui.pointer_over_gui = True
+                if phase == "up":
+                    self._captured = None
+                return
 
         from manifoldx.gui.hit_test import hit_test
         from manifoldx.gui.layout import LayoutBox
@@ -55,9 +59,15 @@ class _GuiBridge:
         gui.pointer_over_gui = True
         # Stash layout box for widgets that need it (e.g. Slider).
         widget._layout_box = box  # noqa: SLF001 — internal contract
-        self._dispatch(widget, ev, phase)
-        if phase == "down" and getattr(widget, "_gui_captures_pointer", False):
-            self._captured = widget
+
+        # Only dispatch down/up to widgets without capture — never raw move.
+        # Moves without capture only set pointer_over_gui (done above) so that
+        # the 3D camera knows the cursor is over the panel, but widgets do not
+        # fire change events on hover. Hover opt-in can land in a future plan.
+        if phase != "move":
+            self._dispatch(widget, ev, phase)
+            if phase == "down" and getattr(widget, "_gui_captures_pointer", False):
+                self._captured = widget
 
     def _dispatch(self, widget: Any, ev: Any, phase: str) -> None:
         """Default dispatch — defer to widget if it implements the hook."""

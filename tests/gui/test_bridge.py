@@ -103,3 +103,49 @@ def test_pointer_event_over_interactive_widget_sets_flag():
     engine._render_canvas._process_events()
     engine._draw_frame()
     assert engine.gui.pointer_over_gui is True
+
+
+def test_pointer_move_without_capture_does_not_dispatch_to_widget():
+    """A raw pointer_move (no prior down) must not call widget event hooks."""
+    try:
+        from manifoldx.backends import get_offscreen_canvas
+        canvas = get_offscreen_canvas(width=128, height=128)
+    except Exception as e:
+        pytest.skip(f"offscreen canvas unavailable: {e}")
+    import manifoldx as mx
+    from manifoldx.gui.widgets import Widget
+
+    dispatched = []
+
+    class _Marker(Widget):
+        _is_gui_interactive = True
+        _gui_captures_pointer = True
+
+        def intrinsic_size(self):
+            return (10.0, 10.0)
+
+        def _on_pointer_move(self, ev, engine):
+            dispatched.append("move")
+
+    engine = mx.Engine("test", width=128, height=128)
+    engine._init_canvas(canvas)
+    engine._running = True
+
+    panel = Panel(
+        children=[_Marker()],
+        anchor="top-left",
+        offset=(0, 0),
+        style_overrides={"width": 50, "height": 50, "padding": 0},
+    )
+    engine.gui.append(panel)
+
+    # Submit move event without any prior down — should not dispatch.
+    engine._render_canvas.submit_event({
+        "event_type": "pointer_move",
+        "x": 10.0, "y": 10.0,
+        "button": 0, "buttons": (0,),
+        "modifiers": (), "ntouches": 0, "touches": {},
+    })
+    engine._render_canvas._process_events()
+    engine._draw_frame()
+    assert dispatched == []
