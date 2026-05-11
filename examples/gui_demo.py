@@ -45,24 +45,24 @@ G_ref = [G]
 dt_ref = [DT]
 trails_enabled = [False]
 
-# Store original masses for reset (to preserve the random seed result)
-original_positions = positions.copy()
+# Flag for deferred reset — set by reset_positions(), consumed by the system.
+needs_reset = [False]
 
 
 def reset_positions():
-    """Re-randomize positions and zero velocities."""
-    global velocities, positions
-    positions = mx.random.positions_in_box(NUM_BODIES, half_size=SIZE, rng=7)
-    velocities = np.zeros((NUM_BODIES, 3), dtype=np.float32)
-    # Update entity positions
-    query = mx.Query[Transform](engine)
-    query[Transform].pos.data[:] = positions
+    """Signal the physics system to re-randomize positions on its next tick."""
+    needs_reset[0] = True
 
 
 @engine.system
 def nbody_gravity(query: mx.Query[Transform], dt: float):
     """Physics step: compute gravity, integrate velocities and positions."""
-    global velocities
+    global velocities, positions
+    if needs_reset[0]:
+        positions[:] = mx.random.positions_in_box(NUM_BODIES, half_size=SIZE, rng=7)
+        velocities[:] = 0
+        query[Transform].pos.data[:NUM_BODIES] = positions
+        needs_reset[0] = False
     pos = query[Transform].pos.data
     accel = mx.physics.gravity(pos, masses=masses, G=G_ref[0], softening=SOFTENING)
     velocities += accel * dt_ref[0]
