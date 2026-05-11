@@ -115,10 +115,22 @@ _UNIT_QUAD_VERTS = np.array(
 _UNIT_QUAD_INDICES = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint32)
 
 
+def _refresh_value_displays(widget) -> None:
+    from manifoldx.gui.value_display import ValueDisplay
+    if isinstance(widget, ValueDisplay):
+        widget.refresh()
+    for child in getattr(widget, "children", []) or []:
+        _refresh_value_displays(child)
+
+
 def render_gui_pass(rp, engine, render_pass) -> None:
     """Entry point — called from RenderPipeline.render after the axis pass."""
     if not engine.gui:
         return
+
+    # Drive dynamic text widgets once per frame.
+    for panel in engine.gui:
+        _refresh_value_displays(panel)
 
     viewport = LayoutBox(0.0, 0.0, float(engine.w), float(engine.h))
 

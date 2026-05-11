@@ -78,3 +78,37 @@ def test_gui_root_is_listlike_and_has_pointer_over_gui_flag():
     assert g.pointer_over_gui is False
     g.pointer_over_gui = True
     assert g.pointer_over_gui is True
+
+
+def test_value_display_calls_getter_each_frame_invocation():
+    from manifoldx.gui import ValueDisplay
+    calls = []
+    def getter():
+        calls.append(1)
+        return "x"
+    vd = ValueDisplay(getter=getter)
+    vd.refresh()
+    vd.refresh()
+    assert len(calls) == 2
+    assert vd.text == "x"
+
+
+def test_value_display_min_width_locks_intrinsic_width():
+    from manifoldx.gui import ValueDisplay
+    vd = ValueDisplay(getter=lambda: "hello", min_width=120)
+    vd.refresh()
+    w, _ = vd.intrinsic_size()
+    assert w >= 120
+
+
+def test_value_display_intrinsic_size_does_not_change_when_string_same_length_fits_min_width():
+    from manifoldx.gui import ValueDisplay
+    counter = {"n": 0.0}
+    def getter():
+        counter["n"] += 1.0
+        return f"fps: {counter['n']:.0f}"  # 1- to 3-digit fluctuation
+    vd = ValueDisplay(getter=getter, min_width=200)
+    vd.refresh(); size1 = vd.intrinsic_size()
+    vd.refresh(); size2 = vd.intrinsic_size()
+    # min_width clamps the width so it doesn't oscillate.
+    assert size1 == size2

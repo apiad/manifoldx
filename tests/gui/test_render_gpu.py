@@ -86,3 +86,26 @@ def test_gui_pass_renders_text_widget():
     assert region > 5000, (
         f"expected glyphs to brighten the panel region; got region sum={region}"
     )
+
+
+def test_gui_pass_drives_value_display_each_frame():
+    from manifoldx.gui import ValueDisplay
+    style.set_theme({"bg": "#000000ff", "fg": "#ffffffff", "font_size": 14,
+                     "padding": 2, "gap": 0})
+    engine, canvas = _make_offscreen_engine(width=160, height=64)
+    calls = []
+    def getter():
+        calls.append(1)
+        return f"n={len(calls)}"
+    vd = ValueDisplay(getter=getter, min_width=80)
+    panel = Panel(
+        children=[vd],
+        anchor="top-left",
+        offset=(0, 0),
+        style_overrides={"width": 100, "height": 40},
+    )
+    engine.gui.append(panel)
+    engine._draw_frame()
+    engine._draw_frame()
+    engine._draw_frame()
+    assert len(calls) == 3

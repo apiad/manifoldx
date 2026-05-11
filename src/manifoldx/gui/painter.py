@@ -19,6 +19,7 @@ from typing import Any
 
 from manifoldx.gui.layout import LayoutBox
 from manifoldx.gui.style import parse_color
+from manifoldx.gui.value_display import ValueDisplay
 from manifoldx.gui.widgets import Panel, Text, Widget
 
 
@@ -109,4 +110,12 @@ def paint(
             font_size=int(s["font_size"]),
             fg=parse_color(s["fg"]),
         )
-    # Plan 2 will add ValueDisplay / Button / Slider / Toggle branches.
+    elif isinstance(widget, ValueDisplay):
+        s = widget.effective_style()
+        painter.draw_text(
+            box=box,
+            text=widget.text,
+            font_size=int(s["font_size"]),
+            fg=parse_color(s["fg"]),
+        )
+    # Plan 2 will add Button / Slider / Toggle branches.

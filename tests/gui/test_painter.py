@@ -68,3 +68,15 @@ def test_paint_nested_panels_walks_depth_first():
     # Two panels → 2 rects; two text widgets → 2 text ops.
     assert len(p.rect_ops) == 2
     assert {op.text for op in p.text_ops} == {"inner", "outer"}
+
+
+def test_paint_value_display_emits_text_op():
+    from manifoldx.gui import ValueDisplay
+    vd = ValueDisplay(getter=lambda: "fps: 60")
+    vd.refresh()
+    panel = Panel(children=[vd])
+    spec = panel.build_layout_spec()
+    boxes = compute_layout(spec, viewport=LayoutBox(0, 0, 100, 50))
+    p = Painter()
+    paint(panel, spec, boxes, p)
+    assert any(op.text == "fps: 60" for op in p.text_ops)
