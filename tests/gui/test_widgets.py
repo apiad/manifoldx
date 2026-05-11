@@ -108,7 +108,9 @@ def test_value_display_intrinsic_size_does_not_change_when_string_same_length_fi
         counter["n"] += 1.0
         return f"fps: {counter['n']:.0f}"  # 1- to 3-digit fluctuation
     vd = ValueDisplay(getter=getter, min_width=200)
-    vd.refresh(); size1 = vd.intrinsic_size()
-    vd.refresh(); size2 = vd.intrinsic_size()
+    vd.refresh()
+    size1 = vd.intrinsic_size()
+    vd.refresh()
+    size2 = vd.intrinsic_size()
     # min_width clamps the width so it doesn't oscillate.
     assert size1 == size2

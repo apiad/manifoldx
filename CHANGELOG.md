@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Features
+
+- **GUI v1 — foundation (in progress)** — new `manifoldx.gui` package with `Panel`, `Text`, `ValueDisplay`, stack + flex layout, theme + named-class styling, and a gui render pass driven by `RectMaterial` (signed-distance rounded rect) plus a glyph path that reuses `LabelTextureAtlas`. No interactivity yet — Plan 2 will add `Button`/`Slider`/`Toggle` + the `_GuiBridge`.
+
 ## [0.9.0] - 2026-05-10
 
 ### Features
