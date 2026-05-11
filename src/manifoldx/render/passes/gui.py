@@ -93,7 +93,10 @@ fn vs_main(in: VsIn) -> VsOut {
 
     // Map quad-local [-0.5, 0.5]^2 into UV [uv0, uv1]; flip V so PIL
     // top-left aligns with quad top-left.
-    let uv_t = vec2<f32>(in.position.x + 0.5, 0.5 - in.position.y);
+    // Pixel-space Y here matches the PIL tile convention (origin top-left),
+    // unlike LabelMaterial which uses an NDC-Y-up quad. So both U and V map
+    // straight from quad-local [-0.5, 0.5] → UV [0, 1] with NO flip.
+    let uv_t = vec2<f32>(in.position.x + 0.5, in.position.y + 0.5);
 
     var out: VsOut;
     out.clip  = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
