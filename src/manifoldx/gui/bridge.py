@@ -48,10 +48,13 @@ class _GuiBridge:
         from manifoldx.gui.hit_test import hit_test
         from manifoldx.gui.layout import LayoutBox
         viewport = LayoutBox(0.0, 0.0, float(self._engine.w), float(self._engine.h))
-        widget = hit_test(list(gui), ev.x, ev.y, viewport=viewport)
-        if widget is None:
+        result = hit_test(list(gui), ev.x, ev.y, viewport=viewport)
+        if result is None:
             return
+        widget, box = result
         gui.pointer_over_gui = True
+        # Stash layout box for widgets that need it (e.g. Slider).
+        widget._layout_box = box  # noqa: SLF001 — internal contract
         self._dispatch(widget, ev, phase)
         if phase == "down" and getattr(widget, "_gui_captures_pointer", False):
             self._captured = widget

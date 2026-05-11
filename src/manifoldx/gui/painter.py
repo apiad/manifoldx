@@ -19,6 +19,7 @@ from typing import Any
 
 from manifoldx.gui.button import Button
 from manifoldx.gui.layout import LayoutBox
+from manifoldx.gui.slider import Slider
 from manifoldx.gui.style import parse_color
 from manifoldx.gui.toggle import Toggle
 from manifoldx.gui.value_display import ValueDisplay
@@ -178,4 +179,24 @@ def paint(
             box=text_box, text=widget.label,
             font_size=font_size, fg=parse_color(s["fg"]),
         )
-    # Slider branch added in Task 5.
+    elif isinstance(widget, Slider):
+        s = widget.effective_style()
+        painter.draw_rect(
+            box=box,
+            fill=parse_color(s["bg"]),
+            border_color=parse_color(s["border_color"]),
+            border=float(s["border"]),
+            radius=float(s["radius"]),
+        )
+        if widget.max > widget.min:
+            t = (widget.value - widget.min) / (widget.max - widget.min)
+        else:
+            t = 0.0
+        t = max(0.0, min(1.0, t))
+        if t > 0:
+            fill_box = LayoutBox(box.x, box.y, box.w * t, box.h)
+            painter.draw_rect(
+                box=fill_box,
+                fill=parse_color(s["fg"]),
+                radius=float(s["radius"]),
+            )

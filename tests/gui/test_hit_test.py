@@ -44,4 +44,6 @@ def test_hit_test_later_panel_topmost():
     p2 = Panel(children=[b], anchor="top-left", offset=(0, 0),
                style_overrides={"width": 50, "height": 50, "padding": 0})
     hit = hit_test([p1, p2], 10.0, 10.0, viewport=LayoutBox(0, 0, 256, 256))
-    assert hit is b
+    assert hit is not None
+    widget, box = hit
+    assert widget is b

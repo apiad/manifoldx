@@ -17,14 +17,17 @@ from typing import Iterable
 from manifoldx.gui.layout import LayoutBox, compute_layout
 from manifoldx.gui.widgets import Panel, Widget
 
+HitResult = tuple[Widget, LayoutBox]
+
 
 def hit_test(
     panels: Iterable[Panel],
     x: float,
     y: float,
     viewport: LayoutBox,
-) -> Widget | None:
-    """Return the topmost interactive widget under (x, y), or None."""
+) -> HitResult | None:
+    """Return (widget, box) for the topmost interactive widget under (x, y),
+    or None."""
     panels = list(panels)
     for panel in reversed(panels):
         spec = panel.build_layout_spec()
@@ -55,7 +58,7 @@ def _walk(
     boxes: dict,
     x: float,
     y: float,
-) -> Widget | None:
+) -> HitResult | None:
     box = boxes[id(spec)]
     if not _contains(box, x, y):
         return None
@@ -65,7 +68,7 @@ def _walk(
                 hit = _walk(child, child_spec, boxes, x, y)
                 if hit is not None:
                     return hit
-        return widget
+        return (widget, box)
     if isinstance(widget, Panel):
         for child, child_spec in zip(widget.children, spec["children"]):
             hit = _walk(child, child_spec, boxes, x, y)
