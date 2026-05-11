@@ -71,6 +71,12 @@ class Engine:
         from manifoldx.gui.widgets import _GuiRoot
         self.gui = _GuiRoot()
 
+        # GUI input bridge — routes pointer events through hit-test
+        # and per-widget state. Subscribes to pointer_down/move/up at
+        # construction; needs `self.gui` to already exist.
+        from manifoldx.gui.bridge import _GuiBridge
+        self._gui_bridge = _GuiBridge(self)
+
         # === ECS Infrastructure ===
         self.store = EntityStore(max_entities)
         self.commands = CommandBuffer()
@@ -501,6 +507,11 @@ class Engine:
         # just_pressed/just_released sets and delta accumulators before
         # any handler or system runs.
         self._input_bridge.begin_frame()
+
+        # GUI bridge frame reset — pointer_over_gui rolls back to False
+        # at the head of each frame; the per-event hit-test will set it
+        # True again if the cursor is over a widget this frame.
+        self._gui_bridge.begin_frame()
 
         # Clear command buffer ONCE at the head of the frame so events,
         # async handlers, and systems all contribute to the same buffer
