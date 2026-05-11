@@ -63,18 +63,14 @@ def _layout_node(
     direction = node["direction"]
     gap = node["gap"]
     main_axis = "h" if direction == "v" else "w"
-    cross_axis = "w" if direction == "v" else "h"
     main_size = getattr(inner, main_axis)
-    cross_size = getattr(inner, cross_axis)
 
     total_gap = gap * max(0, len(children) - 1)
     free = main_size - total_gap
 
-    # First pass: subtract fixed from `free`.
-    # Children without explicit size or flex: use intrinsic if non-default, else fill.
+    # First pass: subtract fixed + intrinsic-without-flex from `free`.
     main_sizes: list[float] = []
     total_flex = 0
-    num_fill_children = 0
     for child in children:
         flex = child.get("flex")
         explicit = child.get("height") if direction == "v" else child.get("width")
@@ -84,50 +80,26 @@ def _layout_node(
             continue
         if explicit is not None:
             size = float(explicit)
-            main_sizes.append(size)
-            free -= size
         else:
-            # No explicit size and no flex: check intrinsic
             iw, ih = child["intrinsic"]
-            intrinsic_main = ih if direction == "v" else iw
-            # Use intrinsic only if it's non-zero and not the default (10, 10)
-            if intrinsic_main > 0 and (iw, ih) != (10, 10):
-                size = float(intrinsic_main)
-                main_sizes.append(size)
-                free -= size
-            else:
-                # Zero or default intrinsic: will fill remaining space.
-                num_fill_children += 1
-                main_sizes.append(0.0)  # filled in second pass.
+            size = float(ih if direction == "v" else iw)
+        main_sizes.append(size)
+        free -= size
 
-    # Second pass: distribute remaining `free` among flex children and fill children.
-    total_shares = total_flex + num_fill_children
-    if total_shares > 0 and free > 0:
-        share_size = free / total_shares
+    # Second pass: distribute remaining `free` among flex children.
+    if total_flex > 0 and free > 0:
         for i, child in enumerate(children):
-            if main_sizes[i] == 0.0:  # flex or fill child
-                flex = child.get("flex")
-                explicit = child.get("height") if direction == "v" else child.get("width")
-                if flex is not None or explicit is None:
-                    # This is either a flex child (flex is not None) or a fill child (explicit is None)
-                    if flex is not None:
-                        main_sizes[i] = share_size * flex
-                    else:
-                        main_sizes[i] = share_size
+            flex = child.get("flex")
+            if flex is None:
+                continue
+            main_sizes[i] = free * (flex / total_flex)
 
     # Place children sequentially along the main axis.
-    # If child has explicit cross-axis size, use it; otherwise use available space.
     cursor = 0.0
     for child, size in zip(children, main_sizes):
         if direction == "v":
-            # vertical layout: main axis is h, cross axis is w
-            cross_explicit = child.get("width")
-            child_cross = float(cross_explicit) if cross_explicit is not None else cross_size
-            child_box = LayoutBox(inner.x, inner.y + cursor, child_cross, size)
+            child_box = LayoutBox(inner.x, inner.y + cursor, inner.w, size)
         else:
-            # horizontal layout: main axis is w, cross axis is h
-            cross_explicit = child.get("height")
-            child_cross = float(cross_explicit) if cross_explicit is not None else cross_size
-            child_box = LayoutBox(inner.x + cursor, inner.y, size, child_cross)
+            child_box = LayoutBox(inner.x + cursor, inner.y, size, inner.h)
         _layout_node(child, child_box, out)
         cursor += size + gap

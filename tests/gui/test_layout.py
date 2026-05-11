@@ -32,7 +32,7 @@ def _container(direction="v", padding=(0, 0, 0, 0), gap=0, children=None):
 
 
 def test_single_leaf_fills_container():
-    root = _container(children=[_leaf()])
+    root = _container(children=[_leaf(flex=1)])
     boxes = compute_layout(root, viewport=LayoutBox(0, 0, 100, 50))
     assert boxes[id(root)] == LayoutBox(0, 0, 100, 50)
     assert boxes[id(root["children"][0])] == LayoutBox(0, 0, 100, 50)
@@ -69,7 +69,7 @@ def test_flex_distributes_remaining_axis_space():
 
 
 def test_padding_shrinks_children_area():
-    a = _leaf()
+    a = _leaf(flex=1)
     root = _container(padding=(2, 4, 6, 8), children=[a])
     boxes = compute_layout(root, viewport=LayoutBox(0, 0, 100, 100))
     # Children area: x=8, y=2, w=100-4-8=88, h=100-2-6=92.
@@ -88,12 +88,13 @@ def test_gap_separates_siblings_in_stack():
 def test_nested_panels_layout_independently():
     inner_leaf = _leaf(width=20, height=10)
     inner = _container(direction="h", padding=(1, 1, 1, 1), children=[inner_leaf])
+    inner["flex"] = 1
     outer = _container(direction="v", padding=(5, 5, 5, 5), children=[inner])
     boxes = compute_layout(outer, viewport=LayoutBox(0, 0, 100, 100))
-    # outer children area: x=5,y=5,w=90,h=90 → inner gets that whole box.
+    # outer children area: x=5,y=5,w=90,h=90 → inner gets that whole box (flex=1).
     assert boxes[id(inner)] == LayoutBox(5, 5, 90, 90)
-    # inner children area: x=6,y=6,w=88,h=88 → leaf positioned at top-left.
-    assert boxes[id(inner_leaf)] == LayoutBox(6, 6, 20, 10)
+    # inner children area: x=6,y=6,w=88,h=88 → leaf has explicit width=20, fills cross-axis height.
+    assert boxes[id(inner_leaf)] == LayoutBox(6, 6, 20, 88)
 
 
 def test_intrinsic_size_used_when_no_explicit_size_or_flex():
