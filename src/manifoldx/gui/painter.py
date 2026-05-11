@@ -20,6 +20,7 @@ from typing import Any
 from manifoldx.gui.button import Button
 from manifoldx.gui.layout import LayoutBox
 from manifoldx.gui.style import parse_color
+from manifoldx.gui.toggle import Toggle
 from manifoldx.gui.value_display import ValueDisplay
 from manifoldx.gui.widgets import Panel, Text, Widget, _measure_text
 
@@ -143,4 +144,38 @@ def paint(
             font_size=font_size,
             fg=parse_color(s["fg"]),
         )
-    # Slider / Toggle branches added in Tasks 4–5.
+    elif isinstance(widget, Toggle):
+        s = widget.effective_style()
+        cb_size = 14.0
+        cb_box = LayoutBox(box.x, box.y + (box.h - cb_size) * 0.5, cb_size, cb_size)
+        painter.draw_rect(
+            box=cb_box,
+            fill=parse_color(s["bg"]),
+            border_color=parse_color(s["fg"]),
+            border=1.0,
+            radius=2.0,
+        )
+        if widget.value:
+            inset = 3.0
+            inner = LayoutBox(
+                cb_box.x + inset, cb_box.y + inset,
+                cb_box.w - 2 * inset, cb_box.h - 2 * inset,
+            )
+            painter.draw_rect(
+                box=inner,
+                fill=parse_color(s["fg"]),
+                radius=1.0,
+            )
+        font_size = int(s["font_size"])
+        _lw, lh = _measure_text(widget.label, font_size)
+        text_box = LayoutBox(
+            box.x + cb_size + 6.0,
+            box.y + (box.h - lh) * 0.5,
+            box.w - cb_size - 6.0,
+            lh,
+        )
+        painter.draw_text(
+            box=text_box, text=widget.label,
+            font_size=font_size, fg=parse_color(s["fg"]),
+        )
+    # Slider branch added in Task 5.
