@@ -27,9 +27,14 @@ from manifoldx.gui.widgets import Panel
 # ---------------------------------------------------------------------------
 # Glyph shader — screen-anchored billboard per TextOp.
 #
-# Instance layout (2 × vec4<f32> = 32 bytes):
+# Instance layout (3 × vec4<f32> = 48 bytes):
 #   row0 = (xy_top_left_px.x, xy_top_left_px.y, size_px.w, size_px.h)
 #   row1 = (slice_idx, fg.r, fg.g, fg.b)
+#   row2 = (u0, v0, u1, v1)  — normalized UV bounds of the live glyph region
+#
+# row2 clamps shader sampling to the actual rasterized pixels inside the tile
+# instead of stretching the whole 256×64 tile into the layout box — this is
+# what makes text legible at small widget sizes.
 #
 # The Globals struct is the same 224-byte block used by the rect shader;
 # only viewport_size (bytes 208-215) is read here.
@@ -47,11 +52,13 @@ struct Globals {
 @group(0) @binding(0) var<uniform> globals: Globals;
 
 struct GlyphInstance {
-    // Two packed vec4<f32> rows (32 bytes) — GPU-friendly alignment.
+    // Three packed vec4<f32> rows (48 bytes) — GPU-friendly alignment.
     // row0: (xy_top_left_px.x, xy_top_left_px.y, size_px.x, size_px.y)
     // row1: (slice_idx, fg.r, fg.g, fg.b)
+    // row2: (u0, v0, u1, v1) — normalized UV of the live glyph bbox in the tile
     row0: vec4<f32>,
     row1: vec4<f32>,
+    row2: vec4<f32>,
 };
 @group(0) @binding(1) var<storage, read> glyphs: array<GlyphInstance>;
 @group(0) @binding(2) var glyph_atlas: texture_2d_array<f32>;
@@ -76,16 +83,21 @@ fn vs_main(in: VsIn) -> VsOut {
     let sz         = vec2<f32>(inst.row0.z, inst.row0.w);
     let slice      = inst.row1.x;
     let fg         = vec3<f32>(inst.row1.y, inst.row1.z, inst.row1.w);
+    let uv0        = vec2<f32>(inst.row2.x, inst.row2.y);
+    let uv1        = vec2<f32>(inst.row2.z, inst.row2.w);
 
     let center_px  = xy + sz * 0.5;
     let corner_px  = center_px + vec2<f32>(in.position.x, in.position.y) * sz;
     let ndc_x      = (corner_px.x / globals.viewport_size.x) * 2.0 - 1.0;
     let ndc_y      = 1.0 - (corner_px.y / globals.viewport_size.y) * 2.0;
 
+    // Map quad-local [-0.5, 0.5]^2 into UV [uv0, uv1]; flip V so PIL
+    // top-left aligns with quad top-left.
+    let uv_t = vec2<f32>(in.position.x + 0.5, 0.5 - in.position.y);
+
     var out: VsOut;
     out.clip  = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
-    // Map quad-local [-0.5, 0.5]^2 -> UV [0, 1]^2; flip V so PIL top-left aligns.
-    out.uv    = vec2<f32>(in.position.x + 0.5, 0.5 - in.position.y);
+    out.uv    = mix(uv0, uv1, uv_t);
     out.slice = slice;
     out.fg    = fg;
     return out;
@@ -339,31 +351,26 @@ def _draw_rects(rp, engine, render_pass, instance_count: int) -> None:
 # ---------------------------------------------------------------------------
 
 def _pack_glyph_instances(text_ops, atlas) -> np.ndarray:
-    """Pack TextOps into a (N, 8) float32 buffer with the layout the GUI
+    """Pack TextOps into a (N, 12) float32 buffer with the layout the GUI
     glyph shader expects:
 
         row0 = (xy.x, xy.y, size.x, size.y)
         row1 = (slice, fg.r, fg.g, fg.b)
+        row2 = (u0, v0, u1, v1)  — UV bounds of the live glyph in the tile
 
     Coordinates are pixel-space top-left (matching the rect path).
     """
     if not text_ops:
-        return np.zeros((0, 8), dtype=np.float32)
+        return np.zeros((0, 12), dtype=np.float32)
     rows = []
     for op in text_ops:
         slice_idx = atlas.get_or_create(op.text, font_size=op.font_size)
-        rows.append(
-            [
-                op.box.x,
-                op.box.y,
-                op.box.w,
-                op.box.h,
-                float(slice_idx),
-                op.fg[0],
-                op.fg[1],
-                op.fg[2],
-            ]
-        )
+        _w, _h, u0, v0, u1, v1 = atlas.measure_string(op.text, font_size=op.font_size)
+        rows.append([
+            op.box.x, op.box.y, op.box.w, op.box.h,
+            float(slice_idx), op.fg[0], op.fg[1], op.fg[2],
+            u0, v0, u1, v1,
+        ])
     return np.asarray(rows, dtype=np.float32)
 
 

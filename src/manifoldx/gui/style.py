@@ -17,7 +17,7 @@ from typing import Any
 DEFAULT_THEME: dict[str, Any] = {
     "bg": "#222",
     "fg": "#ddd",
-    "font_size": 12,
+    "font_size": 14,
     "padding": 4,
     "gap": 4,
     "border": 0,

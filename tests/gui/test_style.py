@@ -14,7 +14,7 @@ def test_default_theme_resolves_when_no_class_or_overrides():
     # Defaults from the design doc style table.
     assert resolved["bg"] == "#222"
     assert resolved["fg"] == "#ddd"
-    assert resolved["font_size"] == 12
+    assert resolved["font_size"] == 14
     assert resolved["padding"] == 4
     assert resolved["gap"] == 4
     assert resolved["border"] == 0

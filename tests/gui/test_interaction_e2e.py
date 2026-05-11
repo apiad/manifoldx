@@ -79,7 +79,8 @@ def test_toggle_click_flips_and_emits():
         style_overrides={"width": 100, "height": 30, "padding": 0},
     )
     engine.gui.append(panel)
-    _click(engine, 10, 15)
+    # Toggle intrinsic height is now PIL-accurate (~14px); click inside that box.
+    _click(engine, 10, 7)
     assert received == [{"value": True}]
     assert tg.value is True
 

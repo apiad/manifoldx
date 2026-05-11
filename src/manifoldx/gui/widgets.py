@@ -149,14 +149,14 @@ class Text(Widget):
 
 
 def _measure_text(text: str, font_size: int) -> tuple[float, float]:
-    """Approximate the rasterized extents without going through wgpu.
+    """Pixel extents of `text` rasterized at `font_size`.
 
-    We deliberately use a coarse linear model here (no PIL dependency in
-    Plan 1) — the actual atlas-side measurement lands in Task 7, and any
-    discrepancy at that point triggers a re-layout via the dirty bit.
+    Delegates to the label-atlas PIL rasterizer for accuracy so that layout
+    boxes match the actual glyph footprint painted by the GPU pass.
     """
-    char_w = font_size * 0.55
-    return (char_w * max(1, len(text)), float(font_size) * 1.25)
+    from manifoldx.viz.text import LabelTextureAtlas
+    w, h, *_ = LabelTextureAtlas.measure_string(text, font_size=font_size)
+    return (float(w), float(h))
 
 
 class _GuiRoot:

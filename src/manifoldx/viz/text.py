@@ -36,6 +36,43 @@ class LabelTextureAtlas:
         self._gpu_sampler = None
 
     @staticmethod
+    def measure_string(
+        text: str, font_size: int = 14
+    ) -> tuple[int, int, float, float, float, float]:
+        """Return (glyph_w_px, glyph_h_px, u0, v0, u1, v1) for `text` at `font_size`.
+
+        glyph_w_px, glyph_h_px: actual pixel extents PIL rasterizes inside the tile.
+        u0, v0, u1, v1: normalized UV bounds within the tile (suitable for clamping
+        shader sampling to the live glyph region).
+
+        Mirrors the placement logic in `rasterize_string` so callers can compute
+        the glyph's location in the tile without re-rasterizing.
+        """
+        from PIL import Image, ImageDraw, ImageFont
+
+        font = ImageFont.truetype(str(_FONT_PATH), size=font_size)
+        img = Image.new("RGBA", (TILE_WIDTH, TILE_HEIGHT), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        x = 4
+        y = (TILE_HEIGHT - text_h) // 2 - bbox[1]
+        # Pixel bbox of the actual glyph within the tile.
+        px_x0 = x + bbox[0]
+        px_y0 = y + bbox[1]
+        px_x1 = px_x0 + text_w
+        px_y1 = px_y0 + text_h
+        return (
+            text_w,
+            text_h,
+            px_x0 / TILE_WIDTH,
+            px_y0 / TILE_HEIGHT,
+            px_x1 / TILE_WIDTH,
+            px_y1 / TILE_HEIGHT,
+        )
+
+    @staticmethod
     def rasterize_string(text: str, font_size: int = 14) -> np.ndarray:
         """Rasterize `text` via PIL into an RGBA8 (TILE_HEIGHT, TILE_WIDTH, 4) tile.
 
