@@ -1,12 +1,16 @@
 """WGSL signed-distance rounded-rect material for the GUI render pass.
 
 One instanced draw call → one rounded rect per instance, with optional 1 px
-(or wider) border. Per-instance state is packed into a 14-float row::
+(or wider) border. Per-instance state is packed into a 16-float row that
+mirrors the WGSL ``RectInstance`` struct layout (including implicit padding)::
 
-    [xy.x, xy.y, size.x, size.y, radius, border, bg.r, bg.g, bg.b, bg.a,
+    [xy.x, xy.y, size.x, size.y, radius, border, _pad, _pad,
+     bg.r, bg.g, bg.b, bg.a,
      border_color.r, border_color.g, border_color.b, border_color.a]
 
-Total: 14 floats = 56 bytes per instance. The vertex shader expands a
+Total: 16 floats = 64 bytes per instance (8 bytes implicit padding after
+``border`` so that ``bg`` (vec4) aligns to 16 bytes). The vertex shader
+expands a
 unit quad in [-0.5, 0.5]^2 to the instance's pixel size at the instance's
 top-left position; the fragment shader evaluates the rounded-rect SDF.
 """
@@ -124,14 +128,22 @@ class RectMaterial(Material):
 
     @staticmethod
     def pack_instances(rect_ops: list[Any]) -> "np.ndarray":  # noqa: F821
-        """Pack a list of painter.RectOp into a (N, 14) float32 buffer.
+        """Pack a list of painter.RectOp into a (N, 16) float32 buffer.
 
-        Column order matches the WGSL `RectInstance` struct layout.
+        Column order matches the WGSL `RectInstance` struct layout including
+        implicit alignment padding.  WGSL aligns vec4 fields to 16 bytes, so
+        the two f32 scalars (radius, border) at offset 16/20 are followed by
+        8 bytes of implicit padding before `bg` (vec4, offset 32).  We
+        represent the full 64-byte struct as 16 float32 values:
+
+            [xy.x, xy.y, size.x, size.y, radius, border, _pad, _pad,
+             bg.r, bg.g, bg.b, bg.a,
+             border_color.r, border_color.g, border_color.b, border_color.a]
         """
         import numpy as np
 
         if not rect_ops:
-            return np.zeros((0, 14), dtype=np.float32)
+            return np.zeros((0, 16), dtype=np.float32)
         rows = []
         for op in rect_ops:
             rows.append(
@@ -142,6 +154,8 @@ class RectMaterial(Material):
                     op.box.h,
                     op.radius,
                     op.border,
+                    0.0,  # padding to align bg to 16-byte boundary
+                    0.0,  # padding
                     op.fill[0],
                     op.fill[1],
                     op.fill[2],

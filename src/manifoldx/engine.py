@@ -66,6 +66,11 @@ class Engine:
         self.input = InputState()
         self._input_bridge = _InputBridge(self, self.input)
 
+        # GUI layer — list-like container of root Panels plus a
+        # pointer_over_gui flag. The bridge (Plan 2) will toggle the flag.
+        from manifoldx.gui.widgets import _GuiRoot
+        self.gui = _GuiRoot()
+
         # === ECS Infrastructure ===
         self.store = EntityStore(max_entities)
         self.commands = CommandBuffer()

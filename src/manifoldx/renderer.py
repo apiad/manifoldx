@@ -734,6 +734,19 @@ class RenderPipeline:
         if not self._initialized or self._device is None:
             return
 
+        # GUI pass runs unconditionally (even with no scene entities).
+        # All other passes require alive entities and known components.
+        self._render_scene_passes(engine, render_pass)
+
+        # ---------------------------------------------------------------
+        # Draw GUI pass — last in render order. Reads engine.gui directly;
+        # no batches needed. No-op when engine.gui is empty.
+        # ---------------------------------------------------------------
+        from manifoldx.render.passes import gui as _gui_pass
+        _gui_pass.render_gui_pass(self, engine, render_pass)
+
+    def _render_scene_passes(self, engine, render_pass):
+        """Issue draw calls for scene entities (mesh / sprite / volume / label / axis)."""
         # Get all alive entities
         alive_indices = np.where(self._store._alive)[0]
         if len(alive_indices) == 0:

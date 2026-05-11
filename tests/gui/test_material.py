@@ -58,15 +58,16 @@ def test_rect_material_pack_instances_layout():
     ]
     arr = RectMaterial.pack_instances(ops)
     assert arr.dtype == np.float32
-    assert arr.shape == (1, 14)
+    # 16 floats: xy(2) + size(2) + radius(1) + border(1) + pad(2) + bg(4) + border_color(4)
+    assert arr.shape == (1, 16)
     np.testing.assert_allclose(
         arr[0],
-        [10, 20, 100, 50, 4.0, 2.0, 0.5, 0.6, 0.7, 0.8, 0.1, 0.2, 0.3, 0.4],
+        [10, 20, 100, 50, 4.0, 2.0, 0.0, 0.0, 0.5, 0.6, 0.7, 0.8, 0.1, 0.2, 0.3, 0.4],
     )
 
 
 def test_rect_material_pack_empty_returns_zero_rows():
     import numpy as np
     arr = RectMaterial.pack_instances([])
-    assert arr.shape == (0, 14)
+    assert arr.shape == (0, 16)
     assert arr.dtype == np.float32

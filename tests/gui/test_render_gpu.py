@@ -1,0 +1,67 @@
+"""GPU-gated tests for the gui render pass.
+
+These tests need an offscreen wgpu device; they pytest.skip on machines
+without one (matches the rest of the suite's gating).
+"""
+
+import pytest
+
+import numpy as np
+
+from manifoldx.gui import Panel, style
+
+
+def _make_offscreen_engine(width: int = 128, height: int = 128):
+    try:
+        from manifoldx.backends import get_offscreen_canvas
+        canvas = get_offscreen_canvas(width=width, height=height)
+    except Exception as e:
+        pytest.skip(f"offscreen canvas unavailable: {e}")
+    import manifoldx as mx
+    engine = mx.Engine("test", width=width, height=height)
+    engine._init_canvas(canvas)
+    engine._running = True
+    return engine, canvas
+
+
+def setup_function(_):
+    style.reset()
+
+
+def test_engine_exposes_gui_root_listlike_with_pointer_flag():
+    engine, _ = _make_offscreen_engine()
+    assert hasattr(engine, "gui")
+    assert len(engine.gui) == 0
+    p = Panel(children=[])
+    engine.gui.append(p)
+    assert engine.gui[0] is p
+    assert engine.gui.pointer_over_gui is False
+
+
+def test_gui_pass_renders_panel_rect_into_framebuffer():
+    style.set_theme({"bg": "#ff0000ff", "padding": 4, "gap": 0})
+    engine, canvas = _make_offscreen_engine(width=128, height=128)
+    panel = Panel(
+        children=[],
+        anchor="top-left",
+        offset=(10, 20),
+        style_overrides={"width": 40, "height": 30},
+    )
+    engine.gui.append(panel)
+    engine._draw_frame()
+    frame = np.asarray(canvas.draw())  # (H, W, 4) uint8 RGBA
+    # Inside the panel rect (offset 10,20 size 40x30): expect ~red.
+    inside = frame[30, 25]  # y=30 is inside [20,50], x=25 is inside [10,50]
+    assert inside[0] > 200, f"expected red inside panel, got {inside.tolist()}"
+    assert inside[1] < 80
+    assert inside[2] < 80
+    # Outside the panel: should be the default clear colour (dark-blue
+    # background), which is distinctly different from the red panel.
+    # The clear colour is (0.1, 0.1, 0.2) linear → sRGB ≈ (89, 89, 124).
+    # We just check the red channel is significantly lower than inside the
+    # panel and that it looks dark-blue (G ≈ B, not saturated-red).
+    outside = frame[100, 100]
+    assert inside[0] - outside[0] > 100, (
+        f"outside pixel should be much less red than inside: inside={inside.tolist()}, "
+        f"outside={outside.tolist()}"
+    )
