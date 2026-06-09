@@ -72,3 +72,32 @@ def test_scalar_and_textured_coexist():
         engine.add_light(PointLight(position=(0, 3, 3), color="#ffffff", intensity=25.0))
 
         engine._draw_frame()
+
+
+def test_textured_material_on_no_uv_geometry_raises():
+    """A textured StandardMaterial bound to a geometry without UVs raises
+    MaterialGeometryMismatchError at pipeline-cache time, not silently
+    rendering garbage."""
+    import manifoldx as mx
+    from manifoldx.components import Transform, Mesh, Material
+    from manifoldx.resources import StandardMaterial, PointLight, cube
+    from manifoldx.textures import load_texture
+    from manifoldx.renderer import MaterialGeometryMismatchError
+
+    engine = _make_offscreen_engine("mismatch")
+
+    with tempfile.TemporaryDirectory() as td:
+        png_path = Path(td) / "w.png"
+        _make_solid_png(png_path, (255, 255, 255, 255))
+        tex = load_texture(engine, png_path)
+
+        # cube() has no UVs in v1.
+        engine.spawn(
+            Mesh(cube(1, 1, 1)),
+            Material(StandardMaterial(color="#ff0000", albedo_map=tex)),
+            Transform(pos=(0, 0, 0)),
+        )
+        engine.add_light(PointLight(position=(2, 2, 2), color="#ffffff", intensity=20.0))
+
+        with pytest.raises(MaterialGeometryMismatchError, match="UVs"):
+            engine._draw_frame()

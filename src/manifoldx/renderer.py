@@ -17,6 +17,10 @@ from manifoldx.viz.materials import ColormapMaterial
 # =============================================================================
 
 
+class MaterialGeometryMismatchError(ValueError):
+    """A material requires geometry attributes (e.g. UVs) the geometry doesn't have."""
+
+
 class _BatchBuffers:
     """Per-batch GPU buffers managed by RenderPipeline.
 
@@ -674,6 +678,11 @@ class RenderPipeline:
                     },
                 ]
                 if material_subtype == "textured":
+                    if not (geometry_buffers or {}).get("has_uvs", False):
+                        raise MaterialGeometryMismatchError(
+                            f"StandardMaterial(albedo_map=...) requires geometry "
+                            f"with UVs; geometry id={geometry_id} has none"
+                        )
                     bind_group_entries.extend([
                         {
                             "binding": 4,
