@@ -86,6 +86,8 @@ class Engine:
         self._geometry_registry = GeometryRegistry(self._device)
         self._material_registry = MaterialRegistry(self._device)
         self._volume_registry = VolumeRegistry(self._device)
+        from manifoldx.textures import TextureRegistry
+        self._texture_registry = TextureRegistry()
 
         # Render pipeline
         self._render_pipeline = RenderPipeline(self.store, self._device)
