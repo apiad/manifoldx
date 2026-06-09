@@ -362,21 +362,35 @@ class GeometryRegistry:
 
         if positions is not None:
             has_normals = "normals" in geometry_obj
+            has_uvs = "uvs" in geometry_obj
 
-            if has_normals:
+            if has_normals and has_uvs:
                 normals = geometry_obj["normals"].astype(np.float32)
-                # Interleave: [px, py, pz, nx, ny, nz] per vertex
+                uvs = geometry_obj["uvs"].astype(np.float32)
+                n_verts = len(positions)
+                interleaved = np.zeros((n_verts, 8), dtype=np.float32)
+                interleaved[:, 0:3] = positions
+                interleaved[:, 3:6] = normals
+                interleaved[:, 6:8] = uvs
+                data = interleaved.tobytes()
+                buffers["stride"] = 8 * 4  # pos(3) + normal(3) + uv(2)
+                buffers["has_normals"] = True
+                buffers["has_uvs"] = True
+            elif has_normals:
+                normals = geometry_obj["normals"].astype(np.float32)
                 n_verts = len(positions)
                 interleaved = np.zeros((n_verts, 6), dtype=np.float32)
                 interleaved[:, 0:3] = positions
                 interleaved[:, 3:6] = normals
                 data = interleaved.tobytes()
-                buffers["stride"] = 6 * 4  # 6 floats * 4 bytes
+                buffers["stride"] = 6 * 4
                 buffers["has_normals"] = True
+                buffers["has_uvs"] = False
             else:
                 data = positions.tobytes()
                 buffers["stride"] = 3 * 4
                 buffers["has_normals"] = False
+                buffers["has_uvs"] = False
 
             vertex_buffer = self._device.create_buffer(
                 size=len(data),

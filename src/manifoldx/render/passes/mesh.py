@@ -65,6 +65,7 @@ def render_mesh_batches(
             geom_id,
             mat_obj,
             engine._material_registry,
+            geometry_buffers=gpu_buffers,
         )
 
         # Upload material uniforms for this batch

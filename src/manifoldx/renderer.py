@@ -301,7 +301,7 @@ class RenderPipeline:
 
     def _get_or_create_pipeline(
         self, device, texture_format, geometry_id, material, registry,
-        sprite=False, label=False, line=False,
+        sprite=False, label=False, line=False, geometry_buffers=None,
     ):
         """Get or create a material-type specific pipeline.
 
@@ -670,6 +670,9 @@ class RenderPipeline:
             pipeline_layout = device.create_pipeline_layout(bind_group_layouts=[bind_group_layout])
             self._pipeline_layouts[key] = pipeline_layout
 
+            # Use the geometry's actual buffer stride so the pipeline
+            # advances correctly over UV bytes the scalar shader doesn't read.
+            geom_stride = (geometry_buffers or {}).get("stride", 6 * 4)
             pipeline = device.create_render_pipeline(
                 layout=pipeline_layout,
                 vertex={
@@ -677,7 +680,7 @@ class RenderPipeline:
                     "entry_point": "vs_main",
                     "buffers": [
                         {
-                            "array_stride": 6 * 4,  # 6 floats * 4 bytes (pos + normal)
+                            "array_stride": geom_stride,
                             "step_mode": wgpu.VertexStepMode.vertex,
                             "attributes": [
                                 {
