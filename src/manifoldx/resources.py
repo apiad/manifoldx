@@ -612,52 +612,53 @@ def cube(width: float, height: float, depth: float) -> dict:
 
 def sphere(radius: float, segments: int = 32) -> dict:
     """
-    Create UV sphere geometry with normals.
+    Create UV sphere geometry with normals and UVs.
 
     Normals point outward (normalized position for unit sphere).
+    UVs use standard (u = lon/lon_lines, v = lat/lat_lines) spherical mapping.
     Winding order is CCW when viewed from outside.
     """
     lat_lines = segments
     lon_lines = segments * 2
 
-    # Generate vertices and normals
     positions = []
     normals = []
+    uvs = []
     for lat in range(lat_lines + 1):
         theta = lat * np.pi / lat_lines
         sin_theta = np.sin(theta)
         cos_theta = np.cos(theta)
+        v = lat / lat_lines
 
         for lon in range(lon_lines + 1):
             phi = lon * 2 * np.pi / lon_lines
-            # Unit sphere direction = outward normal
             nx = sin_theta * np.cos(phi)
             ny = cos_theta
             nz = sin_theta * np.sin(phi)
             normals.append([nx, ny, nz])
             positions.append([nx * radius, ny * radius, nz * radius])
+            uvs.append([lon / lon_lines, v])
 
     positions = np.array(positions, dtype=np.float32)
     normals = np.array(normals, dtype=np.float32)
+    uvs = np.array(uvs, dtype=np.float32)
 
-    # Generate indices with CCW winding (viewed from outside)
     indices = []
     for lat in range(lat_lines):
         for lon in range(lon_lines):
             first = lat * (lon_lines + 1) + lon
             second = first + lon_lines + 1
 
-            # CCW winding: swap second and first+1 from original
             indices.extend([first, first + 1, second])
             indices.extend([second, first + 1, second + 1])
 
     indices = np.array(indices, dtype=np.uint32)
 
-    return {"positions": positions, "normals": normals, "indices": indices}
+    return {"positions": positions, "normals": normals, "uvs": uvs, "indices": indices}
 
 
 def plane(width: float, height: float) -> dict:
-    """Create plane geometry with normals facing +Z."""
+    """Create plane geometry with normals facing +Z and UVs in [0,1]²."""
     w, h = width / 2, height / 2
 
     positions = np.array(
@@ -675,9 +676,14 @@ def plane(width: float, height: float) -> dict:
         dtype=np.float32,
     )
 
+    uvs = np.array(
+        [[0, 0], [1, 0], [1, 1], [0, 1]],
+        dtype=np.float32,
+    )
+
     indices = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint32)
 
-    return {"positions": positions, "normals": normals, "indices": indices}
+    return {"positions": positions, "normals": normals, "uvs": uvs, "indices": indices}
 
 
 # =============================================================================
