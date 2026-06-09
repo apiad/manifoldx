@@ -120,6 +120,19 @@ def render_mesh_batches(
                 }
             )
 
+        # Append texture bindings declared by the material
+        # (sampler at N, view at N+1 for each entry).
+        texture_bindings = mat_obj.get_texture_bindings()
+        for binding, handle in texture_bindings.items():
+            bind_group_entries.append({
+                "binding": binding,
+                "resource": handle.sampler,
+            })
+            bind_group_entries.append({
+                "binding": binding + 1,
+                "resource": handle.view,
+            })
+
         bind_group = rp._device.create_bind_group(
             layout=bind_group_layout,
             entries=bind_group_entries,
