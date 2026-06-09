@@ -10,6 +10,8 @@ from manifoldx.components import Transform, Mesh, Material, Colors
 from manifoldx.camera import Camera
 from manifoldx.input import KeyEvent, PointerEvent, WheelEvent, ResizeEvent
 from manifoldx.resources import cube, sphere, plane, basic, phong, standard
+from manifoldx.assets import load_obj
+from manifoldx.textures import load_texture
 from manifoldx import compute  # noqa: E402, F401
 from manifoldx import physics  # noqa: E402, F401
 from manifoldx import random  # noqa: E402, F401
@@ -107,6 +109,8 @@ __all__ = [
     "basic",
     "phong",
     "standard",
+    "load_obj",
+    "load_texture",
     "component",
     "types",
     "components",
