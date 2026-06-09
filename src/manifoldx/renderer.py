@@ -258,6 +258,12 @@ class RenderPipeline:
         self._pipeline_layouts = {}  # material_type -> layout
         self._bind_group_layouts = {}  # material_type -> bind group layout
         self._material_buffers = {}  # (geometry_id, material_type) -> buffer
+        # Per-material-id uniform buffer for the mesh pass. Distinct from
+        # _material_buffers above, which is keyed by pipeline-cache key —
+        # that one shares a buffer across all material instances of the same
+        # type, which silently broke per-instance material data. The mesh
+        # pass now uses this dict keyed by mat_id, one buffer per material.
+        self._material_buffers_by_mat_id = {}  # mat_id -> buffer
         self._globals_buffer = None  # VP matrix + view matrix + camera_pos
         self._batch_buffers = None  # _BatchBuffers instance for per-batch storage
         self._sprite_batch_buffers = None  # _BatchBuffers instance for sprite per-batch storage
@@ -895,7 +901,9 @@ class RenderPipeline:
                 mat_type = type(mat_obj).__name__ if mat_obj else "BasicMaterial"
                 mat_subtype = getattr(mat_obj, "pipeline_subtype", None) if mat_obj else None
 
-                key = (geom_id, mat_type, mat_subtype)
+                # mat_id is part of the key so two material *instances* of the
+                # same class never share a uniform buffer.
+                key = (geom_id, mat_type, mat_subtype, mat_id)
                 if key not in mesh_batches:
                     mesh_batches[key] = []
                 mesh_batches[key].append(i)

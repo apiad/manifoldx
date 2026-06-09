@@ -101,3 +101,29 @@ def test_textured_material_on_no_uv_geometry_raises():
 
         with pytest.raises(MaterialGeometryMismatchError, match="UVs"):
             engine._draw_frame()
+
+
+def test_two_same_class_materials_get_separate_uniform_buffers():
+    """Regression: two StandardMaterial instances on the same sphere geometry
+    used to silently share a single uniform buffer (and bind group), so the
+    second one rendered with the first's data. Now each mat_id allocates its
+    own buffer in mesh_pass."""
+    import manifoldx as mx
+    from manifoldx.components import Transform, Mesh, Material
+    from manifoldx.resources import StandardMaterial, PointLight, sphere
+
+    engine = _make_offscreen_engine("two-mats")
+
+    geo = sphere(1.0, segments=8)
+    red = StandardMaterial(color="#ff0000", roughness=0.5)
+    green = StandardMaterial(color="#00ff00", roughness=0.5)
+    engine.spawn(Mesh(geo), Material(red), Transform(pos=(-1.5, 0, 0)))
+    engine.spawn(Mesh(geo), Material(green), Transform(pos=(1.5, 0, 0)))
+    engine.add_light(PointLight(position=(0, 3, 3), color="#ffffff", intensity=25.0))
+
+    engine._draw_frame()
+
+    # Both materials must have distinct uniform buffers allocated under
+    # _material_buffers_by_mat_id.
+    buffers = engine._render_pipeline._material_buffers_by_mat_id
+    assert len(buffers) >= 2, f"expected ≥2 distinct material buffers, got {len(buffers)}"

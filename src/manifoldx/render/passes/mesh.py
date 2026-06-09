@@ -37,8 +37,10 @@ def render_mesh_batches(
     # Draw each batch using first_instance to index into the
     # shared transform buffer.
     # ---------------------------------------------------------------
-    for (geom_id, mat_type, mat_subtype), local_indices in mesh_batches.items():
-        first_instance, instance_count = batch_draw_info[(geom_id, mat_type, mat_subtype)]
+    for (geom_id, mat_type, mat_subtype, mat_id), local_indices in mesh_batches.items():
+        first_instance, instance_count = batch_draw_info[
+            (geom_id, mat_type, mat_subtype, mat_id)
+        ]
 
         # Get GPU buffers for geometry
         gpu_buffers = engine._geometry_registry.get_gpu_buffers(geom_id)
@@ -53,9 +55,7 @@ def render_mesh_batches(
                 continue
 
         # Get material and create/fetch pipeline
-        mat_id = int(material_data[local_indices[0], 0]) if material_data is not None else 0
         mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
-
         if mat_obj is None:
             continue
 
@@ -68,19 +68,25 @@ def render_mesh_batches(
             geometry_buffers=gpu_buffers,
         )
 
-        # Upload material uniforms for this batch
-        mat_data = mat_obj.get_data(instance_count, engine._material_registry)
-        bkey = (geom_id, mat_type, mat_subtype)
-        mat_buffer = rp._material_buffers.get(bkey)
-        if mat_buffer is not None:
-            first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
-            rp._device.queue.write_buffer(
-                mat_buffer, 0, first_row.astype(np.float32).tobytes()
-            )
-
-        # Build bind group
+        # Per-mat_id uniform buffer: one per material instance, allocated
+        # lazily on first sight. Sizing follows the existing convention
+        # (32B for materials that bind lights, 16B otherwise).
         needs_lights = "@binding(3)" in type(mat_obj)._compile()
         mat_buffer_size = 32 if needs_lights else 16
+        mat_buffer = rp._material_buffers_by_mat_id.get(mat_id)
+        if mat_buffer is None:
+            mat_buffer = rp._device.create_buffer(
+                size=mat_buffer_size,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+            rp._material_buffers_by_mat_id[mat_id] = mat_buffer
+
+        # Upload material uniforms for this batch.
+        mat_data = mat_obj.get_data(instance_count, engine._material_registry)
+        first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
+        rp._device.queue.write_buffer(
+            mat_buffer, 0, first_row.astype(np.float32).tobytes()
+        )
         bind_group_entries = [
             {
                 "binding": 0,
