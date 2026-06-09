@@ -321,7 +321,7 @@ class RenderPipeline:
         elif sprite:
             key = (geometry_id, material_type, material_subtype, True)
         else:
-            key = (geometry_id, material_type)
+            key = (geometry_id, material_type, material_subtype)
 
         if key in self._pipelines:
             return self._pipelines[key], self._bind_group_layouts.get(key)
@@ -851,8 +851,9 @@ class RenderPipeline:
 
                 mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
                 mat_type = type(mat_obj).__name__ if mat_obj else "BasicMaterial"
+                mat_subtype = getattr(mat_obj, "pipeline_subtype", None) if mat_obj else None
 
-                key = (geom_id, mat_type)
+                key = (geom_id, mat_type, mat_subtype)
                 if key not in mesh_batches:
                     mesh_batches[key] = []
                 mesh_batches[key].append(i)

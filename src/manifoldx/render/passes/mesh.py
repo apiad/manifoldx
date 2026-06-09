@@ -37,8 +37,8 @@ def render_mesh_batches(
     # Draw each batch using first_instance to index into the
     # shared transform buffer.
     # ---------------------------------------------------------------
-    for (geom_id, mat_type), local_indices in mesh_batches.items():
-        first_instance, instance_count = batch_draw_info[(geom_id, mat_type)]
+    for (geom_id, mat_type, mat_subtype), local_indices in mesh_batches.items():
+        first_instance, instance_count = batch_draw_info[(geom_id, mat_type, mat_subtype)]
 
         # Get GPU buffers for geometry
         gpu_buffers = engine._geometry_registry.get_gpu_buffers(geom_id)
@@ -70,7 +70,7 @@ def render_mesh_batches(
 
         # Upload material uniforms for this batch
         mat_data = mat_obj.get_data(instance_count, engine._material_registry)
-        bkey = (geom_id, mat_type)
+        bkey = (geom_id, mat_type, mat_subtype)
         mat_buffer = rp._material_buffers.get(bkey)
         if mat_buffer is not None:
             first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
