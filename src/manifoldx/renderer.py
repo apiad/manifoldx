@@ -518,7 +518,16 @@ class RenderPipeline:
 
             return pipeline, bind_group_layout
 
-        shader_source = material._compile()
+        # StandardMaterial._compile accepts an optional textured= kwarg;
+        # other materials' _compile() takes no args. Detect and forward.
+        is_textured = (
+            material_subtype == "textured"
+            and getattr(material, "albedo_map", None) is not None
+        )
+        if is_textured:
+            shader_source = material._compile(textured=True)
+        else:
+            shader_source = material._compile()
         shader_module = device.create_shader_module(code=shader_source)
 
         if sprite:
@@ -640,7 +649,8 @@ class RenderPipeline:
                     },
                 ]
             else:
-                # StandardMaterial: 4 bindings (globals, transforms, material, lights)
+                # StandardMaterial: 4 bindings (globals, transforms, material, lights);
+                # +2 more (sampler, texture) when subtype == "textured".
                 bind_group_entries = [
                     {
                         "binding": 0,
@@ -663,6 +673,22 @@ class RenderPipeline:
                         "buffer": {"type": wgpu.BufferBindingType.uniform},
                     },
                 ]
+                if material_subtype == "textured":
+                    bind_group_entries.extend([
+                        {
+                            "binding": 4,
+                            "visibility": wgpu.ShaderStage.FRAGMENT,
+                            "sampler": {"type": wgpu.SamplerBindingType.filtering},
+                        },
+                        {
+                            "binding": 5,
+                            "visibility": wgpu.ShaderStage.FRAGMENT,
+                            "texture": {
+                                "sample_type": wgpu.TextureSampleType.float,
+                                "view_dimension": wgpu.TextureViewDimension.d2,
+                            },
+                        },
+                    ])
 
             bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
             self._bind_group_layouts[key] = bind_group_layout
@@ -673,6 +699,24 @@ class RenderPipeline:
             # Use the geometry's actual buffer stride so the pipeline
             # advances correctly over UV bytes the scalar shader doesn't read.
             geom_stride = (geometry_buffers or {}).get("stride", 6 * 4)
+            vertex_attributes = [
+                {
+                    "format": wgpu.VertexFormat.float32x3,
+                    "offset": 0,
+                    "shader_location": 0,
+                },
+                {
+                    "format": wgpu.VertexFormat.float32x3,
+                    "offset": 3 * 4,
+                    "shader_location": 1,
+                },
+            ]
+            if material_subtype == "textured":
+                vertex_attributes.append({
+                    "format": wgpu.VertexFormat.float32x2,
+                    "offset": 6 * 4,
+                    "shader_location": 2,
+                })
             pipeline = device.create_render_pipeline(
                 layout=pipeline_layout,
                 vertex={
@@ -682,18 +726,7 @@ class RenderPipeline:
                         {
                             "array_stride": geom_stride,
                             "step_mode": wgpu.VertexStepMode.vertex,
-                            "attributes": [
-                                {
-                                    "format": wgpu.VertexFormat.float32x3,
-                                    "offset": 0,
-                                    "shader_location": 0,
-                                },
-                                {
-                                    "format": wgpu.VertexFormat.float32x3,
-                                    "offset": 3 * 4,
-                                    "shader_location": 1,
-                                },
-                            ],
+                            "attributes": vertex_attributes,
                         }
                     ],
                 },

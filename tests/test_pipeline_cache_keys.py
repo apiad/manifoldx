@@ -28,10 +28,13 @@ def test_mesh_cache_key_includes_subtype():
     engine._geometry_registry.create_buffers(geom_id, geo, engine._device.queue)
     gpu_buffers = engine._geometry_registry.get_gpu_buffers(geom_id)
 
+    # Now that StandardMaterial supports albedo_map, use a real TextureHandle.
+    from manifoldx.textures import TextureHandle
+    fake = TextureHandle(id=99, texture=object(), view=object(),
+                         sampler=object(), size=(1, 1))
     mat_scalar = StandardMaterial(color="#ff0000")
-    mat_variant = StandardMaterial(color="#ff0000")
-    # Simulate a non-None pipeline_subtype until Task 5 lands albedo_map.
-    mat_variant.pipeline_subtype = "textured"
+    mat_variant = StandardMaterial(color="#ff0000", albedo_map=fake)
+    assert mat_variant.pipeline_subtype == "textured"
 
     rp._get_or_create_pipeline(
         engine._device, engine._texture_format, geom_id, mat_scalar,

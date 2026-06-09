@@ -31,6 +31,14 @@ class Material(ABC):
         """Return {field_name: wgsl_type} for uniform buffer fields."""
         pass
 
+    def get_texture_bindings(self) -> Dict[int, Any]:
+        """Return {binding_index: TextureHandle} for sampler+texture entries.
+
+        Default: no textures. Override on materials that bind 2D textures.
+        Sampler is attached at `binding_index`; texture view at `binding_index + 1`.
+        """
+        return {}
+
 
 _BASICMATERIAL_SHADER = """
 struct Globals {
@@ -265,20 +273,100 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 """
 
 
+_STANDARDMATERIAL_TEXTURED_SHADER = (
+    _STANDARDMATERIAL_SHADER
+    .replace(
+        "@group(0) @binding(3) var<uniform> light_data: LightData;",
+        "@group(0) @binding(3) var<uniform> light_data: LightData;\n"
+        "@group(0) @binding(4) var albedo_sampler: sampler;\n"
+        "@group(0) @binding(5) var albedo_tex: texture_2d<f32>;",
+    )
+    .replace(
+        "struct VertexInput {\n"
+        "    @location(0) position: vec3<f32>,\n"
+        "    @location(1) normal: vec3<f32>,\n"
+        "    @builtin(instance_index) instance: u32,\n"
+        "};",
+        "struct VertexInput {\n"
+        "    @location(0) position: vec3<f32>,\n"
+        "    @location(1) normal: vec3<f32>,\n"
+        "    @location(2) uv: vec2<f32>,\n"
+        "    @builtin(instance_index) instance: u32,\n"
+        "};",
+    )
+    .replace(
+        "struct VertexOutput {\n"
+        "    @builtin(position) position: vec4<f32>,\n"
+        "    @location(0) world_normal: vec3<f32>,\n"
+        "    @location(1) world_pos: vec3<f32>,\n"
+        "};",
+        "struct VertexOutput {\n"
+        "    @builtin(position) position: vec4<f32>,\n"
+        "    @location(0) world_normal: vec3<f32>,\n"
+        "    @location(1) world_pos: vec3<f32>,\n"
+        "    @location(2) uv: vec2<f32>,\n"
+        "};",
+    )
+    .replace(
+        "    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);\n"
+        "    return out;",
+        "    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);\n"
+        "    out.uv = in.uv;\n"
+        "    return out;",
+    )
+    .replace(
+        "    let F0 = mix(vec3<f32>(0.04), material.albedo, material.metallic);",
+        "    let sampled_albedo = textureSample(albedo_tex, albedo_sampler, in.uv).rgb;\n"
+        "    let F0 = mix(vec3<f32>(0.04), sampled_albedo, material.metallic);",
+    )
+    .replace(
+        "Lo += calculatePointLight(N, V, in.world_pos, F0,\n"
+        "                                       material.albedo, material.metallic,\n"
+        "                                       material.roughness, light);",
+        "Lo += calculatePointLight(N, V, in.world_pos, F0,\n"
+        "                                       sampled_albedo, material.metallic,\n"
+        "                                       material.roughness, light);",
+    )
+    .replace(
+        "    let ambient = vec3<f32>(0.03) * material.albedo * material.ao;",
+        "    let ambient = vec3<f32>(0.03) * sampled_albedo * material.ao;",
+    )
+)
+
+
 class StandardMaterial(Material):
-    """PBR material with GGX BRDF."""
+    """PBR material with GGX BRDF. Optional 2D albedo map."""
 
     binding_slot = 1
 
-    def __init__(self, color, roughness=0.5, metallic=0.0, ao=1.0):
+    def __init__(self, color, roughness=0.5, metallic=0.0, ao=1.0,
+                 albedo_map=None):
+        from manifoldx.textures import TextureHandle
+
+        if albedo_map is not None and not isinstance(albedo_map, TextureHandle):
+            raise TypeError(
+                f"albedo_map expects a TextureHandle from load_texture(...); "
+                f"got {type(albedo_map).__name__}. "
+                f"Did you forget to call load_texture(engine, path) first?"
+            )
         self.color = color
         self.roughness = roughness
         self.metallic = metallic
         self.ao = ao
+        self.albedo_map = albedo_map
+
+    @property
+    def pipeline_subtype(self):
+        return "textured" if self.albedo_map is not None else None
+
+    def get_texture_bindings(self):
+        if self.albedo_map is None:
+            return {}
+        return {4: self.albedo_map}
 
     @classmethod
-    def _compile(cls) -> str:
-        return _STANDARDMATERIAL_SHADER
+    def _compile(cls, textured: bool = False) -> str:
+        return _STANDARDMATERIAL_TEXTURED_SHADER if textured else _STANDARDMATERIAL_SHADER
 
     @classmethod
     def uniform_type(cls) -> Dict[str, str]:
