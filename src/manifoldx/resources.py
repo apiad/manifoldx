@@ -126,10 +126,16 @@ class BasicMaterial(Material):
 
 _STANDARDMATERIAL_SHADER = """
 struct Globals {
-    vp: mat4x4<f32>,
-    view: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    _pad: f32,
+    vp:            mat4x4<f32>,   // offset   0
+    view:          mat4x4<f32>,   // offset  64
+    proj:          mat4x4<f32>,   // offset 128
+    camera_pos:    vec3<f32>,     // offset 192
+    _pad0:         f32,           // offset 204
+    viewport_size: vec2<f32>,     // offset 208
+    _pad1:         vec2<f32>,     // offset 216
+    ibl_intensity: f32,           // offset 224
+    ibl_enabled:   u32,           // offset 228
+    _pad_ibl:      vec2<f32>,     // offset 232
 };
 
 struct Transforms {
@@ -137,18 +143,18 @@ struct Transforms {
 };
 
 struct PBRMaterialUniforms {
-    albedo: vec3<f32>,
+    albedo:    vec3<f32>,
     roughness: f32,
-    metallic: f32,
-    ao: f32,
-    _pad0: f32,
-    _pad1: f32,
+    metallic:  f32,
+    ao:        f32,
+    _pad0:     f32,
+    _pad1:     f32,
 };
 
 struct PointLightData {
-    position: vec3<f32>,
-    _pad0: f32,
-    color: vec3<f32>,
+    position:  vec3<f32>,
+    _pad0:     f32,
+    color:     vec3<f32>,
     intensity: f32,
 };
 
@@ -156,10 +162,15 @@ struct LightData {
     lights: array<PointLightData, 4>,
 };
 
-@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(0) var<uniform> globals:    Globals;
 @group(0) @binding(1) var<storage, read> transforms: Transforms;
-@group(0) @binding(2) var<uniform> material: PBRMaterialUniforms;
+@group(0) @binding(2) var<uniform> material:  PBRMaterialUniforms;
 @group(0) @binding(3) var<uniform> light_data: LightData;
+
+@group(1) @binding(0) var env_sampler:     sampler;
+@group(1) @binding(1) var irradiance_map:  texture_cube<f32>;
+@group(1) @binding(2) var prefiltered_map: texture_cube<f32>;
+@group(1) @binding(3) var brdf_lut:        texture_2d<f32>;
 
 const PI: f32 = 3.14159265359;
 
@@ -168,34 +179,27 @@ fn distributionGGX(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
     let a2 = a * a;
     let NdotH = max(dot(N, H), 0.0);
     let NdotH2 = NdotH * NdotH;
-    let num = a2;
-    let denom_base = (NdotH2 * (a2 - 1.0) + 1.0);
-    let denom = PI * denom_base * denom_base;
-    return num / denom;
+    let denom_base = NdotH2 * (a2 - 1.0) + 1.0;
+    return a2 / (PI * denom_base * denom_base);
 }
 
 fn geometrySchlickGGX(NdotV: f32, roughness: f32) -> f32 {
-    let r = (roughness + 1.0);
-    let k = (r * r) / 8.0;
-    let num = NdotV;
-    let denom = NdotV * (1.0 - k) + k;
-    return num / denom;
+    let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
 }
 
 fn geometrySmith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
-    let NdotV = max(dot(N, V), 0.0);
-    let NdotL = max(dot(N, L), 0.0);
-    let ggx1 = geometrySchlickGGX(NdotV, roughness);
-    let ggx2 = geometrySchlickGGX(NdotL, roughness);
-    return ggx1 * ggx2;
+    return geometrySchlickGGX(max(dot(N, V), 0.0), roughness)
+         * geometrySchlickGGX(max(dot(N, L), 0.0), roughness);
 }
 
 fn fresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
-    return F0 + (vec3<f32>(1.0) - F0) * pow(1.0 - cosTheta, 5.0);
+    return F0 + (vec3<f32>(1.0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-fn calculateAttenuation(distance: f32, light: PointLightData) -> f32 {
-    return light.intensity / (distance * distance);
+fn fresnelSchlickRoughness(cosTheta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let r1 = vec3<f32>(1.0 - roughness);
+    return F0 + (max(r1, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
 fn calculatePointLight(N: vec3<f32>, V: vec3<f32>, worldPos: vec3<f32>,
@@ -203,35 +207,26 @@ fn calculatePointLight(N: vec3<f32>, V: vec3<f32>, worldPos: vec3<f32>,
                        roughness: f32, light: PointLightData) -> vec3<f32> {
     let L = normalize(light.position - worldPos);
     let H = normalize(V + L);
-    let distance = length(light.position - worldPos);
-    let attenuation = calculateAttenuation(distance, light);
-    let radiance = light.color * attenuation;
-
+    let dist = length(light.position - worldPos);
+    let radiance = light.color * light.intensity / (dist * dist);
     let NDF = distributionGGX(N, H, roughness);
-    let G = geometrySmith(N, V, L, roughness);
-    let F = fresnelSchlick(max(dot(H, V), 0.0), F0);
-
-    let kS = F;
-    let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
-
-    let numerator = NDF * G * F;
-    let denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
-    let specular = numerator / denominator;
-
-    let NdotL = max(dot(N, L), 0.0);
-    return (kD * albedo / PI + specular) * radiance * NdotL;
+    let G   = geometrySmith(N, V, L, roughness);
+    let F   = fresnelSchlick(max(dot(H, V), 0.0), F0);
+    let kD  = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+    let specular = NDF * G * F / (4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001);
+    return (kD * albedo / PI + specular) * radiance * max(dot(N, L), 0.0);
 }
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
+    @location(1) normal:   vec3<f32>,
     @builtin(instance_index) instance: u32,
 };
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) world_normal: vec3<f32>,
-    @location(1) world_pos: vec3<f32>,
+    @location(1) world_pos:    vec3<f32>,
 };
 
 @vertex
@@ -239,7 +234,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     let model = transforms.models[in.instance];
     out.world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
-    out.position = globals.vp * vec4<f32>(out.world_pos, 1.0);
+    out.position  = globals.vp * vec4<f32>(out.world_pos, 1.0);
     out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
     return out;
 }
@@ -252,22 +247,39 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let F0 = mix(vec3<f32>(0.04), material.albedo, material.metallic);
 
     var Lo = vec3<f32>(0.0);
-
     for (var i = 0u; i < 4u; i++) {
         let light = light_data.lights[i];
-        if (light.intensity > 0.0) {
+        if light.intensity > 0.0 {
             Lo += calculatePointLight(N, V, in.world_pos, F0,
-                                       material.albedo, material.metallic,
-                                       material.roughness, light);
+                                      material.albedo, material.metallic,
+                                      material.roughness, light);
         }
     }
 
-    let ambient = vec3<f32>(0.03) * material.albedo * material.ao;
-    var color = ambient + Lo;
+    var ambient = vec3<f32>(0.03) * material.albedo * material.ao;
 
+    if globals.ibl_enabled != 0u {
+        let NdotV = max(dot(N, V), 0.0001);
+        let R     = reflect(-V, N);
+        let F     = fresnelSchlickRoughness(NdotV, F0, material.roughness);
+        let kD    = (1.0 - F) * (1.0 - material.metallic);
+
+        let irradiance  = textureSample(irradiance_map, env_sampler, N).rgb;
+        let diffuse_ibl = kD * irradiance * material.albedo;
+
+        let MAX_MIPS: f32 = 7.0;
+        let prefilt   = textureSampleLevel(prefiltered_map, env_sampler, R,
+                                           material.roughness * MAX_MIPS).rgb;
+        let brdf_samp = textureSample(brdf_lut, env_sampler,
+                                      vec2<f32>(NdotV, material.roughness)).rg;
+        let spec_ibl  = prefilt * (F * brdf_samp.r + brdf_samp.g);
+
+        ambient = (diffuse_ibl + spec_ibl) * material.ao * globals.ibl_intensity;
+    }
+
+    var color = ambient + Lo;
     color = color / (color + vec3<f32>(1.0));
     color = pow(color, vec3<f32>(1.0 / 2.2));
-
     return vec4<f32>(color, 1.0);
 }
 """
@@ -282,29 +294,17 @@ _STANDARDMATERIAL_TEXTURED_SHADER = (
         "@group(0) @binding(5) var albedo_tex: texture_2d<f32>;",
     )
     .replace(
-        "struct VertexInput {\n"
-        "    @location(0) position: vec3<f32>,\n"
-        "    @location(1) normal: vec3<f32>,\n"
-        "    @builtin(instance_index) instance: u32,\n"
-        "};",
-        "struct VertexInput {\n"
-        "    @location(0) position: vec3<f32>,\n"
-        "    @location(1) normal: vec3<f32>,\n"
-        "    @location(2) uv: vec2<f32>,\n"
-        "    @builtin(instance_index) instance: u32,\n"
-        "};",
+        "    @location(1) normal:   vec3<f32>,\n"
+        "    @builtin(instance_index) instance: u32,",
+        "    @location(1) normal:   vec3<f32>,\n"
+        "    @location(2) uv:       vec2<f32>,\n"
+        "    @builtin(instance_index) instance: u32,",
     )
     .replace(
-        "struct VertexOutput {\n"
-        "    @builtin(position) position: vec4<f32>,\n"
-        "    @location(0) world_normal: vec3<f32>,\n"
-        "    @location(1) world_pos: vec3<f32>,\n"
+        "    @location(1) world_pos:    vec3<f32>,\n"
         "};",
-        "struct VertexOutput {\n"
-        "    @builtin(position) position: vec4<f32>,\n"
-        "    @location(0) world_normal: vec3<f32>,\n"
-        "    @location(1) world_pos: vec3<f32>,\n"
-        "    @location(2) uv: vec2<f32>,\n"
+        "    @location(1) world_pos:    vec3<f32>,\n"
+        "    @location(2) uv:           vec2<f32>,\n"
         "};",
     )
     .replace(
@@ -321,15 +321,19 @@ _STANDARDMATERIAL_TEXTURED_SHADER = (
     )
     .replace(
         "Lo += calculatePointLight(N, V, in.world_pos, F0,\n"
-        "                                       material.albedo, material.metallic,\n"
-        "                                       material.roughness, light);",
+        "                                      material.albedo, material.metallic,\n"
+        "                                      material.roughness, light);",
         "Lo += calculatePointLight(N, V, in.world_pos, F0,\n"
-        "                                       sampled_albedo, material.metallic,\n"
-        "                                       material.roughness, light);",
+        "                                      sampled_albedo, material.metallic,\n"
+        "                                      material.roughness, light);",
     )
     .replace(
-        "    let ambient = vec3<f32>(0.03) * material.albedo * material.ao;",
-        "    let ambient = vec3<f32>(0.03) * sampled_albedo * material.ao;",
+        "        let diffuse_ibl = kD * irradiance * material.albedo;",
+        "        let diffuse_ibl = kD * irradiance * sampled_albedo;",
+    )
+    .replace(
+        "    var ambient = vec3<f32>(0.03) * material.albedo * material.ao;",
+        "    var ambient = vec3<f32>(0.03) * sampled_albedo * material.ao;",
     )
 )
 
