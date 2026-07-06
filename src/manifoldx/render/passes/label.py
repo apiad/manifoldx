@@ -127,7 +127,7 @@ def make_label_bind_group(rp, bind_group_layout, atlas, mat_buffer):
         entries=[
             {
                 "binding": 0,
-                "resource": {"buffer": rp._globals_buffer, "offset": 0, "size": 224},
+                "resource": {"buffer": rp._globals_buffer, "offset": 0, "size": 240},
             },
             {
                 "binding": 1,

@@ -117,6 +117,9 @@ class Engine:
         # External lights (not in ECS)
         self._lights = []
 
+        # IBL environment — set via set_environment()
+        self._environment = None
+
         # Lazily-constructed label atlas, materialized on first label render.
         self._label_atlas = None
 
@@ -299,6 +302,29 @@ class Engine:
     def add_light(self, light):
         """Add a single light to the external lights list."""
         self._lights.append(light)
+
+    def set_environment(self, env):
+        """Set the IBL environment.
+
+        env: EnvironmentMap instance, preset name string ("studio", "sky",
+             "neutral", "dark"), or None to disable IBL.
+        """
+        from manifoldx.ibl import EnvironmentMap, PRESETS
+        if env is None:
+            self._environment = None
+        elif isinstance(env, str):
+            if env not in PRESETS:
+                raise ValueError(f"Unknown preset {env!r}. Known: {list(PRESETS)}")
+            self._environment = PRESETS[env]()
+        elif isinstance(env, EnvironmentMap):
+            self._environment = env
+        else:
+            raise TypeError(f"Expected EnvironmentMap, preset string, or None; got {type(env)}")
+
+    @property
+    def environment(self):
+        """The active EnvironmentMap, or None if IBL is disabled."""
+        return self._environment
 
     def quit(self):
         self._running = False

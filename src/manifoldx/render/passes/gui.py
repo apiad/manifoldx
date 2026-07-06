@@ -329,7 +329,7 @@ def _draw_rects(rp, engine, render_pass, instance_count: int) -> None:
                 "resource": {
                     "buffer": rp._globals_buffer,
                     "offset": 0,
-                    "size": 224,
+                    "size": 240,
                 },
             },
             {
@@ -507,7 +507,7 @@ def _draw_glyphs(rp, engine, render_pass, instance_count: int) -> None:
                 "resource": {
                     "buffer": rp._globals_buffer,
                     "offset": 0,
-                    "size": 224,
+                    "size": 240,
                 },
             },
             {

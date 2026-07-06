@@ -176,7 +176,7 @@ def make_sprite_bind_group(rp, bind_group_layout, material, mat_buffer):
             "resource": {
                 "buffer": rp._globals_buffer,
                 "offset": 0,
-                "size": 224,
+                "size": 240,
             },
         },
         {

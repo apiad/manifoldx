@@ -93,7 +93,7 @@ def render_mesh_batches(
                 "resource": {
                     "buffer": rp._globals_buffer,
                     "offset": 0,
-                    "size": 224,
+                    "size": 240,
                 },
             },
             {

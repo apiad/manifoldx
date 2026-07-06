@@ -282,10 +282,9 @@ class RenderPipeline:
 
         # Create globals uniform buffer:
         #   vp(64) + view(64) + proj(64) + camera_pos(12) + pad(4)
-        #   + viewport_size(8) + pad(8) = 224 bytes
-        # The trailing pad keeps the struct 16-byte aligned per WGSL rules.
+        #   + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes
         self._globals_buffer = device.create_buffer(
-            size=224,
+            size=240,
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
@@ -914,13 +913,10 @@ class RenderPipeline:
             camera_pos = np.array(camera.position, dtype=np.float32)
 
         # Upload globals: vp(64) + view(64) + proj(64) + camera_pos(12) +
-        # pad(4) + viewport_size(8) + pad(8) = 224 bytes.
-        globals_data = np.zeros(224, dtype=np.uint8)
+        # pad(4) + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes.
+        globals_data = np.zeros(240, dtype=np.uint8)
         globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
         globals_data[64:128] = np.frombuffer(view_mat.tobytes(), dtype=np.uint8)
-        # Upload projection matrix (column-major) at offset 128. Use the camera's
-        # own near/far rather than the helper's defaults so the sprite path
-        # matches the depth range the rest of the pipeline uses.
         proj_mat = camera.get_projection_matrix(aspect, near=camera.near, far=camera.far).T.astype(
             np.float32
         )
@@ -928,10 +924,17 @@ class RenderPipeline:
         globals_data[192:204] = np.frombuffer(
             camera_pos.astype(np.float32).tobytes(), dtype=np.uint8
         )
-        # bytes 204-207 are padding (already zero)
+        # bytes 204-207: padding
         viewport_size = np.array([float(engine.w), float(engine.h)], dtype=np.float32)
         globals_data[208:216] = np.frombuffer(viewport_size.tobytes(), dtype=np.uint8)
-        # bytes 216-223 are trailing pad (already zero)
+        # bytes 216-223: padding
+        ibl_env = getattr(engine, "_environment", None)
+        if ibl_env is not None:
+            globals_data[224:228] = np.frombuffer(
+                np.float32(ibl_env.intensity).tobytes(), dtype=np.uint8
+            )
+            globals_data[228:232] = np.frombuffer(np.uint32(1).tobytes(), dtype=np.uint8)
+        # bytes 232-239: padding
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 
         # Upload lights once (shared across all PBR draws)

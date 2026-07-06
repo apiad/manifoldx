@@ -397,7 +397,7 @@ def render_volume_pass(rp, engine, render_pass, volume_batches):
         entries=[
             {
                 "binding": 0,
-                "resource": {"buffer": rp._globals_buffer, "offset": 0, "size": 224},
+                "resource": {"buffer": rp._globals_buffer, "offset": 0, "size": 240},
             },
         ],
     )

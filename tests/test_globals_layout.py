@@ -23,13 +23,12 @@ def _get_offscreen_engine():
     return engine
 
 
-GLOBALS_SIZE_BYTES = 224
+GLOBALS_SIZE_BYTES = 240
 
 
 def test_globals_buffer_is_224_bytes():
     """Globals: vp(64) + view(64) + proj(64) + camera_pos(12) + pad(4)
-    + viewport_size(8) + pad(8) = 224 bytes. Locked here so that
-    every material shader's `struct Globals` matches."""
+    + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes."""
     import manifoldx as mx
     from manifoldx.components import Material, Mesh, Transform
     from manifoldx.resources import BasicMaterial, sphere

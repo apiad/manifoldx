@@ -107,3 +107,38 @@ def test_brdf_lut_loads():
     assert lut.shape == (512, 512, 2)
     assert lut.dtype == np.float32
     assert np.all(lut >= 0.0) and np.all(lut <= 1.0)
+
+
+def test_engine_set_environment_preset():
+    from manifoldx.engine import Engine
+    from manifoldx.ibl import EnvironmentMap
+    eng = Engine("test", max_entities=16)
+    eng.set_environment("studio")
+    assert isinstance(eng.environment, EnvironmentMap)
+
+
+def test_engine_set_environment_object():
+    from manifoldx.engine import Engine
+    from manifoldx.ibl import EnvironmentMap
+    eng = Engine("test", max_entities=16)
+    env = EnvironmentMap.from_color((0.5, 0.5, 0.5))
+    eng.set_environment(env)
+    assert eng.environment is env
+
+
+def test_engine_set_environment_none():
+    from manifoldx.engine import Engine
+    eng = Engine("test", max_entities=16)
+    eng.set_environment("neutral")
+    eng.set_environment(None)
+    assert eng.environment is None
+
+
+def test_engine_environment_intensity():
+    from manifoldx.engine import Engine
+    from manifoldx.ibl import EnvironmentMap
+    eng = Engine("test", max_entities=16)
+    env = EnvironmentMap.from_color((0.3, 0.3, 0.3))
+    env.intensity = 2.5
+    eng.set_environment(env)
+    assert eng.environment.intensity == 2.5
