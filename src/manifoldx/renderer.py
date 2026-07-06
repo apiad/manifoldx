@@ -275,7 +275,7 @@ class RenderPipeline:
 
     def _ensure_pipeline(self, device, texture_format):
         """Lazily initialize device and shared buffers on first use."""
-        if self._initialized:
+        if getattr(self, "_initialized", False):
             return
 
         self._device = device
@@ -306,7 +306,170 @@ class RenderPipeline:
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
+        # IBL GPU resources — shared sampler + placeholder textures
+        self._ibl_env_id = None
+        self._ibl_sampler = device.create_sampler(
+            min_filter="linear",
+            mag_filter="linear",
+            mipmap_filter="linear",
+        )
+        self._ibl_bind_group_layout = self._create_ibl_bind_group_layout(device)
+        black_cube_view = self._create_black_cubemap(device)
+        self._ibl_neutral_lut_view = self._create_brdf_lut_texture(device)
+        self._ibl_placeholder_bind_group = self._create_ibl_bind_group(
+            device, black_cube_view, black_cube_view, self._ibl_neutral_lut_view
+        )
+        self._ibl_active_bind_group = None
+
         self._initialized = True
+
+    def _create_ibl_bind_group_layout(self, device):
+        return device.create_bind_group_layout(entries=[
+            {
+                "binding": 0,
+                "visibility": wgpu.ShaderStage.FRAGMENT,
+                "sampler": {"type": wgpu.SamplerBindingType.filtering},
+            },
+            {
+                "binding": 1,
+                "visibility": wgpu.ShaderStage.FRAGMENT,
+                "texture": {
+                    "sample_type": wgpu.TextureSampleType.float,
+                    "view_dimension": wgpu.TextureViewDimension.cube,
+                    "multisampled": False,
+                },
+            },
+            {
+                "binding": 2,
+                "visibility": wgpu.ShaderStage.FRAGMENT,
+                "texture": {
+                    "sample_type": wgpu.TextureSampleType.float,
+                    "view_dimension": wgpu.TextureViewDimension.cube,
+                    "multisampled": False,
+                },
+            },
+            {
+                "binding": 3,
+                "visibility": wgpu.ShaderStage.FRAGMENT,
+                "texture": {
+                    "sample_type": wgpu.TextureSampleType.float,
+                    "view_dimension": wgpu.TextureViewDimension.d2,
+                    "multisampled": False,
+                },
+            },
+        ])
+
+    def _create_black_cubemap(self, device):
+        """1×1×6 rgba16float black cubemap, returns texture view."""
+        tex = device.create_texture(
+            size=(1, 1, 6),
+            format=wgpu.TextureFormat.rgba16float,
+            usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
+            dimension=wgpu.TextureDimension.d2,
+            mip_level_count=1,
+            sample_count=1,
+        )
+        data = np.zeros((6, 1, 1, 4), dtype=np.float16).tobytes()
+        device.queue.write_texture(
+            {"texture": tex, "mip_level": 0, "origin": (0, 0, 0)},
+            data,
+            {"bytes_per_row": 8, "rows_per_image": 1},
+            (1, 1, 6),
+        )
+        return tex.create_view(
+            format=wgpu.TextureFormat.rgba16float,
+            dimension=wgpu.TextureViewDimension.cube,
+            base_mip_level=0, mip_level_count=1,
+            base_array_layer=0, array_layer_count=6,
+        )
+
+    def _create_brdf_lut_texture(self, device):
+        """Upload pre-baked BRDF LUT, returns texture view."""
+        from manifoldx.ibl import load_brdf_lut
+        lut = load_brdf_lut().astype(np.float16)
+        tex = device.create_texture(
+            size=(512, 512, 1),
+            format=wgpu.TextureFormat.rg16float,
+            usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
+            dimension=wgpu.TextureDimension.d2,
+            mip_level_count=1,
+            sample_count=1,
+        )
+        device.queue.write_texture(
+            {"texture": tex, "mip_level": 0, "origin": (0, 0, 0)},
+            lut.tobytes(),
+            {"bytes_per_row": 512 * 4, "rows_per_image": 512},
+            (512, 512, 1),
+        )
+        return tex.create_view(
+            format=wgpu.TextureFormat.rg16float,
+            dimension=wgpu.TextureViewDimension.d2,
+        )
+
+    def _create_ibl_bind_group(self, device, irr_view, pf_view, lut_view):
+        return device.create_bind_group(
+            layout=self._ibl_bind_group_layout,
+            entries=[
+                {"binding": 0, "resource": self._ibl_sampler},
+                {"binding": 1, "resource": irr_view},
+                {"binding": 2, "resource": pf_view},
+                {"binding": 3, "resource": lut_view},
+            ],
+        )
+
+    def _upload_ibl_env(self, device, env):
+        """Upload EnvironmentMap precomputed data to GPU textures, update active bind group."""
+        env._precompute()
+        irr = env._irradiance   # (6, 64, 64, 4) float16
+
+        irr_tex = device.create_texture(
+            size=(64, 64, 6),
+            format=wgpu.TextureFormat.rgba16float,
+            usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
+            dimension=wgpu.TextureDimension.d2,
+            mip_level_count=1,
+            sample_count=1,
+        )
+        device.queue.write_texture(
+            {"texture": irr_tex, "mip_level": 0, "origin": (0, 0, 0)},
+            irr.tobytes(),
+            {"bytes_per_row": 64 * 8, "rows_per_image": 64},
+            (64, 64, 6),
+        )
+        irr_view = irr_tex.create_view(
+            format=wgpu.TextureFormat.rgba16float,
+            dimension=wgpu.TextureViewDimension.cube,
+            base_mip_level=0, mip_level_count=1,
+            base_array_layer=0, array_layer_count=6,
+        )
+
+        pf_tex = device.create_texture(
+            size=(128, 128, 6),
+            format=wgpu.TextureFormat.rgba16float,
+            usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
+            dimension=wgpu.TextureDimension.d2,
+            mip_level_count=8,
+            sample_count=1,
+        )
+        for mip, pf in enumerate(env._prefiltered):
+            s = max(1, 128 >> mip)
+            device.queue.write_texture(
+                {"texture": pf_tex, "mip_level": mip, "origin": (0, 0, 0)},
+                pf.astype(np.float16).tobytes(),
+                {"bytes_per_row": s * 8, "rows_per_image": s},
+                (s, s, 6),
+            )
+        pf_view = pf_tex.create_view(
+            format=wgpu.TextureFormat.rgba16float,
+            dimension=wgpu.TextureViewDimension.cube,
+            base_mip_level=0, mip_level_count=8,
+            base_array_layer=0, array_layer_count=6,
+        )
+
+        self._ibl_active_bind_group = self._create_ibl_bind_group(
+            device, irr_view, pf_view, self._ibl_neutral_lut_view
+        )
+        self._ibl_env_id = id(env)
 
     def _get_or_create_pipeline(
         self, device, texture_format, geometry_id, material, registry,
@@ -320,6 +483,7 @@ class RenderPipeline:
             label:  (geometry_id, material_type, material_subtype, "label")
             line:   (geometry_id, material_type, material_subtype, "line")
         """
+        self._ensure_pipeline(device, texture_format)
         material_type = type(material).__name__
         material_subtype = getattr(material, "pipeline_subtype", None)
 
@@ -707,7 +871,12 @@ class RenderPipeline:
             bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
             self._bind_group_layouts[key] = bind_group_layout
 
-            pipeline_layout = device.create_pipeline_layout(bind_group_layouts=[bind_group_layout])
+            if needs_lights:
+                # StandardMaterial uses @group(1) for IBL textures
+                all_layouts = [bind_group_layout, self._ibl_bind_group_layout]
+            else:
+                all_layouts = [bind_group_layout]
+            pipeline_layout = device.create_pipeline_layout(bind_group_layouts=all_layouts)
             self._pipeline_layouts[key] = pipeline_layout
 
             # Use the geometry's actual buffer stride so the pipeline

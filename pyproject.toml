@@ -63,3 +63,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (CPU-heavy precompute; excluded from default `make test`)",
+]
+addopts = "-m 'not slow'"

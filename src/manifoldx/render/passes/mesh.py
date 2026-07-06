@@ -146,6 +146,18 @@ def render_mesh_batches(
 
         render_pass.set_pipeline(pipeline)
         render_pass.set_bind_group(0, bind_group)
+
+        if needs_lights:
+            ibl_env = getattr(engine, "_environment", None)
+            if ibl_env is not None and id(ibl_env) != rp._ibl_env_id:
+                rp._upload_ibl_env(rp._device, ibl_env)
+            ibl_bg = (
+                rp._ibl_active_bind_group
+                if ibl_env is not None and rp._ibl_active_bind_group is not None
+                else rp._ibl_placeholder_bind_group
+            )
+            render_pass.set_bind_group(1, ibl_bg)
+
         render_pass.set_vertex_buffer(0, gpu_buffers["vertex_buffer"])
         render_pass.set_index_buffer(gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32)
 
