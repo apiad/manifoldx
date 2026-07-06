@@ -182,6 +182,53 @@ When `engine.environment.show_skybox = True`, a new pass runs before the mesh pa
 
 Lives in `src/manifoldx/render/passes/skybox.py`.
 
+### Known limitation: first-frame device lockup (NVIDIA Quadro M2000M / Vulkan)
+
+Investigated 2026-07-06. On the workstation GPU (NVIDIA Quadro M2000M, Vulkan
+driver 580.159.03 — the adapter wgpu selects under `power_preference=
+"high-performance"`; the "mesa i915" line in the logs is adapter-enumeration
+noise, not the selected device), enabling the skybox on the **very first
+presented frame** deadlocks the device: the frame's `queue.submit` never
+completes and `do_sync_download` blocks forever. This is a driver/first-frame
+device-init lockup, **not** a defect in the skybox pass — the pass code is
+correct on every axis:
+
+- Depth format is `depth24plus` everywhere (mesh, skybox, depth attachment —
+  consistent), depth-write off, `less_equal`, far plane at depth 1.0.
+- The bind group, pipeline layout, sampler, and cube texture views are valid
+  and are the *same* IBL resources the mesh pass samples successfully.
+
+Evidence (headless offscreen, `Engine.render`):
+
+| Scenario | Result |
+|---|---|
+| Skybox on from frame 0 (cube sampled in first present) | **hangs** (device lockup) |
+| Skybox fragment replaced with a constant colour (no cube sample) | renders |
+| Skybox on, but tiny triangle (few fragments) — still samples cube | hangs (not a fragment-count issue) |
+| `textureSample` vs `textureSampleLevel` for the cube | both hang (not LOD-mode) |
+| **Any** prior frame presented first (even with no environment set), then skybox on | **renders** |
+| Env set from start, skybox toggled on after frame 0 (the demo's `S`-key path) | renders |
+
+The differentiator is purely *"has at least one frame been presented before the
+skybox cube-sampling draw"*. Hoisting the env upload out of the render pass and
+adding a full `queue.submit([]) + on_submitted_work_done_sync()` barrier before
+the pass did **not** help — so it is not a write-then-sample hazard on the cube;
+it is the first present itself that wedges when it includes this draw.
+
+Consequences and decision:
+
+- **Skybox stays default-OFF** (`EnvironmentMap.show_skybox = False`). Mesh IBL
+  lighting (the split-sum path) is completely unaffected and renders in seconds.
+- **`examples/ibl_demo.py` is unaffected**: it enables the skybox only via the
+  `S` keypress, which by construction happens after startup (many frames
+  presented), so the interactive toggle works.
+- The only broken usage is scripting `show_skybox = True` before the first
+  present. Per the "don't force a fix for a driver-level lockup" call, no
+  workaround (e.g. an implicit warm-up frame) was added — that would mask an
+  old-GPU driver quirk in the shared render loop for every scene. Revisit if a
+  newer driver / different GPU reproduces the same lockup, in which case it
+  would warrant a real fix.
+
 ---
 
 ## Files changed / created
