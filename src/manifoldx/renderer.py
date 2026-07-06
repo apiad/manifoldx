@@ -6,6 +6,7 @@ import wgpu
 from manifoldx.render.passes import axis as _axis_pass
 from manifoldx.render.passes import label as _label_pass
 from manifoldx.render.passes import mesh as _mesh_pass
+from manifoldx.render.passes import skybox as _skybox_pass
 from manifoldx.render.passes import sprite as _sprite_pass
 from manifoldx.render.passes import volume as _volume_pass
 from manifoldx.render.passes.volume import VOLUME_SHADER_SOURCE
@@ -1114,6 +1115,13 @@ class RenderPipeline:
             offset = li * 8  # 8 floats per light
             lights_data[offset : offset + len(light_arr)] = light_arr
         self._device.queue.write_buffer(self._lights_buffer, 0, lights_data.tobytes())
+
+        # ---------------------------------------------------------------
+        # Skybox (renders at far plane — before mesh geometry)
+        # ---------------------------------------------------------------
+        env = getattr(engine, "_environment", None)
+        if env is not None and env.show_skybox:
+            _skybox_pass.render_skybox(self, engine, render_pass)
 
         # ---------------------------------------------------------------
         # Draw mesh batches (if any)
