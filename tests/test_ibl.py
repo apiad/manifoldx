@@ -64,3 +64,46 @@ def test_from_image_exposure(tmp_path):
     env1 = EnvironmentMap.from_image(str(p), exposure=1.0)
     env2 = EnvironmentMap.from_image(str(p), exposure=2.0)
     np.testing.assert_allclose(env2.data, env1.data * 2.0, atol=1e-5)
+
+
+def test_precompute_irradiance_shape():
+    from manifoldx.ibl import EnvironmentMap
+    env = EnvironmentMap.from_color((1.0, 1.0, 1.0))
+    env._precompute()
+    assert env._irradiance is not None
+    assert env._irradiance.shape == (6, 64, 64, 4)
+    assert env._irradiance.dtype == np.float16
+
+
+def test_precompute_prefiltered_shape():
+    from manifoldx.ibl import EnvironmentMap
+    env = EnvironmentMap.from_color((0.5, 0.5, 0.5))
+    env._precompute()
+    assert env._prefiltered is not None
+    assert len(env._prefiltered) == 8
+    assert env._prefiltered[0].shape == (6, 128, 128, 4)
+    assert env._prefiltered[7].shape == (6, 1, 1, 4)
+
+
+def test_precompute_irradiance_non_negative():
+    from manifoldx.ibl import EnvironmentMap
+    env = EnvironmentMap.from_color((0.3, 0.5, 0.7))
+    env._precompute()
+    assert np.all(env._irradiance.astype(np.float32) >= 0.0)
+
+
+def test_precompute_cached():
+    from manifoldx.ibl import EnvironmentMap
+    env = EnvironmentMap.from_color((1.0, 1.0, 1.0))
+    env._precompute()
+    id1 = id(env._irradiance)
+    env._precompute()
+    assert id(env._irradiance) == id1
+
+
+def test_brdf_lut_loads():
+    from manifoldx.ibl import load_brdf_lut
+    lut = load_brdf_lut()
+    assert lut.shape == (512, 512, 2)
+    assert lut.dtype == np.float32
+    assert np.all(lut >= 0.0) and np.all(lut <= 1.0)
