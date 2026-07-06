@@ -30,7 +30,7 @@ for row in range(4):
             n=1,
         )
 
-engine.set_lights([PointLight(position=(3.0, 3.0, 5.0), color=(1, 1, 1), intensity=20)])
+engine.set_lights([PointLight(position=(3.0, 3.0, 5.0), color="#ffffff", intensity=20)])
 engine.set_environment("studio")
 engine.camera.position = (0, 0, 8)
 
