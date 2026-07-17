@@ -126,16 +126,25 @@ class BasicMaterial(Material):
 
 _STANDARDMATERIAL_SHADER = """
 struct Globals {
-    vp:            mat4x4<f32>,   // offset   0
-    view:          mat4x4<f32>,   // offset  64
-    proj:          mat4x4<f32>,   // offset 128
-    camera_pos:    vec3<f32>,     // offset 192
-    _pad0:         f32,           // offset 204
-    viewport_size: vec2<f32>,     // offset 208
-    _pad1:         vec2<f32>,     // offset 216
-    ibl_intensity: f32,           // offset 224
-    ibl_enabled:   u32,           // offset 228
-    _pad_ibl:      vec2<f32>,     // offset 232
+    vp:              mat4x4<f32>,   // offset   0
+    view:            mat4x4<f32>,   // offset  64
+    proj:            mat4x4<f32>,   // offset 128
+    camera_pos:      vec3<f32>,     // offset 192
+    _pad0:           f32,           // offset 204
+    viewport_size:   vec2<f32>,     // offset 208
+    _pad1:           vec2<f32>,     // offset 216
+    ibl_intensity:   f32,           // offset 224
+    ibl_enabled:     u32,           // offset 228
+    _pad_ibl:        vec2<f32>,     // offset 232
+    light_view_proj: mat4x4<f32>,   // offset 240
+    sun_direction:   vec3<f32>,     // offset 304
+    _pad_sun0:       f32,           // offset 316
+    sun_color:       vec3<f32>,     // offset 320
+    sun_intensity:   f32,           // offset 332
+    shadow_enabled:  u32,           // offset 336
+    shadow_bias:     f32,           // offset 340
+    shadow_map_size: f32,           // offset 344
+    _pad_shadow:     f32,           // offset 348
 };
 
 struct Transforms {
@@ -217,6 +226,20 @@ fn calculatePointLight(N: vec3<f32>, V: vec3<f32>, worldPos: vec3<f32>,
     return (kD * albedo / PI + specular) * radiance * max(dot(N, L), 0.0);
 }
 
+fn calculateSun(N: vec3<f32>, V: vec3<f32>, F0: vec3<f32>, albedo: vec3<f32>,
+                metallic: f32, roughness: f32) -> vec3<f32> {
+    // Directional light: L points toward the light = -direction. No distance falloff.
+    let L = normalize(-globals.sun_direction);
+    let H = normalize(V + L);
+    let radiance = globals.sun_color * globals.sun_intensity;
+    let NDF = distributionGGX(N, H, roughness);
+    let G   = geometrySmith(N, V, L, roughness);
+    let F   = fresnelSchlick(max(dot(H, V), 0.0), F0);
+    let kD  = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+    let specular = NDF * G * F / (4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001);
+    return (kD * albedo / PI + specular) * radiance * max(dot(N, L), 0.0);
+}
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
@@ -256,6 +279,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
+    if globals.sun_intensity > 0.0 {
+        Lo += calculateSun(N, V, F0, material.albedo, material.metallic, material.roughness);
+    }
+
     var ambient = vec3<f32>(0.03) * material.albedo * material.ao;
 
     if globals.ibl_enabled != 0u {
@@ -286,26 +313,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 
 _STANDARDMATERIAL_TEXTURED_SHADER = (
-    _STANDARDMATERIAL_SHADER
-    .replace(
+    _STANDARDMATERIAL_SHADER.replace(
         "@group(0) @binding(3) var<uniform> light_data: LightData;",
         "@group(0) @binding(3) var<uniform> light_data: LightData;\n"
         "@group(0) @binding(4) var albedo_sampler: sampler;\n"
         "@group(0) @binding(5) var albedo_tex: texture_2d<f32>;",
     )
     .replace(
-        "    @location(1) normal:   vec3<f32>,\n"
-        "    @builtin(instance_index) instance: u32,",
+        "    @location(1) normal:   vec3<f32>,\n    @builtin(instance_index) instance: u32,",
         "    @location(1) normal:   vec3<f32>,\n"
         "    @location(2) uv:       vec2<f32>,\n"
         "    @builtin(instance_index) instance: u32,",
     )
     .replace(
-        "    @location(1) world_pos:    vec3<f32>,\n"
-        "};",
-        "    @location(1) world_pos:    vec3<f32>,\n"
-        "    @location(2) uv:           vec2<f32>,\n"
-        "};",
+        "    @location(1) world_pos:    vec3<f32>,\n};",
+        "    @location(1) world_pos:    vec3<f32>,\n    @location(2) uv:           vec2<f32>,\n};",
     )
     .replace(
         "    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);\n"
@@ -343,8 +365,7 @@ class StandardMaterial(Material):
 
     binding_slot = 1
 
-    def __init__(self, color, roughness=0.5, metallic=0.0, ao=1.0,
-                 albedo_map=None):
+    def __init__(self, color, roughness=0.5, metallic=0.0, ao=1.0, albedo_map=None):
         from manifoldx.textures import TextureHandle
 
         if albedo_map is not None and not isinstance(albedo_map, TextureHandle):
@@ -947,8 +968,8 @@ class _VolumeResource:
     def __init__(self, data: np.ndarray, name: str):
         self.data = data
         self.name = name
-        self.dirty = True       # set on register/update; cleared post-upload
-        self.texture = None     # GPU texture; created lazily on first upload
+        self.dirty = True  # set on register/update; cleared post-upload
+        self.texture = None  # GPU texture; created lazily on first upload
 
 
 class VolumeRegistry:
@@ -969,9 +990,7 @@ class VolumeRegistry:
 
     def register(self, data: np.ndarray, *, name: str | None = None) -> int:
         if data.ndim != 3:
-            raise ValueError(
-                f"volume data must be 3D (Nz, Ny, Nx); got {data.ndim}D"
-            )
+            raise ValueError(f"volume data must be 3D (Nz, Ny, Nx); got {data.ndim}D")
         if data.dtype != np.float32:
             raise ValueError(
                 f"volume data must be float32; got {data.dtype}. "
@@ -984,9 +1003,7 @@ class VolumeRegistry:
             )
         handle = self._next_id
         self._next_id += 1
-        self._volumes[handle] = _VolumeResource(
-            data=data, name=name or f"volume_{handle}"
-        )
+        self._volumes[handle] = _VolumeResource(data=data, name=name or f"volume_{handle}")
         return handle
 
     def update(self, handle: int, data: np.ndarray) -> None:
@@ -997,9 +1014,7 @@ class VolumeRegistry:
                 f"got {data.shape}. Re-register if you need a different size."
             )
         if data.dtype != np.float32:
-            raise ValueError(
-                f"volume data must be float32; got {data.dtype}."
-            )
+            raise ValueError(f"volume data must be float32; got {data.dtype}.")
         if not data.flags["C_CONTIGUOUS"]:
             raise ValueError("volume data must be C-contiguous.")
         res.data = data
@@ -1033,7 +1048,7 @@ class VolumeRegistry:
             )
 
         data_bytes = res.data.tobytes()
-        bytes_per_row = nx * 4   # 4 bytes per f32 voxel
+        bytes_per_row = nx * 4  # 4 bytes per f32 voxel
         rows_per_image = ny
         queue.write_texture(
             {"texture": res.texture, "mip_level": 0, "origin": (0, 0, 0)},

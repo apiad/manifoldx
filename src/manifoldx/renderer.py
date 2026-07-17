@@ -284,8 +284,9 @@ class RenderPipeline:
         # Create globals uniform buffer:
         #   vp(64) + view(64) + proj(64) + camera_pos(12) + pad(4)
         #   + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes
+        #   + shadow block: light_view_proj(64) + sun(32) + shadow params(16) = 352 bytes total
         self._globals_buffer = device.create_buffer(
-            size=240,
+            size=352,
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
@@ -325,40 +326,42 @@ class RenderPipeline:
         self._initialized = True
 
     def _create_ibl_bind_group_layout(self, device):
-        return device.create_bind_group_layout(entries=[
-            {
-                "binding": 0,
-                "visibility": wgpu.ShaderStage.FRAGMENT,
-                "sampler": {"type": wgpu.SamplerBindingType.filtering},
-            },
-            {
-                "binding": 1,
-                "visibility": wgpu.ShaderStage.FRAGMENT,
-                "texture": {
-                    "sample_type": wgpu.TextureSampleType.float,
-                    "view_dimension": wgpu.TextureViewDimension.cube,
-                    "multisampled": False,
+        return device.create_bind_group_layout(
+            entries=[
+                {
+                    "binding": 0,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "sampler": {"type": wgpu.SamplerBindingType.filtering},
                 },
-            },
-            {
-                "binding": 2,
-                "visibility": wgpu.ShaderStage.FRAGMENT,
-                "texture": {
-                    "sample_type": wgpu.TextureSampleType.float,
-                    "view_dimension": wgpu.TextureViewDimension.cube,
-                    "multisampled": False,
+                {
+                    "binding": 1,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "texture": {
+                        "sample_type": wgpu.TextureSampleType.float,
+                        "view_dimension": wgpu.TextureViewDimension.cube,
+                        "multisampled": False,
+                    },
                 },
-            },
-            {
-                "binding": 3,
-                "visibility": wgpu.ShaderStage.FRAGMENT,
-                "texture": {
-                    "sample_type": wgpu.TextureSampleType.float,
-                    "view_dimension": wgpu.TextureViewDimension.d2,
-                    "multisampled": False,
+                {
+                    "binding": 2,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "texture": {
+                        "sample_type": wgpu.TextureSampleType.float,
+                        "view_dimension": wgpu.TextureViewDimension.cube,
+                        "multisampled": False,
+                    },
                 },
-            },
-        ])
+                {
+                    "binding": 3,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "texture": {
+                        "sample_type": wgpu.TextureSampleType.float,
+                        "view_dimension": wgpu.TextureViewDimension.d2,
+                        "multisampled": False,
+                    },
+                },
+            ]
+        )
 
     def _create_black_cubemap(self, device):
         """1×1×6 rgba16float black cubemap, returns texture view."""
@@ -380,13 +383,16 @@ class RenderPipeline:
         return tex.create_view(
             format=wgpu.TextureFormat.rgba16float,
             dimension=wgpu.TextureViewDimension.cube,
-            base_mip_level=0, mip_level_count=1,
-            base_array_layer=0, array_layer_count=6,
+            base_mip_level=0,
+            mip_level_count=1,
+            base_array_layer=0,
+            array_layer_count=6,
         )
 
     def _create_brdf_lut_texture(self, device):
         """Upload pre-baked BRDF LUT, returns texture view."""
         from manifoldx.ibl import load_brdf_lut
+
         lut = load_brdf_lut().astype(np.float16)
         tex = device.create_texture(
             size=(512, 512, 1),
@@ -421,7 +427,7 @@ class RenderPipeline:
     def _upload_ibl_env(self, device, env):
         """Upload EnvironmentMap precomputed data to GPU textures, update active bind group."""
         env._precompute()
-        irr = env._irradiance   # (6, 64, 64, 4) float16
+        irr = env._irradiance  # (6, 64, 64, 4) float16
 
         irr_tex = device.create_texture(
             size=(64, 64, 6),
@@ -440,8 +446,10 @@ class RenderPipeline:
         irr_view = irr_tex.create_view(
             format=wgpu.TextureFormat.rgba16float,
             dimension=wgpu.TextureViewDimension.cube,
-            base_mip_level=0, mip_level_count=1,
-            base_array_layer=0, array_layer_count=6,
+            base_mip_level=0,
+            mip_level_count=1,
+            base_array_layer=0,
+            array_layer_count=6,
         )
 
         pf_tex = device.create_texture(
@@ -463,8 +471,10 @@ class RenderPipeline:
         pf_view = pf_tex.create_view(
             format=wgpu.TextureFormat.rgba16float,
             dimension=wgpu.TextureViewDimension.cube,
-            base_mip_level=0, mip_level_count=8,
-            base_array_layer=0, array_layer_count=6,
+            base_mip_level=0,
+            mip_level_count=8,
+            base_array_layer=0,
+            array_layer_count=6,
         )
 
         self._ibl_active_bind_group = self._create_ibl_bind_group(
@@ -473,8 +483,16 @@ class RenderPipeline:
         self._ibl_env_id = id(env)
 
     def _get_or_create_pipeline(
-        self, device, texture_format, geometry_id, material, registry,
-        sprite=False, label=False, line=False, geometry_buffers=None,
+        self,
+        device,
+        texture_format,
+        geometry_id,
+        material,
+        registry,
+        sprite=False,
+        label=False,
+        line=False,
+        geometry_buffers=None,
     ):
         """Get or create a material-type specific pipeline.
 
@@ -695,8 +713,7 @@ class RenderPipeline:
         # StandardMaterial._compile accepts an optional textured= kwarg;
         # other materials' _compile() takes no args. Detect and forward.
         is_textured = (
-            material_subtype == "textured"
-            and getattr(material, "albedo_map", None) is not None
+            material_subtype == "textured" and getattr(material, "albedo_map", None) is not None
         )
         if is_textured:
             shader_source = material._compile(textured=True)
@@ -853,21 +870,23 @@ class RenderPipeline:
                             f"StandardMaterial(albedo_map=...) requires geometry "
                             f"with UVs; geometry id={geometry_id} has none"
                         )
-                    bind_group_entries.extend([
-                        {
-                            "binding": 4,
-                            "visibility": wgpu.ShaderStage.FRAGMENT,
-                            "sampler": {"type": wgpu.SamplerBindingType.filtering},
-                        },
-                        {
-                            "binding": 5,
-                            "visibility": wgpu.ShaderStage.FRAGMENT,
-                            "texture": {
-                                "sample_type": wgpu.TextureSampleType.float,
-                                "view_dimension": wgpu.TextureViewDimension.d2,
+                    bind_group_entries.extend(
+                        [
+                            {
+                                "binding": 4,
+                                "visibility": wgpu.ShaderStage.FRAGMENT,
+                                "sampler": {"type": wgpu.SamplerBindingType.filtering},
                             },
-                        },
-                    ])
+                            {
+                                "binding": 5,
+                                "visibility": wgpu.ShaderStage.FRAGMENT,
+                                "texture": {
+                                    "sample_type": wgpu.TextureSampleType.float,
+                                    "view_dimension": wgpu.TextureViewDimension.d2,
+                                },
+                            },
+                        ]
+                    )
 
             bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
             self._bind_group_layouts[key] = bind_group_layout
@@ -896,11 +915,13 @@ class RenderPipeline:
                 },
             ]
             if material_subtype == "textured":
-                vertex_attributes.append({
-                    "format": wgpu.VertexFormat.float32x2,
-                    "offset": 6 * 4,
-                    "shader_location": 2,
-                })
+                vertex_attributes.append(
+                    {
+                        "format": wgpu.VertexFormat.float32x2,
+                        "offset": 6 * 4,
+                        "shader_location": 2,
+                    }
+                )
             pipeline = device.create_render_pipeline(
                 layout=pipeline_layout,
                 vertex={
@@ -949,6 +970,22 @@ class RenderPipeline:
 
         return pipeline, bind_group_layout
 
+    def _sun_light_view_proj(self, engine):
+        """Light-space view-projection for the sun (identity until shadows are on)."""
+        cfg = getattr(engine, "_shadow_config", None)
+        sun = getattr(engine, "_sun", None)
+        if cfg is None or sun is None:
+            return np.eye(4, dtype=np.float32)
+        from manifoldx.shadow import compute_light_view_proj
+
+        return compute_light_view_proj(
+            direction=np.asarray(sun.direction, dtype=np.float32),
+            target=np.asarray(cfg["target"], dtype=np.float32),
+            extent=cfg["extent"],
+            near=cfg["near"],
+            far=cfg["far"],
+        )
+
     def render(self, engine, render_pass):
         """Issue instanced draw calls into an active render pass."""
         if not self._initialized or self._device is None:
@@ -963,6 +1000,7 @@ class RenderPipeline:
         # no batches needed. No-op when engine.gui is empty.
         # ---------------------------------------------------------------
         from manifoldx.render.passes import gui as _gui_pass
+
         _gui_pass.render_gui_pass(self, engine, render_pass)
 
     def _render_scene_passes(self, engine, render_pass):
@@ -1018,7 +1056,7 @@ class RenderPipeline:
         mesh_batches = {}  # (geom_id, mat_type) -> list of local indices
         sprite_batches = {}  # mat_id -> list of local indices
         label_batches = {}  # mat_id -> list of local indices
-        axis_batches = {}   # (geom_id, mat_id) -> list of local indices
+        axis_batches = {}  # (geom_id, mat_id) -> list of local indices
         volume_batches = []  # list of (entity_local_idx, mat_id, vol_id)
 
         for i, entity_idx in enumerate(alive_indices):
@@ -1036,13 +1074,17 @@ class RenderPipeline:
                 and self._is_label_entity(entity_idx, mat_id, engine)
             )
             is_volume = (
-                (not is_axis) and (not is_label)
+                (not is_axis)
+                and (not is_label)
                 and has_volume
                 and self._is_volume_entity(entity_idx, mat_id, engine)
             )
             is_sprite = (
-                (not is_axis) and (not is_label) and (not is_volume)
-                and has_point_cloud and geom_id == 0
+                (not is_axis)
+                and (not is_label)
+                and (not is_volume)
+                and has_point_cloud
+                and geom_id == 0
             )
 
             if is_axis:
@@ -1083,8 +1125,11 @@ class RenderPipeline:
             camera_pos = np.array(camera.position, dtype=np.float32)
 
         # Upload globals: vp(64) + view(64) + proj(64) + camera_pos(12) +
-        # pad(4) + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes.
-        globals_data = np.zeros(240, dtype=np.uint8)
+        # pad(4) + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes,
+        # then the shadow block: light_view_proj(64) + sun_direction(12)+pad(4)
+        # + sun_color(12)+sun_intensity(4) + shadow_enabled(4)+bias(4)+map_size(4)+pad(4) = 112 bytes,
+        # total 352 bytes.
+        globals_data = np.zeros(352, dtype=np.uint8)
         globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
         globals_data[64:128] = np.frombuffer(view_mat.tobytes(), dtype=np.uint8)
         proj_mat = camera.get_projection_matrix(aspect, near=camera.near, far=camera.far).T.astype(
@@ -1105,6 +1150,27 @@ class RenderPipeline:
             )
             globals_data[228:232] = np.frombuffer(np.uint32(1).tobytes(), dtype=np.uint8)
         # bytes 232-239: padding
+
+        # --- Shadow block (offset 240+) ---
+        # light_view_proj @240 — identity until a sun + enable_shadows() populate it.
+        # Stored transposed (column-major), matching proj_mat / view_mat above.
+        lvp = self._sun_light_view_proj(engine)  # (4,4) row-major math matrix
+        globals_data[240:304] = np.frombuffer(lvp.T.astype(np.float32).tobytes(), dtype=np.uint8)
+        # sun_direction+pad @304, sun_color+intensity @320 — 32 bytes from get_data().
+        sun = getattr(engine, "_sun", None)
+        if sun is not None:
+            globals_data[304:336] = np.frombuffer(
+                sun.get_data().astype(np.float32).tobytes(), dtype=np.uint8
+            )
+        # shadow_enabled/bias/map_size @336 — populated once shadows sample (Task 4).
+        cfg = getattr(engine, "_shadow_config", None)
+        if cfg is not None and sun is not None:
+            globals_data[336:340] = np.frombuffer(np.uint32(1).tobytes(), dtype=np.uint8)
+            globals_data[340:344] = np.frombuffer(np.float32(cfg["bias"]).tobytes(), dtype=np.uint8)
+            globals_data[344:348] = np.frombuffer(
+                np.float32(cfg["resolution"]).tobytes(), dtype=np.uint8
+            )
+
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 
         # Upload lights once (shared across all PBR draws)
@@ -1168,6 +1234,7 @@ class RenderPipeline:
         if mat_obj is None:
             return False
         from manifoldx.viz import AxisMaterial
+
         return isinstance(mat_obj, AxisMaterial)
 
     def _is_label_entity(self, entity_idx, mat_id, engine):
@@ -1177,6 +1244,7 @@ class RenderPipeline:
         if mat_obj is None:
             return False
         from manifoldx.viz import LabelMaterial
+
         return isinstance(mat_obj, LabelMaterial)
 
     def _is_volume_entity(self, entity_idx, mat_id, engine):
@@ -1186,9 +1254,8 @@ class RenderPipeline:
         if mat_obj is None:
             return False
         from manifoldx.viz import VolumeMaterial
+
         return isinstance(mat_obj, VolumeMaterial)
-
-
 
     def run(self, engine, dt: float):
         """Execute full render pipeline (CPU-side prep)."""

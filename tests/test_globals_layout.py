@@ -5,6 +5,7 @@ Plan 3 grew Globals from 208 to 224 bytes by appending
 struct 16-byte aligned). This test pins the size and the upload site
 so the WGSL `Globals` struct in every material shader can rely on it.
 """
+
 import numpy as np
 import pytest
 
@@ -12,23 +13,28 @@ import pytest
 def _get_offscreen_engine():
     try:
         from manifoldx.backends import get_offscreen_canvas
+
         canvas = get_offscreen_canvas(width=64, height=64)
     except Exception as e:
         pytest.skip(f"offscreen canvas unavailable: {e}")
 
     import manifoldx as mx
+
     engine = mx.Engine("test", width=64, height=64)
     engine._init_canvas(canvas)
     engine._running = True
     return engine
 
 
-GLOBALS_SIZE_BYTES = 240
+GLOBALS_SIZE_BYTES = 352
 
 
-def test_globals_buffer_is_224_bytes():
+def test_globals_buffer_is_352_bytes():
     """Globals: vp(64) + view(64) + proj(64) + camera_pos(12) + pad(4)
-    + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes."""
+    + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes,
+    then the shadow block: light_view_proj(64) + sun_direction(12)+pad(4)
+    + sun_color(12)+sun_intensity(4) + shadow_enabled(4)+bias(4)+map_size(4)+pad(4)
+    = 112 bytes, total 352 bytes."""
     import manifoldx as mx
     from manifoldx.components import Material, Mesh, Transform
     from manifoldx.resources import BasicMaterial, sphere

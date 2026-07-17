@@ -4,9 +4,7 @@ import numpy as np
 import wgpu
 
 
-def render_mesh_batches(
-    rp, engine, render_pass, mesh_batches, model_matrices, material_data
-):
+def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, material_data):
     """Render all mesh batches using instanced draw with shared transform buffer."""
     # ---------------------------------------------------------------
     # Upload ALL transforms at once (queue.write_buffer happens
@@ -38,9 +36,7 @@ def render_mesh_batches(
     # shared transform buffer.
     # ---------------------------------------------------------------
     for (geom_id, mat_type, mat_subtype, mat_id), local_indices in mesh_batches.items():
-        first_instance, instance_count = batch_draw_info[
-            (geom_id, mat_type, mat_subtype, mat_id)
-        ]
+        first_instance, instance_count = batch_draw_info[(geom_id, mat_type, mat_subtype, mat_id)]
 
         # Get GPU buffers for geometry
         gpu_buffers = engine._geometry_registry.get_gpu_buffers(geom_id)
@@ -84,16 +80,14 @@ def render_mesh_batches(
         # Upload material uniforms for this batch.
         mat_data = mat_obj.get_data(instance_count, engine._material_registry)
         first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
-        rp._device.queue.write_buffer(
-            mat_buffer, 0, first_row.astype(np.float32).tobytes()
-        )
+        rp._device.queue.write_buffer(mat_buffer, 0, first_row.astype(np.float32).tobytes())
         bind_group_entries = [
             {
                 "binding": 0,
                 "resource": {
                     "buffer": rp._globals_buffer,
                     "offset": 0,
-                    "size": 240,
+                    "size": 352,
                 },
             },
             {
@@ -130,14 +124,18 @@ def render_mesh_batches(
         # (sampler at N, view at N+1 for each entry).
         texture_bindings = mat_obj.get_texture_bindings()
         for binding, handle in texture_bindings.items():
-            bind_group_entries.append({
-                "binding": binding,
-                "resource": handle.sampler,
-            })
-            bind_group_entries.append({
-                "binding": binding + 1,
-                "resource": handle.view,
-            })
+            bind_group_entries.append(
+                {
+                    "binding": binding,
+                    "resource": handle.sampler,
+                }
+            )
+            bind_group_entries.append(
+                {
+                    "binding": binding + 1,
+                    "resource": handle.view,
+                }
+            )
 
         bind_group = rp._device.create_bind_group(
             layout=bind_group_layout,

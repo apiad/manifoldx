@@ -69,12 +69,14 @@ class Engine:
         # GUI layer — list-like container of root Panels plus a
         # pointer_over_gui flag. The bridge (Plan 2) will toggle the flag.
         from manifoldx.gui.widgets import _GuiRoot
+
         self.gui = _GuiRoot()
 
         # GUI input bridge — routes pointer events through hit-test
         # and per-widget state. Subscribes to pointer_down/move/up at
         # construction; needs `self.gui` to already exist.
         from manifoldx.gui.bridge import _GuiBridge
+
         self._gui_bridge = _GuiBridge(self)
 
         # === ECS Infrastructure ===
@@ -87,6 +89,7 @@ class Engine:
         self._material_registry = MaterialRegistry(self._device)
         self._volume_registry = VolumeRegistry(self._device)
         from manifoldx.textures import TextureRegistry
+
         self._texture_registry = TextureRegistry()
 
         # Render pipeline
@@ -94,6 +97,7 @@ class Engine:
 
         # Compute systems — declarative GPU work registered via engine.compute(cls).
         from manifoldx.compute import ComputeRunner
+
         self._compute_runner = ComputeRunner(self)
         self._last_dt: float = 1 / 60
         self._frame_index: int = 0
@@ -120,6 +124,12 @@ class Engine:
         # IBL environment — set via set_environment()
         self._environment = None
 
+        # Directional sun (separate from the point-light array). Consumed by
+        # StandardMaterial as a directional term; also the shadow caster.
+        self._sun = None
+        # Shadow-map config — set via enable_shadows().
+        self._shadow_config = None
+
         # Lazily-constructed label atlas, materialized on first label render.
         self._label_atlas = None
 
@@ -131,6 +141,7 @@ class Engine:
         """
         if self._label_atlas is None:
             from manifoldx.viz.text import LabelTextureAtlas
+
             self._label_atlas = LabelTextureAtlas()
         return self._label_atlas
 
@@ -166,9 +177,7 @@ class Engine:
         """Run a blocking callable in the default executor and await its result."""
         import functools
 
-        return await self._aio_loop.run_in_executor(
-            None, functools.partial(fn, *args, **kwargs)
-        )
+        return await self._aio_loop.run_in_executor(None, functools.partial(fn, *args, **kwargs))
 
     def _get_active_loop(self) -> asyncio.AbstractEventLoop:
         """Return the asyncio loop async handlers should run on.
@@ -286,11 +295,14 @@ class Engine:
                 self._device.create_shader_module(code=wgsl)
             except Exception as e:
                 from manifoldx.compute.transpile import ComputeShaderCompileError
+
                 raise ComputeShaderCompileError(
                     category="wgpu-validation",
                     message=str(e),
                     filename=getattr(cls, "__module__", "<class>"),
-                    line=0, col=0, source_line=None,
+                    line=0,
+                    col=0,
+                    source_line=None,
                 )
         self._compute_runner.register(cls)
         return cls
@@ -303,6 +315,28 @@ class Engine:
         """Add a single light to the external lights list."""
         self._lights.append(light)
 
+    def set_sun(self, light):
+        """Set the single directional sun (a DirectionalLight).
+
+        The sun is engine-level state (like the IBL environment), distinct
+        from the point-light array. StandardMaterial adds a directional term
+        for it; enable_shadows() makes it cast a shadow.
+        """
+        self._sun = light
+
+    def enable_shadows(
+        self, target=(0.0, 0.0, 0.0), extent=10.0, resolution=2048, near=0.1, far=50.0, bias=0.005
+    ):
+        """Enable directional shadow mapping for the sun set via set_sun()."""
+        self._shadow_config = {
+            "target": tuple(target),
+            "extent": float(extent),
+            "resolution": int(resolution),
+            "near": float(near),
+            "far": float(far),
+            "bias": float(bias),
+        }
+
     def set_environment(self, env):
         """Set the IBL environment.
 
@@ -310,6 +344,7 @@ class Engine:
              "neutral", "dark"), or None to disable IBL.
         """
         from manifoldx.ibl import EnvironmentMap, PRESETS
+
         if env is None:
             self._environment = None
         elif isinstance(env, str):
