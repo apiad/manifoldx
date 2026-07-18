@@ -219,15 +219,21 @@ class Transform:
             pos = np.asarray(self._pos, dtype=np.float32)
             data[:, 0:3] = pos
 
+        if self._rot is not None:
+            rot = np.asarray(self._rot, dtype=np.float32)
+            data[:, 3:7] = rot
+
         if self._scale is not None:
             scale = np.asarray(self._scale, dtype=np.float32)
             data[:, 7:10] = scale
 
         # Broadcast to n entities if needed
-        if n > 1 and (self._pos is not None or self._scale is not None):
+        if n > 1 and (self._pos is not None or self._rot is not None or self._scale is not None):
             # If single values provided, broadcast them
             if self._pos is not None:
                 data[:, 0:3] = np.broadcast_to(self._pos, (n, 3))
+            if self._rot is not None:
+                data[:, 3:7] = np.broadcast_to(self._rot, (n, 4))
             if self._scale is not None:
                 data[:, 7:10] = np.broadcast_to(self._scale, (n, 3))
 
