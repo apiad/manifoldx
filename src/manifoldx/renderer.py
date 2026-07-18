@@ -36,7 +36,7 @@ struct Globals {
     shadow_enabled:  u32,
     shadow_bias:     f32,
     shadow_map_size: f32,
-    _pad_shadow:     f32,
+    shadow_pcf_radius: u32,
 };
 
 struct Transforms {
@@ -1283,6 +1283,9 @@ class RenderPipeline:
             globals_data[340:344] = np.frombuffer(np.float32(cfg["bias"]).tobytes(), dtype=np.uint8)
             globals_data[344:348] = np.frombuffer(
                 np.float32(cfg["resolution"]).tobytes(), dtype=np.uint8
+            )
+            globals_data[348:352] = np.frombuffer(
+                np.uint32(cfg.get("pcf_radius", 1)).tobytes(), dtype=np.uint8
             )
 
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())

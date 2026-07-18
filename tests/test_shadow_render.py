@@ -101,11 +101,13 @@ def test_shadow_map_allocated_when_enabled():
 _FLOOR_ROT = (-0.70710678, 0.0, 0.0, 0.70710678)
 
 
-def _plane_sphere_scene(shadows):
+def _plane_sphere_scene(shadows, pcf=1):
     eng = _make_offscreen_engine(w=192, h=192)
     eng.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(-0.3, -1.0, -0.3)))
     if shadows:
-        eng.enable_shadows(target=(0, 0, 0), extent=6.0, resolution=1024, bias=0.004)
+        eng.enable_shadows(
+            target=(0, 0, 0), extent=6.0, resolution=1024, bias=0.004, pcf_radius=pcf
+        )
     eng.spawn(
         Mesh(plane(12, 12)),
         Material(StandardMaterial(color="#ffffff", roughness=0.9)),
@@ -126,3 +128,36 @@ def test_sphere_casts_shadow_on_plane():
     # A clearly darkened region (the cast shadow) must appear when shadows are on.
     darkening = lit - shadowed
     assert darkening.max() > 20, f"no shadow appeared (max darkening {darkening.max():.1f})"
+
+
+# --------------------------------------------------------------------------
+# VS2 — PCF soft shadows
+# --------------------------------------------------------------------------
+
+
+def test_enable_shadows_stores_pcf_radius():
+    eng = _make_offscreen_engine()
+    eng.enable_shadows(target=(0, 0, 0), extent=6.0, pcf_radius=3)
+    assert eng._shadow_config["pcf_radius"] == 3
+    # Default is a 3x3 soft kernel.
+    eng.enable_shadows(target=(0, 0, 0), extent=6.0)
+    assert eng._shadow_config["pcf_radius"] == 1
+
+
+def _penumbra_count(lit, shadowed):
+    """Pixels in the soft transition band (partial darkening) of the shadow."""
+    d = lit - shadowed
+    mx = d.max()
+    if mx < 20:
+        return 0
+    return int(((d > 0.2 * mx) & (d < 0.8 * mx)).sum())
+
+
+def test_pcf_widens_the_penumbra():
+    lit = _plane_sphere_scene(shadows=False)[..., :3].mean(axis=2).astype(np.float64)
+    hard = _plane_sphere_scene(shadows=True, pcf=0)[..., :3].mean(axis=2).astype(np.float64)
+    soft = _plane_sphere_scene(shadows=True, pcf=4)[..., :3].mean(axis=2).astype(np.float64)
+    hard_band = _penumbra_count(lit, hard)
+    soft_band = _penumbra_count(lit, soft)
+    # A wider PCF kernel must produce a wider partial-shadow (penumbra) band.
+    assert soft_band > hard_band, f"pcf did not soften edges (hard={hard_band}, soft={soft_band})"

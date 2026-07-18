@@ -144,7 +144,7 @@ struct Globals {
     shadow_enabled:  u32,           // offset 336
     shadow_bias:     f32,           // offset 340
     shadow_map_size: f32,           // offset 344
-    _pad_shadow:     f32,           // offset 348
+    shadow_pcf_radius: u32,         // offset 348
 };
 
 struct Transforms {
@@ -251,7 +251,22 @@ fn sunShadow(world_pos: vec3<f32>) -> f32 {
     if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0 {
         return 1.0;  // outside the sun's frustum — unshadowed
     }
-    return textureSampleCompareLevel(shadow_map, shadow_sampler, uv, ndc.z - globals.shadow_bias);
+    // PCF: average an (2r+1)x(2r+1) grid of comparisons for soft edges.
+    // r == 0 collapses to a single hard-shadow tap. textureSampleCompareLevel
+    // (explicit level, no derivatives) is legal in non-uniform control flow.
+    let ref_depth = ndc.z - globals.shadow_bias;
+    let texel = 1.0 / globals.shadow_map_size;
+    let r = i32(globals.shadow_pcf_radius);
+    var sum = 0.0;
+    var count = 0.0;
+    for (var dy = -r; dy <= r; dy = dy + 1) {
+        for (var dx = -r; dx <= r; dx = dx + 1) {
+            let off = vec2<f32>(f32(dx), f32(dy)) * texel;
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + off, ref_depth);
+            count += 1.0;
+        }
+    }
+    return sum / count;
 }
 
 struct VertexInput {

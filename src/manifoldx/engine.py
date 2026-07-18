@@ -325,9 +325,20 @@ class Engine:
         self._sun = light
 
     def enable_shadows(
-        self, target=(0.0, 0.0, 0.0), extent=10.0, resolution=2048, near=0.1, far=50.0, bias=0.005
+        self,
+        target=(0.0, 0.0, 0.0),
+        extent=10.0,
+        resolution=2048,
+        near=0.1,
+        far=50.0,
+        bias=0.005,
+        pcf_radius=1,
     ):
-        """Enable directional shadow mapping for the sun set via set_sun()."""
+        """Enable directional shadow mapping for the sun set via set_sun().
+
+        pcf_radius: half-width of the PCF kernel in shadow-map texels. 0 = a
+        single hard-shadow tap; 1 = 3x3 soft edges (default); 2 = 5x5, etc.
+        """
         self._shadow_config = {
             "target": tuple(target),
             "extent": float(extent),
@@ -335,6 +346,7 @@ class Engine:
             "near": float(near),
             "far": float(far),
             "bias": float(bias),
+            "pcf_radius": int(pcf_radius),
         }
 
     def set_environment(self, env):
