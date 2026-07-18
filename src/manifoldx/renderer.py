@@ -1052,6 +1052,52 @@ class RenderPipeline:
 
         return pipeline, bind_group_layout
 
+    def _scene_bounds(self, engine):
+        """World-space bounding sphere (center, radius) of all mesh entities.
+
+        Transforms each geometry's local AABB corners by every instance's model
+        matrix and accumulates a global AABB, then returns its bounding sphere.
+        Local AABBs are cached per geometry id. Returns None for an empty scene.
+        """
+        instances = self._collect_mesh_instances(engine)
+        if not instances:
+            return None
+        cache = getattr(self, "_geom_local_bounds", None)
+        if cache is None:
+            cache = {}
+            self._geom_local_bounds = cache
+        gmin = np.full(3, np.inf, dtype=np.float32)
+        gmax = np.full(3, -np.inf, dtype=np.float32)
+        for geom_id, mats in instances.items():
+            lb = cache.get(geom_id)
+            if lb is None:
+                geom = engine._geometry_registry.get(geom_id)
+                if geom is None or "positions" not in geom:
+                    continue
+                pos = np.asarray(geom["positions"], dtype=np.float32).reshape(-1, 3)
+                lb = (pos.min(axis=0), pos.max(axis=0))
+                cache[geom_id] = lb
+            lo, hi = lb
+            corners = np.array(
+                [
+                    [x, y, z, 1.0]
+                    for x in (lo[0], hi[0])
+                    for y in (lo[1], hi[1])
+                    for z in (lo[2], hi[2])
+                ],
+                dtype=np.float32,
+            )  # (8, 4)
+            for m in mats:
+                world = corners @ m.reshape(4, 4).T  # row-major model: point @ M.T
+                w = world[:, :3] / world[:, 3:4]
+                gmin = np.minimum(gmin, w.min(axis=0))
+                gmax = np.maximum(gmax, w.max(axis=0))
+        if not np.all(np.isfinite(gmin)):
+            return None
+        center = (gmin + gmax) * 0.5
+        radius = float(np.linalg.norm(gmax - gmin) * 0.5)
+        return center.astype(np.float32), max(radius, 1e-3)
+
     def _sun_light_view_proj(self, engine):
         """Light-space view-projection for the sun (identity until shadows are on)."""
         cfg = getattr(engine, "_shadow_config", None)
@@ -1060,8 +1106,25 @@ class RenderPipeline:
             return np.eye(4, dtype=np.float32)
         from manifoldx.shadow import compute_light_view_proj
 
+        direction = np.asarray(sun.direction, dtype=np.float32)
+
+        if cfg.get("auto_fit", True):
+            bounds = self._scene_bounds(engine)
+            if bounds is not None:
+                center, radius = bounds
+                pad = max(radius * 0.05, 0.1)
+                r = radius + pad
+                return compute_light_view_proj(
+                    direction=direction,
+                    target=center,
+                    extent=r,
+                    near=0.01,
+                    far=2.0 * r + pad,
+                    back_distance=r + pad,
+                )
+
         return compute_light_view_proj(
-            direction=np.asarray(sun.direction, dtype=np.float32),
+            direction=direction,
             target=np.asarray(cfg["target"], dtype=np.float32),
             extent=cfg["extent"],
             near=cfg["near"],

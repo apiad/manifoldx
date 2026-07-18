@@ -161,3 +161,97 @@ def test_pcf_widens_the_penumbra():
     soft_band = _penumbra_count(lit, soft)
     # A wider PCF kernel must produce a wider partial-shadow (penumbra) band.
     assert soft_band > hard_band, f"pcf did not soften edges (hard={hard_band}, soft={soft_band})"
+
+
+# --------------------------------------------------------------------------
+# Block 1 A — auto-fit frustum
+# --------------------------------------------------------------------------
+
+
+def test_enable_shadows_stores_auto_fit():
+    eng = _make_offscreen_engine()
+    eng.enable_shadows()
+    assert eng._shadow_config["auto_fit"] is True
+    eng.enable_shadows(auto_fit=False)
+    assert eng._shadow_config["auto_fit"] is False
+
+
+def test_scene_bounds_matches_known_scene():
+    eng = _make_offscreen_engine()
+    eng.spawn(
+        Mesh(sphere(1.0, 16)), Material(StandardMaterial(color="#fff")), Transform(pos=(-3, 0, 0))
+    )
+    eng.spawn(
+        Mesh(sphere(1.0, 16)), Material(StandardMaterial(color="#fff")), Transform(pos=(3, 0, 0))
+    )
+    center, radius = eng._render_pipeline._scene_bounds(eng)
+    np.testing.assert_allclose(center, [0, 0, 0], atol=1e-4)
+    # World AABB x in [-4, 4], y,z in [-1, 1] -> half-diagonal = sqrt(64+4+4)/2.
+    assert abs(radius - (np.sqrt(72.0) / 2)) < 0.1
+
+
+def test_auto_fit_casts_shadow_without_manual_extent():
+    # No target/extent given — auto-fit must produce a working frustum on its own.
+    eng = _make_offscreen_engine(w=192, h=192)
+    eng.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(-0.3, -1.0, -0.3)))
+    eng.enable_shadows()  # auto_fit=True, no extent/target
+    eng.spawn(
+        Mesh(plane(12, 12)),
+        Material(StandardMaterial(color="#ffffff", roughness=0.9)),
+        Transform(pos=(0, 0, 0), rot=_FLOOR_ROT),
+    )
+    eng.spawn(
+        Mesh(sphere(1.0, 32)),
+        Material(StandardMaterial(color="#ffffff", roughness=0.5)),
+        Transform(pos=(0, 2, 0)),
+    )
+    eng.camera.fit(radius=6.0, center=(0, 0, 0), azimuth=25, elevation=55)
+    lit = eng._render_pipeline
+    off = _make_offscreen_engine(w=192, h=192)
+    off.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(-0.3, -1.0, -0.3)))
+    off.spawn(
+        Mesh(plane(12, 12)),
+        Material(StandardMaterial(color="#ffffff", roughness=0.9)),
+        Transform(pos=(0, 0, 0), rot=_FLOOR_ROT),
+    )
+    off.spawn(
+        Mesh(sphere(1.0, 32)),
+        Material(StandardMaterial(color="#ffffff", roughness=0.5)),
+        Transform(pos=(0, 2, 0)),
+    )
+    off.camera.fit(radius=6.0, center=(0, 0, 0), azimuth=25, elevation=55)
+    on_img = _render_array(eng)[..., :3].mean(axis=2).astype(np.float64)
+    off_img = _render_array(off)[..., :3].mean(axis=2).astype(np.float64)
+    assert (off_img - on_img).max() > 20  # a cast shadow appears under auto-fit
+
+
+# --------------------------------------------------------------------------
+# Block 1 B — slope-scaled bias (no self-shadow acne)
+# --------------------------------------------------------------------------
+
+
+def _lone_floor(shadows):
+    eng = _make_offscreen_engine(w=160, h=160)
+    eng.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(-0.8, -0.5, -0.3)))
+    if shadows:
+        eng.enable_shadows(bias=0.002)  # small bias — slope-scaling must carry it
+    eng.spawn(
+        Mesh(plane(14, 14)),
+        Material(StandardMaterial(color="#ffffff", roughness=0.9)),
+        Transform(pos=(0, 0, 0), rot=_FLOOR_ROT),
+    )
+    eng.camera.fit(radius=7.0, center=(0, 0, 0), azimuth=20, elevation=35)
+    return _render_array(eng)[..., :3].mean(axis=2).astype(np.float64)
+
+
+def test_grazing_floor_has_no_self_shadow_acne():
+    # A lone floor under a raking sun must not self-shadow: with slope-scaled
+    # bias the shadowed render matches the unshadowed one across the floor.
+    off = _lone_floor(shadows=False)
+    on = _lone_floor(shadows=True)
+    mask = off > 12  # floor pixels (ignore background)
+    darkening = (off - on)[mask]
+    # No meaningful acne: the floor stays lit (allow a couple of edge texels).
+    assert darkening.mean() < 3.0, (
+        f"self-shadow acne on floor (mean darkening {darkening.mean():.1f})"
+    )

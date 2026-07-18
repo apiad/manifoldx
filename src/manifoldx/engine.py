@@ -333,11 +333,15 @@ class Engine:
         far=50.0,
         bias=0.005,
         pcf_radius=1,
+        auto_fit=True,
     ):
         """Enable directional shadow mapping for the sun set via set_sun().
 
         pcf_radius: half-width of the PCF kernel in shadow-map texels. 0 = a
         single hard-shadow tap; 1 = 3x3 soft edges (default); 2 = 5x5, etc.
+        auto_fit: when True (default), the shadow frustum is fit to the scene's
+        bounding sphere every frame and target/extent/near/far are ignored. Set
+        False to drive the ortho box manually via target/extent/near/far.
         """
         self._shadow_config = {
             "target": tuple(target),
@@ -347,6 +351,7 @@ class Engine:
             "far": float(far),
             "bias": float(bias),
             "pcf_radius": int(pcf_radius),
+            "auto_fit": bool(auto_fit),
         }
 
     def set_environment(self, env):

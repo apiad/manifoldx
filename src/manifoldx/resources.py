@@ -243,7 +243,7 @@ fn calculateSun(N: vec3<f32>, V: vec3<f32>, F0: vec3<f32>, albedo: vec3<f32>,
     return (kD * albedo / PI + specular) * radiance * max(dot(N, L), 0.0);
 }
 
-fn sunShadow(world_pos: vec3<f32>) -> f32 {
+fn sunShadow(world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
     if globals.shadow_enabled == 0u { return 1.0; }
     let lp = globals.light_view_proj * vec4<f32>(world_pos, 1.0);
     let ndc = lp.xyz / lp.w;
@@ -251,10 +251,15 @@ fn sunShadow(world_pos: vec3<f32>) -> f32 {
     if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0 {
         return 1.0;  // outside the sun's frustum — unshadowed
     }
+    // Slope-scaled bias: surfaces grazing the sun (small N·L) need more bias to
+    // avoid self-shadow acne; surfaces facing the sun need almost none (avoids
+    // peter-panning). Removes the need to hand-tune a single constant bias.
+    let ndl = max(dot(N, normalize(-globals.sun_direction)), 0.0);
+    let bias = globals.shadow_bias * (1.0 + 4.0 * (1.0 - ndl));
     // PCF: average an (2r+1)x(2r+1) grid of comparisons for soft edges.
     // r == 0 collapses to a single hard-shadow tap. textureSampleCompareLevel
     // (explicit level, no derivatives) is legal in non-uniform control flow.
-    let ref_depth = ndc.z - globals.shadow_bias;
+    let ref_depth = ndc.z - bias;
     let texel = 1.0 / globals.shadow_map_size;
     let r = i32(globals.shadow_pcf_radius);
     var sum = 0.0;
@@ -309,7 +314,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     if globals.sun_intensity > 0.0 {
-        let shadow = sunShadow(in.world_pos);
+        let shadow = sunShadow(in.world_pos, N);
         Lo += calculateSun(N, V, F0, material.albedo, material.metallic, material.roughness) * shadow;
     }
 

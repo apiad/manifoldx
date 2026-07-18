@@ -117,13 +117,13 @@ engine.enable_shadows(
 **Shipped**
 - **VS1 — directional hard shadows** (2026-07-17). Sun term + depth-only shadow pass + `group(2)` comparison-sampler lookup.
 - **VS2 — PCF soft shadows** (2026-07-17). `enable_shadows(pcf_radius=...)` averages a `(2r+1)²` comparison grid; `r=0` hard, `r=1` (3×3) default. Radius rides the unused `Globals` pad slot (no size change).
+- **A — auto-fit frustum** (2026-07-17). `enable_shadows(auto_fit=True)` (default) fits the ortho box to the scene bounding sphere each frame via `RenderPipeline._scene_bounds` (per-geometry local AABB cached, transformed by every instance) → `_sun_light_view_proj` derives target/extent/near/far. `auto_fit=False` keeps the manual path.
+- **B — slope-scaled bias** (2026-07-17). `sunShadow(world_pos, N)` scales the bias by `1 + 4·(1 − N·L)`, so grazing surfaces stop self-shadowing without peter-panning. Removed the need to hand-tune `bias`.
 
 **Prioritized next (recommended order)**
 
-Block 1 — quality of the shadows we already have:
-- **A) Auto-fit the ortho frustum to the scene AABB** — *best bang for buck.* Today `extent`/`target` are hand-tuned constants (too big → blurry/wasted resolution; too small → clipped). We already gather every model matrix in `RenderPipeline._collect_mesh_instances`, so compute the scene AABB there and, in `_sun_light_view_proj`, set `target` = AABB centre, `extent` = AABB half-size projected onto the light plane, `near/far` bracketing the AABB along the sun axis. Keep the manual values as an optional override. ~1–2 h, almost all in `_sun_light_view_proj` + a small AABB helper.
-- **B) Smarter depth bias (slope-scaled + normal-offset)** — the constant `shadow_bias` is a compromise between acne (too small) and peter-panning (too large). In `sunShadow` we already have `N` and `sun_direction`: slope-scale `bias = base + slope*(1 - N·L)`, and/or sample at `world_pos + N*offset`. Alternatively set `depthBias`/`depthBiasSlopeScale` on the depth-only shadow pipeline's `depth_stencil`. ~1 h. Removes manual bias tuning.
-- **C) Contact-hardening (PCSS)** — *advanced, optional.* Our PCF is a fixed-radius blur (uniform softness). PCSS does a blocker-search pass to vary the kernel by occluder distance (sharp at contact, soft far away). Builds on the PCF we have. ~half day.
+Block 1 — quality (remaining):
+- **C) Contact-hardening (PCSS)** — *advanced, optional.* Our PCF is a fixed-radius blur (uniform softness). PCSS does a blocker-search pass to vary the kernel by occluder distance (sharp at contact, soft far away). Builds on the PCF we have. ~half day. Normal-offset bias (sampling at `world_pos + N·offset`, complementing the shipped slope-scaled bias) also slots in here if acne ever resurfaces at very high grazing angles.
 
 Block 2 — new light types (each reuses the depth-only pass + `group(2)` sampling):
 - **D) Spot-light shadows** — *cheap; closes out the single-map lights.* `SpotLight` exists but, like `DirectionalLight` did, is not consumed in the shader. Needs (1) a `compute_spot_light_view_proj` using a **perspective** matrix `perspective(fov=outer_angle*2) @ look_at(pos, pos+dir)`, and (2) a spot lighting term added to `StandardMaterial` (mirror `calculateSun`). Reuses the existing shadow pass + `group(2)` untouched. ~3–4 h (half is wiring the spot light term into the shader).
@@ -135,4 +135,4 @@ Block 3 — scale:
 
 **Cleanup (low priority):** the shadow pass gathers + uploads transforms independently of the main pass (`_collect_mesh_instances` + `_shadow_batch_buffers`) — a small per-frame duplication. Could be unified by hoisting batch computation so both passes share it.
 
-Recommended order: **A → B → D**, then defer **E / F / G** until a concrete scene needs them.
+Recommended next: **D (spot)** — cheap and completes the single-map light types — then defer **C / E / F / G** until a concrete scene needs them.

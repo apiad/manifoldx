@@ -27,10 +27,9 @@ engine = mx.Engine("Shadow Mapping", width=1024, height=768)
 
 # The sun: a directional light that also casts the shadow.
 # A fairly raking sun so shadows stretch across the floor (not hide under objects).
+# The shadow frustum auto-fits the scene each frame (no manual extent/target).
 engine.set_sun(DirectionalLight(color="#fff4e0", intensity=3.2, direction=(-0.8, -0.7, -0.4)))
-engine.enable_shadows(
-    target=(0, 0, 0), extent=10.0, resolution=2048, near=0.1, far=45.0, bias=0.004, pcf_radius=2
-)
+engine.enable_shadows(resolution=2048, bias=0.004, pcf_radius=2)
 
 # --- Ground plane (entity 0) ---------------------------------------------
 # plane()'s quad faces +Z, so rotate -90deg about X to lay it flat as a floor
