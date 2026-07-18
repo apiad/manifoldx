@@ -181,6 +181,9 @@ struct LightData {
 @group(1) @binding(2) var prefiltered_map: texture_cube<f32>;
 @group(1) @binding(3) var brdf_lut:        texture_2d<f32>;
 
+@group(2) @binding(0) var shadow_map:     texture_depth_2d;
+@group(2) @binding(1) var shadow_sampler: sampler_comparison;
+
 const PI: f32 = 3.14159265359;
 
 fn distributionGGX(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
@@ -240,6 +243,17 @@ fn calculateSun(N: vec3<f32>, V: vec3<f32>, F0: vec3<f32>, albedo: vec3<f32>,
     return (kD * albedo / PI + specular) * radiance * max(dot(N, L), 0.0);
 }
 
+fn sunShadow(world_pos: vec3<f32>) -> f32 {
+    if globals.shadow_enabled == 0u { return 1.0; }
+    let lp = globals.light_view_proj * vec4<f32>(world_pos, 1.0);
+    let ndc = lp.xyz / lp.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+    if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0 {
+        return 1.0;  // outside the sun's frustum — unshadowed
+    }
+    return textureSampleCompareLevel(shadow_map, shadow_sampler, uv, ndc.z - globals.shadow_bias);
+}
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
@@ -280,7 +294,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     if globals.sun_intensity > 0.0 {
-        Lo += calculateSun(N, V, F0, material.albedo, material.metallic, material.roughness);
+        let shadow = sunShadow(in.world_pos);
+        Lo += calculateSun(N, V, F0, material.albedo, material.metallic, material.roughness) * shadow;
     }
 
     var ambient = vec3<f32>(0.03) * material.albedo * material.ao;

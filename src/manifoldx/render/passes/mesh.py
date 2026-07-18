@@ -156,6 +156,23 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
             )
             render_pass.set_bind_group(1, ibl_bg)
 
+            # group(2): shadow map (active when a sun + enable_shadows() are set,
+            # else a 1x1 placeholder so the pipeline layout is always satisfied).
+            shadow_on = (
+                getattr(engine, "_shadow_config", None) is not None
+                and getattr(engine, "_sun", None) is not None
+                and rp._shadow_map_view is not None
+            )
+            shadow_view = rp._shadow_map_view if shadow_on else rp._shadow_placeholder_view
+            shadow_bg = rp._device.create_bind_group(
+                layout=rp._shadow_bind_group_layout,
+                entries=[
+                    {"binding": 0, "resource": shadow_view},
+                    {"binding": 1, "resource": rp._shadow_sampler},
+                ],
+            )
+            render_pass.set_bind_group(2, shadow_bg)
+
         render_pass.set_vertex_buffer(0, gpu_buffers["vertex_buffer"])
         render_pass.set_index_buffer(gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32)
 

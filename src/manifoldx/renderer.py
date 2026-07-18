@@ -970,8 +970,12 @@ class RenderPipeline:
             self._bind_group_layouts[key] = bind_group_layout
 
             if needs_lights:
-                # StandardMaterial uses @group(1) for IBL textures
-                all_layouts = [bind_group_layout, self._ibl_bind_group_layout]
+                # StandardMaterial: @group(1) = IBL textures, @group(2) = shadow map.
+                all_layouts = [
+                    bind_group_layout,
+                    self._ibl_bind_group_layout,
+                    self._shadow_bind_group_layout,
+                ]
             else:
                 all_layouts = [bind_group_layout]
             pipeline_layout = device.create_pipeline_layout(bind_group_layouts=all_layouts)

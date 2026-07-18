@@ -97,6 +97,9 @@ def test_shadow_map_allocated_when_enabled():
 # Task 4 — cast shadow onto the ground
 # --------------------------------------------------------------------------
 
+# -90deg about X (quaternion x,y,z,w): turns plane()'s +Z normal into +Y (a floor).
+_FLOOR_ROT = (-0.70710678, 0.0, 0.0, 0.70710678)
+
 
 def _plane_sphere_scene(shadows):
     eng = _make_offscreen_engine(w=192, h=192)
@@ -106,7 +109,7 @@ def _plane_sphere_scene(shadows):
     eng.spawn(
         Mesh(plane(12, 12)),
         Material(StandardMaterial(color="#ffffff", roughness=0.9)),
-        Transform(pos=(0, 0, 0)),
+        Transform(pos=(0, 0, 0), rot=_FLOOR_ROT),
     )
     eng.spawn(
         Mesh(sphere(1.0, 32)),
@@ -118,11 +121,8 @@ def _plane_sphere_scene(shadows):
 
 
 def test_sphere_casts_shadow_on_plane():
-    lit = _plane_sphere_scene(shadows=False)
-    shadowed = _plane_sphere_scene(shadows=True)
-    h, w, _ = shadowed.shape
-    # Patch of the ground plane just in front of the sphere (tune if camera moves).
-    patch = (slice(int(h * 0.55), int(h * 0.78)), slice(int(w * 0.38), int(w * 0.62)))
-    lit_lum = lit[patch][..., :3].mean()
-    shadow_lum = shadowed[patch][..., :3].mean()
-    assert shadow_lum < lit_lum - 12
+    lit = _plane_sphere_scene(shadows=False)[..., :3].mean(axis=2).astype(np.float64)
+    shadowed = _plane_sphere_scene(shadows=True)[..., :3].mean(axis=2).astype(np.float64)
+    # A clearly darkened region (the cast shadow) must appear when shadows are on.
+    darkening = lit - shadowed
+    assert darkening.max() > 20, f"no shadow appeared (max darkening {darkening.max():.1f})"
