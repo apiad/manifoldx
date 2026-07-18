@@ -629,6 +629,11 @@ class Engine:
         # Create command encoder
         command_encoder = self._device.create_command_encoder()
 
+        # Shadow pass — depth-only, renders the scene from the sun's POV into
+        # the shadow map, which the main mesh pass then samples. No-op unless
+        # both a sun (set_sun) and enable_shadows() are set.
+        self._render_pipeline.render_shadow_map(self, command_encoder)
+
         # Create render pass with clear color and depth attachment
         render_pass = command_encoder.begin_render_pass(
             color_attachments=[

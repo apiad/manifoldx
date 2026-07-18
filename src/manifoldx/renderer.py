@@ -13,6 +13,49 @@ from manifoldx.render.passes.volume import VOLUME_SHADER_SOURCE
 from manifoldx.viz.materials import ColormapMaterial
 
 
+# Depth-only shadow-pass shader: transforms mesh geometry by the sun's
+# light_view_proj into the shadow map. No fragment stage (depth writes only).
+# Binds the shared Globals uniform (for light_view_proj) + a transforms storage.
+_SHADOW_SHADER = """
+struct Globals {
+    vp:              mat4x4<f32>,
+    view:            mat4x4<f32>,
+    proj:            mat4x4<f32>,
+    camera_pos:      vec3<f32>,
+    _pad0:           f32,
+    viewport_size:   vec2<f32>,
+    _pad1:           vec2<f32>,
+    ibl_intensity:   f32,
+    ibl_enabled:     u32,
+    _pad_ibl:        vec2<f32>,
+    light_view_proj: mat4x4<f32>,
+    sun_direction:   vec3<f32>,
+    _pad_sun0:       f32,
+    sun_color:       vec3<f32>,
+    sun_intensity:   f32,
+    shadow_enabled:  u32,
+    shadow_bias:     f32,
+    shadow_map_size: f32,
+    _pad_shadow:     f32,
+};
+
+struct Transforms {
+    models: array<mat4x4<f32>>,
+};
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> transforms: Transforms;
+
+@vertex
+fn vs_main(@location(0) position: vec3<f32>,
+           @builtin(instance_index) instance: u32) -> @builtin(position) vec4<f32> {
+    let model = transforms.models[instance];
+    let world = (model * vec4<f32>(position, 1.0)).xyz;
+    return globals.light_view_proj * vec4<f32>(world, 1.0);
+}
+"""
+
+
 # =============================================================================
 # Batch Buffers (per-batch GPU buffer management)
 # =============================================================================
@@ -322,6 +365,41 @@ class RenderPipeline:
             device, black_cube_view, black_cube_view, self._ibl_neutral_lut_view
         )
         self._ibl_active_bind_group = None
+
+        # Shadow-mapping resources.
+        self._shadow_map = None
+        self._shadow_map_view = None
+        self._shadow_map_size = 0
+        self._shadow_batch_buffers = _BatchBuffers(device)
+        self._shadow_sampler = device.create_sampler(compare=wgpu.CompareFunction.less)
+        self._shadow_pipeline = None
+        self._shadow_pipeline_layout = None
+        self._shadow_bind_layout_vs = None
+        # 1x1 placeholder depth texture so the StandardMaterial pipeline's
+        # group(2) always has something to bind when shadows are off.
+        _placeholder = device.create_texture(
+            size=(1, 1, 1),
+            format=wgpu.TextureFormat.depth24plus,
+            usage=wgpu.TextureUsage.RENDER_ATTACHMENT | wgpu.TextureUsage.TEXTURE_BINDING,
+        )
+        self._shadow_placeholder_view = _placeholder.create_view()
+        self._shadow_bind_group_layout = device.create_bind_group_layout(
+            entries=[
+                {
+                    "binding": 0,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "texture": {
+                        "sample_type": wgpu.TextureSampleType.depth,
+                        "view_dimension": wgpu.TextureViewDimension.d2,
+                    },
+                },
+                {
+                    "binding": 1,
+                    "visibility": wgpu.ShaderStage.FRAGMENT,
+                    "sampler": {"type": wgpu.SamplerBindingType.comparison},
+                },
+            ]
+        )
 
         self._initialized = True
 
@@ -985,6 +1063,38 @@ class RenderPipeline:
             near=cfg["near"],
             far=cfg["far"],
         )
+
+    def _collect_mesh_instances(self, engine):
+        """geom_id -> (N,16) row-major model matrices, mesh entities only.
+
+        The shadow caster only needs geometry + transforms (material-agnostic).
+        Sprites/labels/axis/volume have geom_id 0 or are non-mesh and are
+        excluded here; this is sufficient for v1 (shadows cast by real meshes).
+        """
+        store = self._store
+        alive = np.where(store._alive)[0]
+        if len(alive) == 0:
+            return {}
+        self._transform_cache.mark_dirty(alive)
+        models = self._transform_cache.get_transforms(store, alive)  # (N,16) row-major
+        if "Mesh" not in store._components:
+            return {}
+        mesh_data = store.get_component_data("Mesh", alive)
+        if mesh_data is None:
+            return {}
+        out = {}
+        for i in range(len(alive)):
+            geom_id = int(mesh_data[i, 0])
+            if geom_id == 0:
+                continue
+            out.setdefault(geom_id, []).append(models[i])
+        return {g: np.asarray(v, dtype=np.float32) for g, v in out.items()}
+
+    def render_shadow_map(self, engine, command_encoder):
+        """Depth-only shadow pass (no-op unless a sun + enable_shadows() are set)."""
+        from manifoldx.render.passes import shadow as _shadow_pass
+
+        _shadow_pass.render_shadow_map(self, engine, command_encoder)
 
     def render(self, engine, render_pass):
         """Issue instanced draw calls into an active render pass."""
