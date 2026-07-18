@@ -112,10 +112,27 @@ engine.enable_shadows(
 
 ---
 
-## Follow-ups (explicitly out of v1)
+## Roadmap / follow-ups
 
-- **VS2:** larger-kernel PCF for soft edges (shader-local change, reuses the same comparison sampler).
-- Spot-light shadows (single perspective map — near-identical pipeline).
-- Point-light shadows (6-face cubemap depth).
-- Auto-fit the ortho frustum to the scene AABB (drop `extent`/`target` micromanagement).
-- Slope-scaled / normal-offset bias; cascaded shadow maps for large scenes.
+**Shipped**
+- **VS1 — directional hard shadows** (2026-07-17). Sun term + depth-only shadow pass + `group(2)` comparison-sampler lookup.
+- **VS2 — PCF soft shadows** (2026-07-17). `enable_shadows(pcf_radius=...)` averages a `(2r+1)²` comparison grid; `r=0` hard, `r=1` (3×3) default. Radius rides the unused `Globals` pad slot (no size change).
+
+**Prioritized next (recommended order)**
+
+Block 1 — quality of the shadows we already have:
+- **A) Auto-fit the ortho frustum to the scene AABB** — *best bang for buck.* Today `extent`/`target` are hand-tuned constants (too big → blurry/wasted resolution; too small → clipped). We already gather every model matrix in `RenderPipeline._collect_mesh_instances`, so compute the scene AABB there and, in `_sun_light_view_proj`, set `target` = AABB centre, `extent` = AABB half-size projected onto the light plane, `near/far` bracketing the AABB along the sun axis. Keep the manual values as an optional override. ~1–2 h, almost all in `_sun_light_view_proj` + a small AABB helper.
+- **B) Smarter depth bias (slope-scaled + normal-offset)** — the constant `shadow_bias` is a compromise between acne (too small) and peter-panning (too large). In `sunShadow` we already have `N` and `sun_direction`: slope-scale `bias = base + slope*(1 - N·L)`, and/or sample at `world_pos + N*offset`. Alternatively set `depthBias`/`depthBiasSlopeScale` on the depth-only shadow pipeline's `depth_stencil`. ~1 h. Removes manual bias tuning.
+- **C) Contact-hardening (PCSS)** — *advanced, optional.* Our PCF is a fixed-radius blur (uniform softness). PCSS does a blocker-search pass to vary the kernel by occluder distance (sharp at contact, soft far away). Builds on the PCF we have. ~half day.
+
+Block 2 — new light types (each reuses the depth-only pass + `group(2)` sampling):
+- **D) Spot-light shadows** — *cheap; closes out the single-map lights.* `SpotLight` exists but, like `DirectionalLight` did, is not consumed in the shader. Needs (1) a `compute_spot_light_view_proj` using a **perspective** matrix `perspective(fov=outer_angle*2) @ look_at(pos, pos+dir)`, and (2) a spot lighting term added to `StandardMaterial` (mirror `calculateSun`). Reuses the existing shadow pass + `group(2)` untouched. ~3–4 h (half is wiring the spot light term into the shader).
+- **E) Point-light shadows (cubemap)** — *the hard one.* A point light emits in all directions, so one 2D map can't capture it: use a 6-face `depth24plus` cube shadow map (`texture_depth_cube`), render the scene once per face with a 90° perspective matrix (6× the shadow-pass cost), store linear light→fragment distance, and sample with the world-space `light→fragment` direction. Cheaper-but-worse alternative: dual-paraboloid (2 hemispherical maps). Gate behind a per-light `casts_shadow` flag. ~1 day.
+
+Block 3 — scale:
+- **F) Multiple shadow casters** — today only the sun casts. Architectural: arrays of shadow maps + `light_view_proj` in `Globals` (or a storage buffer), bounded (e.g. ≤4), loop in the shader. ~half day. Deferred until a scene actually needs >1 caster.
+- **G) Cascaded Shadow Maps (CSM)** — *for large/outdoor scenes.* One ortho map over a big scene gives low resolution everywhere → blocky shadows. Split the camera frustum into N depth ranges, each with its own tighter map fit to that slice; pick the cascade in the shader by fragment view-depth. ~1 day. Overkill for current demos; only when scenes grow.
+
+**Cleanup (low priority):** the shadow pass gathers + uploads transforms independently of the main pass (`_collect_mesh_instances` + `_shadow_batch_buffers`) — a small per-frame duplication. Could be unified by hoisting batch computation so both passes share it.
+
+Recommended order: **A → B → D**, then defer **E / F / G** until a concrete scene needs them.
