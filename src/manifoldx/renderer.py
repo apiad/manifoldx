@@ -37,6 +37,16 @@ struct Globals {
     shadow_bias:     f32,
     shadow_map_size: f32,
     shadow_pcf_radius: u32,
+    spot_position:   vec3<f32>,
+    spot_range:      f32,
+    spot_direction:  vec3<f32>,
+    spot_cos_inner:  f32,
+    spot_color:      vec3<f32>,
+    spot_intensity:  f32,
+    spot_cos_outer:  f32,
+    shadow_caster:   u32,
+    _pad_spot0:      f32,
+    _pad_spot1:      f32,
 };
 
 struct Transforms {
@@ -329,7 +339,7 @@ class RenderPipeline:
         #   + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes
         #   + shadow block: light_view_proj(64) + sun(32) + shadow params(16) = 352 bytes total
         self._globals_buffer = device.create_buffer(
-            size=352,
+            size=416,
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
@@ -1098,6 +1108,28 @@ class RenderPipeline:
         radius = float(np.linalg.norm(gmax - gmin) * 0.5)
         return center.astype(np.float32), max(radius, 1e-3)
 
+    def _caster_light_view_proj(self, engine, caster):
+        """Light-space view-projection for the active shadow caster.
+
+        caster: 0 = none (identity), 1 = sun (ortho auto-fit), 2 = spot (perspective).
+        """
+        if caster == 2:
+            from manifoldx.shadow import compute_spot_light_view_proj
+
+            spot = engine._spot
+            cfg = engine._shadow_config
+            rng = float(spot.distance) if getattr(spot, "distance", 0) else 30.0
+            return compute_spot_light_view_proj(
+                position=np.asarray(spot.position, dtype=np.float32),
+                direction=np.asarray(spot.direction, dtype=np.float32),
+                outer_angle=float(spot.outer_angle),
+                near=cfg["near"],
+                far=rng,
+            )
+        if caster == 1:
+            return self._sun_light_view_proj(engine)
+        return np.eye(4, dtype=np.float32)
+
     def _sun_light_view_proj(self, engine):
         """Light-space view-projection for the sun (identity until shadows are on)."""
         cfg = getattr(engine, "_shadow_config", None)
@@ -1306,7 +1338,7 @@ class RenderPipeline:
         # then the shadow block: light_view_proj(64) + sun_direction(12)+pad(4)
         # + sun_color(12)+sun_intensity(4) + shadow_enabled(4)+bias(4)+map_size(4)+pad(4) = 112 bytes,
         # total 352 bytes.
-        globals_data = np.zeros(352, dtype=np.uint8)
+        globals_data = np.zeros(416, dtype=np.uint8)
         globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
         globals_data[64:128] = np.frombuffer(view_mat.tobytes(), dtype=np.uint8)
         proj_mat = camera.get_projection_matrix(aspect, near=camera.near, far=camera.far).T.astype(
@@ -1328,20 +1360,30 @@ class RenderPipeline:
             globals_data[228:232] = np.frombuffer(np.uint32(1).tobytes(), dtype=np.uint8)
         # bytes 232-239: padding
 
-        # --- Shadow block (offset 240+) ---
-        # light_view_proj @240 — identity until a sun + enable_shadows() populate it.
-        # Stored transposed (column-major), matching proj_mat / view_mat above.
-        lvp = self._sun_light_view_proj(engine)  # (4,4) row-major math matrix
-        globals_data[240:304] = np.frombuffer(lvp.T.astype(np.float32).tobytes(), dtype=np.uint8)
-        # sun_direction+pad @304, sun_color+intensity @320 — 32 bytes from get_data().
+        # --- Shadow / lighting block (offset 240+) ---
+        cfg = getattr(engine, "_shadow_config", None)
         sun = getattr(engine, "_sun", None)
+        spot = getattr(engine, "_spot", None)
+        # Caster priority: a spot (flashlight) casts when present, else the sun.
+        caster = 0
+        if cfg is not None:
+            if spot is not None:
+                caster = 2
+            elif sun is not None:
+                caster = 1
+
+        # light_view_proj @240 (stored transposed / column-major, like proj/view).
+        lvp = self._caster_light_view_proj(engine, caster)
+        globals_data[240:304] = np.frombuffer(lvp.T.astype(np.float32).tobytes(), dtype=np.uint8)
+
+        # sun block @304 — 32 bytes from DirectionalLight.get_data().
         if sun is not None:
             globals_data[304:336] = np.frombuffer(
                 sun.get_data().astype(np.float32).tobytes(), dtype=np.uint8
             )
-        # shadow_enabled/bias/map_size @336 — populated once shadows sample (Task 4).
-        cfg = getattr(engine, "_shadow_config", None)
-        if cfg is not None and sun is not None:
+
+        # shadow params @336 — enabled only when there is a caster.
+        if caster != 0:
             globals_data[336:340] = np.frombuffer(np.uint32(1).tobytes(), dtype=np.uint8)
             globals_data[340:344] = np.frombuffer(np.float32(cfg["bias"]).tobytes(), dtype=np.uint8)
             globals_data[344:348] = np.frombuffer(
@@ -1350,6 +1392,38 @@ class RenderPipeline:
             globals_data[348:352] = np.frombuffer(
                 np.uint32(cfg.get("pcf_radius", 1)).tobytes(), dtype=np.uint8
             )
+
+        # spot block @352 — flashlight params (position/range, dir/cos_inner,
+        # color/intensity, cos_outer). Zero (skipped by the shader) when unset.
+        if spot is not None:
+            direction = np.asarray(spot.direction, dtype=np.float32)
+            direction = direction / (np.linalg.norm(direction) + 1e-9)
+            rng = float(spot.distance) if getattr(spot, "distance", 0) else 30.0
+            hexs = spot.color.lstrip("#")
+            color = (
+                np.array(
+                    [int(hexs[0:2], 16), int(hexs[2:4], 16), int(hexs[4:6], 16)], dtype=np.float32
+                )
+                / 255.0
+            )
+            globals_data[352:364] = np.frombuffer(
+                np.asarray(spot.position, dtype=np.float32).tobytes(), dtype=np.uint8
+            )
+            globals_data[364:368] = np.frombuffer(np.float32(rng).tobytes(), dtype=np.uint8)
+            globals_data[368:380] = np.frombuffer(direction.tobytes(), dtype=np.uint8)
+            globals_data[380:384] = np.frombuffer(
+                np.float32(np.cos(spot.inner_angle)).tobytes(), dtype=np.uint8
+            )
+            globals_data[384:396] = np.frombuffer(color.tobytes(), dtype=np.uint8)
+            globals_data[396:400] = np.frombuffer(
+                np.float32(spot.intensity).tobytes(), dtype=np.uint8
+            )
+            globals_data[400:404] = np.frombuffer(
+                np.float32(np.cos(spot.outer_angle)).tobytes(), dtype=np.uint8
+            )
+
+        # shadow_caster @404
+        globals_data[404:408] = np.frombuffer(np.uint32(caster).tobytes(), dtype=np.uint8)
 
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 

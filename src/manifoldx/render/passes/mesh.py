@@ -87,7 +87,7 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
                 "resource": {
                     "buffer": rp._globals_buffer,
                     "offset": 0,
-                    "size": 352,
+                    "size": 416,
                 },
             },
             {
@@ -160,7 +160,10 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
             # else a 1x1 placeholder so the pipeline layout is always satisfied).
             shadow_on = (
                 getattr(engine, "_shadow_config", None) is not None
-                and getattr(engine, "_sun", None) is not None
+                and (
+                    getattr(engine, "_sun", None) is not None
+                    or getattr(engine, "_spot", None) is not None
+                )
                 and rp._shadow_map_view is not None
             )
             shadow_view = rp._shadow_map_view if shadow_on else rp._shadow_placeholder_view

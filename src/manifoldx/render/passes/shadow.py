@@ -88,7 +88,8 @@ def _get_pipeline(rp, stride):
 def render_shadow_map(rp, engine, command_encoder):
     cfg = getattr(engine, "_shadow_config", None)
     sun = getattr(engine, "_sun", None)
-    if cfg is None or sun is None or not rp._initialized:
+    spot = getattr(engine, "_spot", None)
+    if cfg is None or (sun is None and spot is None) or not rp._initialized:
         return
 
     _ensure_shadow_map(rp, cfg["resolution"])
@@ -110,7 +111,7 @@ def render_shadow_map(rp, engine, command_encoder):
     bind_group = rp._device.create_bind_group(
         layout=rp._shadow_bind_layout_vs,
         entries=[
-            {"binding": 0, "resource": {"buffer": rp._globals_buffer, "offset": 0, "size": 352}},
+            {"binding": 0, "resource": {"buffer": rp._globals_buffer, "offset": 0, "size": 416}},
             {
                 "binding": 1,
                 "resource": {

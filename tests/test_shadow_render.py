@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from manifoldx.components import Transform, Mesh, Material
-from manifoldx.resources import DirectionalLight, StandardMaterial, sphere, plane
+from manifoldx.resources import DirectionalLight, SpotLight, StandardMaterial, sphere, plane
 
 
 def _make_offscreen_engine(name="shadow-test", w=128, h=128):
@@ -43,12 +43,12 @@ def test_set_sun_stores_light():
     assert eng._sun is sun
 
 
-def test_globals_buffer_is_352_bytes():
+def test_globals_buffer_is_416_bytes():
     eng = _make_offscreen_engine()
     eng.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(0, -1, 0)))
     eng.spawn(Mesh(sphere(1.0, 24)), Material(StandardMaterial(color="#ffffff", roughness=0.5)))
     _render_array(eng)
-    assert eng._render_pipeline._globals_buffer.size == 352
+    assert eng._render_pipeline._globals_buffer.size == 416
 
 
 def test_sun_lights_sphere_with_gradient():
@@ -255,3 +255,81 @@ def test_grazing_floor_has_no_self_shadow_acne():
     assert darkening.mean() < 3.0, (
         f"self-shadow acne on floor (mean darkening {darkening.mean():.1f})"
     )
+
+
+# --------------------------------------------------------------------------
+# Block 1 D — spot light (flashlight) with shadow
+# --------------------------------------------------------------------------
+
+
+def test_set_spot_stores_light():
+    eng = _make_offscreen_engine()
+    spot = SpotLight(
+        color="#ffffff",
+        intensity=100.0,
+        position=(0, 5, 0),
+        direction=(0, -1, 0),
+        inner_angle=0.3,
+        outer_angle=0.5,
+    )
+    eng.set_spot(spot)
+    assert eng._spot is spot
+
+
+def test_spot_cone_center_brighter_than_outside():
+    # A spot straight down over a floor: the cone centre is lit, outside is dark.
+    eng = _make_offscreen_engine(w=192, h=192)
+    eng.set_spot(
+        SpotLight(
+            color="#ffffff",
+            intensity=140.0,
+            position=(0, 6, 0),
+            direction=(0, -1, 0),
+            inner_angle=0.22,
+            outer_angle=0.34,
+        )
+    )
+    eng.spawn(
+        Mesh(plane(20, 20)),
+        Material(StandardMaterial(color="#ffffff", roughness=0.95)),
+        Transform(pos=(0, 0, 0), rot=_FLOOR_ROT),
+    )
+    eng.camera.fit(radius=8.0, center=(0, 0, 0), azimuth=0, elevation=80)
+    img = _render_array(eng)[..., :3].mean(axis=2).astype(np.float64)
+    h, w = img.shape
+    center = img[h // 2 - 8 : h // 2 + 8, w // 2 - 8 : w // 2 + 8].mean()
+    corner = img[:16, :16].mean()  # outside the cone
+    assert center > corner + 40, f"no flashlight cone (center {center:.0f}, corner {corner:.0f})"
+
+
+def test_spot_casts_shadow():
+    def scene(shadows):
+        eng = _make_offscreen_engine(w=192, h=192)
+        eng.set_spot(
+            SpotLight(
+                color="#ffffff",
+                intensity=160.0,
+                position=(2.5, 5.0, 2.5),
+                direction=(-0.4, -1.0, -0.4),
+                inner_angle=0.5,
+                outer_angle=0.7,
+            )
+        )
+        if shadows:
+            eng.enable_shadows(resolution=2048, near=0.2, bias=0.003)
+        eng.spawn(
+            Mesh(plane(20, 20)),
+            Material(StandardMaterial(color="#ffffff", roughness=0.95)),
+            Transform(pos=(0, 0, 0), rot=_FLOOR_ROT),
+        )
+        eng.spawn(
+            Mesh(sphere(1.0, 32)),
+            Material(StandardMaterial(color="#ffffff", roughness=0.5)),
+            Transform(pos=(0, 1.2, 0)),
+        )
+        eng.camera.fit(radius=8.0, center=(0, 0, 0), azimuth=20, elevation=45)
+        return _render_array(eng)[..., :3].mean(axis=2).astype(np.float64)
+
+    lit = scene(shadows=False)
+    shadowed = scene(shadows=True)
+    assert (lit - shadowed).max() > 20  # the spot casts a visible shadow

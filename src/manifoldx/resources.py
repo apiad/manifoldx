@@ -145,6 +145,16 @@ struct Globals {
     shadow_bias:     f32,           // offset 340
     shadow_map_size: f32,           // offset 344
     shadow_pcf_radius: u32,         // offset 348
+    spot_position:   vec3<f32>,     // offset 352
+    spot_range:      f32,           // offset 364
+    spot_direction:  vec3<f32>,     // offset 368
+    spot_cos_inner:  f32,           // offset 380
+    spot_color:      vec3<f32>,     // offset 384
+    spot_intensity:  f32,           // offset 396
+    spot_cos_outer:  f32,           // offset 400
+    shadow_caster:   u32,           // offset 404  (0=none, 1=sun, 2=spot)
+    _pad_spot0:      f32,           // offset 408
+    _pad_spot1:      f32,           // offset 412
 };
 
 struct Transforms {
@@ -243,18 +253,44 @@ fn calculateSun(N: vec3<f32>, V: vec3<f32>, F0: vec3<f32>, albedo: vec3<f32>,
     return (kD * albedo / PI + specular) * radiance * max(dot(N, L), 0.0);
 }
 
-fn sunShadow(world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
+fn calculateSpot(N: vec3<f32>, V: vec3<f32>, worldPos: vec3<f32>, F0: vec3<f32>,
+                 albedo: vec3<f32>, metallic: f32, roughness: f32) -> vec3<f32> {
+    let toL = globals.spot_position - worldPos;
+    let dist = length(toL);
+    let L = toL / dist;
+    // Flashlight cone: smooth falloff between the inner and outer cone angles.
+    let cos_angle = dot(-L, normalize(globals.spot_direction));
+    let t = clamp((cos_angle - globals.spot_cos_outer)
+                  / max(globals.spot_cos_inner - globals.spot_cos_outer, 0.0001), 0.0, 1.0);
+    let cone = t * t;  // squared for a softer edge
+    // Distance attenuation with a smooth range cutoff.
+    let range_falloff = clamp(1.0 - pow(dist / globals.spot_range, 4.0), 0.0, 1.0);
+    let atten = range_falloff * range_falloff / (dist * dist + 0.0001);
+    let radiance = globals.spot_color * globals.spot_intensity * cone * atten;
+    let H = normalize(V + L);
+    let NDF = distributionGGX(N, H, roughness);
+    let G   = geometrySmith(N, V, L, roughness);
+    let F   = fresnelSchlick(max(dot(H, V), 0.0), F0);
+    let kD  = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+    let specular = NDF * G * F / (4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001);
+    return (kD * albedo / PI + specular) * radiance * max(dot(N, L), 0.0);
+}
+
+fn shadowFactor(world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
     if globals.shadow_enabled == 0u { return 1.0; }
     let lp = globals.light_view_proj * vec4<f32>(world_pos, 1.0);
     let ndc = lp.xyz / lp.w;
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
-    if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0 {
-        return 1.0;  // outside the sun's frustum — unshadowed
+    if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0 || ndc.z < 0.0 {
+        return 1.0;  // outside the caster's frustum — unshadowed
     }
-    // Slope-scaled bias: surfaces grazing the sun (small N·L) need more bias to
-    // avoid self-shadow acne; surfaces facing the sun need almost none (avoids
-    // peter-panning). Removes the need to hand-tune a single constant bias.
-    let ndl = max(dot(N, normalize(-globals.sun_direction)), 0.0);
+    // Slope-scaled bias, using the direction toward the casting light so grazing
+    // surfaces don't self-shadow (acne) without peter-panning on lit faces.
+    var Lc = normalize(-globals.sun_direction);
+    if globals.shadow_caster == 2u {
+        Lc = normalize(globals.spot_position - world_pos);
+    }
+    let ndl = max(dot(N, Lc), 0.0);
     let bias = globals.shadow_bias * (1.0 + 4.0 * (1.0 - ndl));
     // PCF: average an (2r+1)x(2r+1) grid of comparisons for soft edges.
     // r == 0 collapses to a single hard-shadow tap. textureSampleCompareLevel
@@ -314,8 +350,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     if globals.sun_intensity > 0.0 {
-        let shadow = sunShadow(in.world_pos, N);
-        Lo += calculateSun(N, V, F0, material.albedo, material.metallic, material.roughness) * shadow;
+        var s = 1.0;
+        if globals.shadow_caster == 1u { s = shadowFactor(in.world_pos, N); }
+        Lo += calculateSun(N, V, F0, material.albedo, material.metallic, material.roughness) * s;
+    }
+
+    if globals.spot_intensity > 0.0 {
+        var s = 1.0;
+        if globals.shadow_caster == 2u { s = shadowFactor(in.world_pos, N); }
+        Lo += calculateSpot(N, V, in.world_pos, F0, material.albedo,
+                            material.metallic, material.roughness) * s;
     }
 
     var ambient = vec3<f32>(0.03) * material.albedo * material.ao;

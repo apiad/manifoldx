@@ -26,15 +26,14 @@ def _get_offscreen_engine():
     return engine
 
 
-GLOBALS_SIZE_BYTES = 352
+GLOBALS_SIZE_BYTES = 416
 
 
-def test_globals_buffer_is_352_bytes():
-    """Globals: vp(64) + view(64) + proj(64) + camera_pos(12) + pad(4)
-    + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes,
-    then the shadow block: light_view_proj(64) + sun_direction(12)+pad(4)
-    + sun_color(12)+sun_intensity(4) + shadow_enabled(4)+bias(4)+map_size(4)+pad(4)
-    = 112 bytes, total 352 bytes."""
+def test_globals_buffer_is_416_bytes():
+    """Globals: base 240 bytes, then the shadow block (light_view_proj +
+    sun + shadow params = 112 bytes -> 352), then the spot block (position/range,
+    direction/cos_inner, color/intensity, cos_outer + shadow_caster + pad = 64
+    bytes) -> 416 bytes total."""
     import manifoldx as mx
     from manifoldx.components import Material, Mesh, Transform
     from manifoldx.resources import BasicMaterial, sphere

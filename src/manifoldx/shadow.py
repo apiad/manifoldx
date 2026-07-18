@@ -35,6 +35,33 @@ def _ortho(extent, near, far):
     return M
 
 
+def _perspective(fov_y, aspect, near, far):
+    """Perspective projection, wgpu convention (z in [0,1], right-handed)."""
+    f = 1.0 / np.tan(fov_y * 0.5)
+    M = np.zeros((4, 4), dtype=np.float64)
+    M[0, 0] = f / aspect
+    M[1, 1] = f
+    M[2, 2] = far / (near - far)
+    M[2, 3] = (near * far) / (near - far)
+    M[3, 2] = -1.0
+    return M
+
+
+def compute_spot_light_view_proj(position, direction, outer_angle, near, far):
+    """Perspective light-space view-projection for a spot light.
+
+    The spot's cone maps to a square perspective frustum with vertical FOV =
+    2·outer_angle. Returns a (4, 4) float32 matrix; M @ [x, y, z, 1] -> clip
+    coords (wgpu: x, y in [-1, 1], z in [0, 1]).
+    """
+    position = np.asarray(position, dtype=np.float64)
+    direction = np.asarray(direction, dtype=np.float64)
+    direction = direction / np.linalg.norm(direction)
+    view = _look_at(position, position + direction, up=np.array([0.0, 1.0, 0.0]))
+    proj = _perspective(2.0 * outer_angle, 1.0, max(near, 1e-3), far)
+    return (proj @ view).astype(np.float32)
+
+
 def compute_light_view_proj(direction, target, extent, near, far, back_distance=None):
     """Ortho light-space view-projection for a directional sun.
 

@@ -125,8 +125,10 @@ class Engine:
         self._environment = None
 
         # Directional sun (separate from the point-light array). Consumed by
-        # StandardMaterial as a directional term; also the shadow caster.
+        # StandardMaterial as a directional term; also a shadow caster.
         self._sun = None
+        # Spot light (flashlight): cone + distance falloff, and a shadow caster.
+        self._spot = None
         # Shadow-map config — set via enable_shadows().
         self._shadow_config = None
 
@@ -323,6 +325,13 @@ class Engine:
         for it; enable_shadows() makes it cast a shadow.
         """
         self._sun = light
+
+    def set_spot(self, light):
+        """Set the single spot light (a SpotLight) — a flashlight cone with
+        angular + distance falloff. Consumed by StandardMaterial; when shadows
+        are enabled the spot is the shadow caster (takes priority over the sun).
+        """
+        self._spot = light
 
     def enable_shadows(
         self,

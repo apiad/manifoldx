@@ -118,7 +118,8 @@ engine.enable_shadows(
 - **VS1 — directional hard shadows** (2026-07-17). Sun term + depth-only shadow pass + `group(2)` comparison-sampler lookup.
 - **VS2 — PCF soft shadows** (2026-07-17). `enable_shadows(pcf_radius=...)` averages a `(2r+1)²` comparison grid; `r=0` hard, `r=1` (3×3) default. Radius rides the unused `Globals` pad slot (no size change).
 - **A — auto-fit frustum** (2026-07-17). `enable_shadows(auto_fit=True)` (default) fits the ortho box to the scene bounding sphere each frame via `RenderPipeline._scene_bounds` (per-geometry local AABB cached, transformed by every instance) → `_sun_light_view_proj` derives target/extent/near/far. `auto_fit=False` keeps the manual path.
-- **B — slope-scaled bias** (2026-07-17). `sunShadow(world_pos, N)` scales the bias by `1 + 4·(1 − N·L)`, so grazing surfaces stop self-shadowing without peter-panning. Removed the need to hand-tune `bias`.
+- **B — slope-scaled bias** (2026-07-17). `shadowFactor(world_pos, N)` scales the bias by `1 + 4·(1 − N·L)` (L toward the casting light), so grazing surfaces stop self-shadowing without peter-panning. Removed the need to hand-tune `bias`.
+- **D — spot lights + spot shadows** (2026-07-17). `engine.set_spot(SpotLight)` — flashlight cone (inner→outer falloff + 1/d² + range cutoff) as a real `StandardMaterial` term. Perspective shadow via `compute_spot_light_view_proj`; a `shadow_caster` field (0/1/2) routes the shadow to sun or spot (spot has priority). `Globals` 352→416B. Demo `examples/spot_demo.py`.
 
 **Prioritized next (recommended order)**
 
@@ -126,7 +127,6 @@ Block 1 — quality (remaining):
 - **C) Contact-hardening (PCSS)** — *advanced, optional.* Our PCF is a fixed-radius blur (uniform softness). PCSS does a blocker-search pass to vary the kernel by occluder distance (sharp at contact, soft far away). Builds on the PCF we have. ~half day. Normal-offset bias (sampling at `world_pos + N·offset`, complementing the shipped slope-scaled bias) also slots in here if acne ever resurfaces at very high grazing angles.
 
 Block 2 — new light types (each reuses the depth-only pass + `group(2)` sampling):
-- **D) Spot-light shadows** — *cheap; closes out the single-map lights.* `SpotLight` exists but, like `DirectionalLight` did, is not consumed in the shader. Needs (1) a `compute_spot_light_view_proj` using a **perspective** matrix `perspective(fov=outer_angle*2) @ look_at(pos, pos+dir)`, and (2) a spot lighting term added to `StandardMaterial` (mirror `calculateSun`). Reuses the existing shadow pass + `group(2)` untouched. ~3–4 h (half is wiring the spot light term into the shader).
 - **E) Point-light shadows (cubemap)** — *the hard one.* A point light emits in all directions, so one 2D map can't capture it: use a 6-face `depth24plus` cube shadow map (`texture_depth_cube`), render the scene once per face with a 90° perspective matrix (6× the shadow-pass cost), store linear light→fragment distance, and sample with the world-space `light→fragment` direction. Cheaper-but-worse alternative: dual-paraboloid (2 hemispherical maps). Gate behind a per-light `casts_shadow` flag. ~1 day.
 
 Block 3 — scale:
@@ -135,4 +135,4 @@ Block 3 — scale:
 
 **Cleanup (low priority):** the shadow pass gathers + uploads transforms independently of the main pass (`_collect_mesh_instances` + `_shadow_batch_buffers`) — a small per-frame duplication. Could be unified by hoisting batch computation so both passes share it.
 
-Recommended next: **D (spot)** — cheap and completes the single-map light types — then defer **C / E / F / G** until a concrete scene needs them.
+Recommended next: nothing pressing — the single-map light types (sun, spot) are done. Reach for **E (point/cubemap)**, **F (multi-caster)**, **C (PCSS)** or **G (CSM)** only when a concrete scene needs them.
