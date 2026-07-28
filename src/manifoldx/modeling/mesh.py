@@ -170,3 +170,11 @@ class Mesh:
     def subdivide(self, iterations: int = 1, scheme: str = "midpoint") -> "Mesh":
         from manifoldx.modeling import topology
         return topology.subdivide(self, iterations, scheme)
+
+    def extrude(self, face_mask, distance: float) -> "Mesh":
+        from manifoldx.modeling import topology
+        return topology.extrude(self, face_mask, distance)
+
+    def decimate(self, grid: int = 32) -> "Mesh":
+        from manifoldx.modeling import topology
+        return topology.decimate(self, grid)

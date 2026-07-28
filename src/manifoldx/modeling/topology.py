@@ -105,3 +105,87 @@ def _loop_positions(pos, faces, uniq, inv):
 
     new_orig = np.where(is_boundary[:, None], boundary_new, interior_new)
     return mid, new_orig
+
+
+def extrude(mesh: Mesh, face_mask, distance: float) -> Mesh:
+    """Raise the selected face region along vertex normals, stitching side walls."""
+    mask = np.asarray(face_mask, dtype=bool)
+    if not mask.any():
+        return mesh
+
+    n = len(mesh.positions)
+    faces = mesh.faces.astype(np.int64)
+    base = mesh if mesh.normals is not None else mesh.recompute_normals()
+    vn = base.normals.astype(np.float64)
+
+    sel = faces[mask]
+    unsel = faces[~mask]
+    incident_selected = np.zeros(n, dtype=bool)
+    incident_selected[sel.ravel()] = True
+    incident_unselected = np.zeros(n, dtype=bool)
+    if len(unsel):
+        incident_unselected[unsel.ravel()] = True
+
+    # Region-boundary edges: appear in exactly one selected face.
+    se = np.concatenate([sel[:, [0, 1]], sel[:, [1, 2]], sel[:, [2, 0]]], axis=0)
+    uniq_se, cnt = np.unique(np.sort(se, axis=1), axis=0, return_counts=True)
+    bedges = uniq_se[cnt == 1]
+    wall_verts = np.unique(bedges)
+
+    dup_index = -np.ones(n, dtype=np.int64)
+    dup_index[wall_verts] = n + np.arange(len(wall_verts))
+
+    # Interior region vertices (only selected faces, not on the wall) move in place.
+    move_mask = incident_selected & ~incident_unselected
+    move_mask[wall_verts] = False
+    base_pos = mesh.positions.astype(np.float64)
+    base_pos[move_mask] += distance * vn[move_mask]
+    dup_pos = mesh.positions[wall_verts].astype(np.float64) + distance * vn[wall_verts]
+    new_pos = np.concatenate([base_pos, dup_pos], axis=0).astype(np.float32)
+
+    # Selected faces reference the raised copies of wall vertices.
+    relabel = np.arange(n, dtype=np.int64)
+    relabel[wall_verts] = dup_index[wall_verts]
+    new_sel = relabel[sel]
+
+    # Side walls: each boundary edge -> a quad (2 tris) from base edge to raised edge.
+    v0, v1 = bedges[:, 0], bedges[:, 1]
+    d0, d1 = dup_index[v0], dup_index[v1]
+    walls = np.concatenate([
+        np.stack([v0, v1, d1], axis=1),
+        np.stack([v0, d1, d0], axis=1),
+    ], axis=0)
+
+    new_faces = np.concatenate([unsel, new_sel, walls], axis=0).astype(np.uint32)
+    return Mesh(positions=new_pos, faces=new_faces)
+
+
+def decimate(mesh: Mesh, grid: int = 32) -> Mesh:
+    """Reduce triangle count by snapping vertices to a grid and dropping collapsed faces."""
+    pos = mesh.positions.astype(np.float64)
+    lo = pos.min(axis=0)
+    span = pos.max(axis=0) - lo
+    longest = span.max()
+    if longest == 0:
+        return mesh
+    cell = longest / max(2, int(grid))
+
+    # Cell index per vertex, then a unique cluster id per occupied cell.
+    ijk = np.floor((pos - lo) / cell).astype(np.int64)
+    _, cluster, inverse = np.unique(ijk, axis=0, return_index=True, return_inverse=True)
+    inverse = np.asarray(inverse).reshape(-1)
+    m = len(cluster)
+
+    # Cluster representative = average of its member vertices.
+    rep = np.zeros((m, 3))
+    counts = np.zeros(m)
+    np.add.at(rep, inverse, pos)
+    np.add.at(counts, inverse, 1.0)
+    rep /= counts[:, None]
+
+    # Remap faces; drop those whose corners collapse into < 3 distinct clusters.
+    faces = inverse[mesh.faces.astype(np.int64)]
+    a, b, c = faces[:, 0], faces[:, 1], faces[:, 2]
+    keep = (a != b) & (b != c) & (a != c)
+    faces = faces[keep]
+    return Mesh(positions=rep.astype(np.float32), faces=faces.astype(np.uint32))

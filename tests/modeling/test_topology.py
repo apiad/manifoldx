@@ -42,3 +42,19 @@ def test_subdivide_loop_keeps_sphere_on_sphere():
     m = Mesh.icosphere(subdivisions=2).subdivide(iterations=1, scheme="loop")
     r = np.linalg.norm(m.positions, axis=1)
     assert r.min() > 0.9 and r.max() <= 1.001
+
+
+def test_extrude_raises_region_and_adds_walls():
+    base = Mesh.plane(width=4, depth=4, segments=8)   # flat y=0, normal +y
+    cx = base.positions[base.faces].mean(axis=1)      # face centroids
+    mask = np.linalg.norm(cx[:, [0, 2]], axis=1) < 1.0
+    out = base.extrude(mask, distance=0.5)
+    assert out.faces.shape[0] > base.faces.shape[0]   # walls added
+    assert np.isclose(out.positions[:, 1].max(), 0.5, atol=1e-4)
+    assert out.faces.max() < out.positions.shape[0]
+
+
+def test_extrude_empty_mask_identity():
+    base = Mesh.box(1, 1, 1)
+    out = base.extrude(np.zeros(base.faces.shape[0], bool), distance=1.0)
+    assert out.faces.shape == base.faces.shape
