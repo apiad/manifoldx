@@ -10,13 +10,18 @@ Render a clip:
 
 import manifoldx as mx
 from manifoldx.components import Transform, Mesh, Material
-from manifoldx.modeling import Mesh as GeoMesh
+from manifoldx.modeling import Mesh as GeoMesh, noise
 from manifoldx.resources import PointLight
 from manifoldx.systems import Query
 
 engine = mx.Engine("Asteroid")
 
-rock = GeoMesh.icosphere(subdivisions=4)
+rock = (
+    GeoMesh.icosphere(subdivisions=4)
+    .displace(noise.fbm(seed=7, octaves=5), amount=0.35)
+    .twist(angle=0.4, axis="y")
+    .taper(factor=0.2, axis="y")
+)
 rock_geometry = rock.to_geometry()
 rock_material = mx.material.standard(color="#8c8073", roughness=0.9)  # hex string, per pbr_demo
 
