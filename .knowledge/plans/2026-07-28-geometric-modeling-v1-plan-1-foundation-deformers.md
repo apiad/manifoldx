@@ -387,7 +387,7 @@ engine = mx.Engine("Asteroid")
 
 rock = GeoMesh.icosphere(subdivisions=4)
 rock_geometry = rock.to_geometry()
-rock_material = mx.material.standard(mx.colors.rgb(0.55, 0.5, 0.45), roughness=0.9)
+rock_material = mx.material.standard(color="#8c8073", roughness=0.9)  # hex string, per pbr_demo
 
 engine.set_lights([
     PointLight(color="#fff2e0", intensity=6.0, position=(4, 5, 4)),
@@ -414,7 +414,7 @@ if __name__ == "__main__":
     engine.cli()
 ```
 
-Verify `mx.colors.rgb` exists (`uv run python -c "import manifoldx as mx; print(mx.colors.rgb)"`). If not, substitute the color helper the other PBR examples use (grep `examples/pbr_demo.py` for the `standard(...)` color argument) — the color API is not owned by this plan; match the existing convention.
+Color is a hex string (`"#8c8073"`), matching `examples/pbr_demo.py` (`StandardMaterial(color="#ff3333", ...)`); there is no `mx.colors.rgb()` helper. `mx.material.standard(color, roughness, metallic)` and `PointLight(color=, intensity=, position=)` are both confirmed on `main`.
 
 - [ ] **Step 4: Run the render smoke test**
 
