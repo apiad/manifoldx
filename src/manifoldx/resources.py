@@ -124,6 +124,79 @@ class BasicMaterial(Material):
         return np.tile(color, (n, 1))
 
 
+_ATMOSPHERE_SHADER = """
+struct Globals {
+    vp: mat4x4<f32>, view: mat4x4<f32>, proj: mat4x4<f32>,
+    camera_pos: vec3<f32>, _pad: f32,
+};
+struct Transforms { models: array<mat4x4<f32>> };
+struct GlowUniforms { params: vec4<f32> };   // rgb = colour, a = intensity
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> transforms: Transforms;
+@group(0) @binding(2) var<uniform> material: GlowUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @builtin(instance_index) instance: u32,
+};
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) world_normal: vec3<f32>,
+    @location(1) world_pos: vec3<f32>,
+};
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let model = transforms.models[in.instance];
+    out.world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
+    out.position = globals.vp * vec4<f32>(out.world_pos, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let N = normalize(in.world_normal);
+    let V = normalize(globals.camera_pos - in.world_pos);
+    let fresnel = pow(1.0 - max(dot(N, V), 0.0), 2.5);
+    return vec4<f32>(material.params.rgb, fresnel * material.params.a);
+}
+"""
+
+
+class AtmosphereMaterial(Material):
+    """Unlit fresnel rim-glow (blended) — an atmosphere halo shell."""
+
+    binding_slot = 0
+
+    def __init__(self, color, intensity: float = 1.0):
+        self.color = color
+        self.intensity = intensity
+
+    @property
+    def pipeline_subtype(self):
+        return "glow"
+
+    @classmethod
+    def _compile(cls) -> str:
+        return _ATMOSPHERE_SHADER
+
+    @classmethod
+    def uniform_type(cls) -> Dict[str, str]:
+        return {"params": "vec4<f32>"}
+
+    def get_data(self, n: int, registry) -> np.ndarray:
+        if isinstance(self.color, str):
+            h = self.color.lstrip("#")
+            rgb = [int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255]
+        else:
+            rgb = list(self.color[:3])
+        return np.tile(np.array([*rgb, self.intensity], dtype=np.float32), (n, 1))
+
+
 _STANDARDMATERIAL_SHADER = """
 struct Globals {
     vp:              mat4x4<f32>,   // offset   0
