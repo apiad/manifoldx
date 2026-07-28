@@ -8,6 +8,8 @@ import numpy as np
 def _to_rgb(color) -> tuple[float, float, float]:
     if isinstance(color, str):
         h = color.lstrip("#")
+        if len(h) == 3:                       # shorthand #rgb -> #rrggbb
+            h = "".join(ch * 2 for ch in h)
         return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
     return (float(color[0]), float(color[1]), float(color[2]))
 

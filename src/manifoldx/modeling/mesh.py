@@ -38,6 +38,7 @@ class Mesh:
     faces: np.ndarray                # (M, 3) uint32
     normals: np.ndarray | None = None  # (N, 3) float32, lazily computed
     uvs: np.ndarray | None = None      # (N, 2) float32, optional
+    colors: np.ndarray | None = None   # (N, 3) float32, optional per-vertex RGB
 
     def with_positions(self, positions: np.ndarray) -> "Mesh":
         """Return a copy with new positions; normals are invalidated."""
@@ -80,6 +81,8 @@ class Mesh:
         }
         if mesh.uvs is not None:
             geo["uvs"] = np.ascontiguousarray(mesh.uvs, dtype=np.float32)
+        if mesh.colors is not None:
+            geo["colors"] = np.ascontiguousarray(mesh.colors, dtype=np.float32)
         return geo
 
     @staticmethod
@@ -89,12 +92,22 @@ class Mesh:
         faces = np.asarray(geo["indices"]).reshape(-1, 3).astype(np.uint32)
         normals = geo.get("normals")
         uvs = geo.get("uvs")
+        colors = geo.get("colors")
         return Mesh(
             positions=positions,
             faces=faces,
             normals=None if normals is None else np.ascontiguousarray(normals, dtype=np.float32),
             uvs=None if uvs is None else np.ascontiguousarray(uvs, dtype=np.float32),
+            colors=None if colors is None else np.ascontiguousarray(colors, dtype=np.float32),
         )
+
+    def with_colors(self, colors: np.ndarray) -> "Mesh":
+        """Return a copy with per-vertex RGB colors (N, 3)."""
+        return replace(self, colors=np.ascontiguousarray(colors, dtype=np.float32))
+
+    def color_by(self, field, gradient) -> "Mesh":
+        """Sample `field` at each vertex and map through `gradient` to per-vertex color."""
+        return self.with_colors(gradient(field(self.positions)))
 
     def adjacency(self) -> "VertexAdjacency":
         """One-ring vertex adjacency (CSR), built once and cached on the instance."""
