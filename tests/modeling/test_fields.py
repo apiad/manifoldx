@@ -66,3 +66,37 @@ def test_noise_shim_matches_fields():
     pts = _grid()
     assert np.array_equal(noise.fbm(seed=3, octaves=4)(pts), fields.fbm(seed=3, octaves=4)(pts))
     assert callable(noise.perlin(seed=2))
+
+
+def test_ridged_and_billow_range_and_determinism():
+    pts = _grid(500)
+    for src in (fields.ridged, fields.billow):
+        a, b = src(seed=4)(pts), src(seed=4)(pts)
+        assert np.array_equal(a, b)
+        assert a.shape == (500,)
+        assert a.min() >= -1e-4 and a.max() <= 1.0 + 1e-4      # non-negative, bounded
+    assert not np.allclose(fields.ridged(seed=1)(pts), fields.ridged(seed=2)(pts))
+
+
+def test_worley_deterministic_nonnegative():
+    pts = _grid(400)
+    a, b = fields.worley(seed=5)(pts), fields.worley(seed=5)(pts)
+    assert np.array_equal(a, b)
+    assert a.shape == (400,) and a.min() >= 0.0
+    assert not np.allclose(fields.worley(seed=1)(pts), fields.worley(seed=2)(pts))
+
+
+def test_worley_f2f1_is_ridge_like():
+    w = fields.worley(seed=3, feature="f2f1")
+    v = w(_grid(400))
+    assert v.min() >= 0.0
+    assert v.max() > 0.1          # some cellular structure exists
+
+
+def test_constant_coord_distance():
+    pts = np.array([[0, 0, 0], [3, 4, 0], [0, 0, 2]], dtype=np.float64)
+    assert np.allclose(fields.constant(2.5)(pts), [2.5, 2.5, 2.5])
+    assert np.allclose(fields.coord("x")(pts), [0, 3, 0])
+    assert np.allclose(fields.coord("z")(pts), [0, 0, 2])
+    assert np.allclose(fields.distance()(pts), [0, 5, 2])
+    assert np.allclose(fields.distance(center=(3, 4, 0))(pts), [5, 0, np.sqrt(3**2 + 4**2 + 2**2)])

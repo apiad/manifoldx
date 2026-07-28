@@ -179,3 +179,101 @@ def fbm(seed=None, freq: float = 1.0, octaves: int = 4,
         return (total / norm).astype(np.float32)
 
     return Field(field)
+
+
+def ridged(seed=None, freq: float = 1.0, octaves: int = 4,
+           lacunarity: float = 2.0, gain: float = 0.5) -> Field:
+    """Ridged multifractal: per octave (1 - |perlin|)^2. Range ~[0, 1]. Mountain ridges."""
+    rng = _resolve_rng(seed)
+    layers = [(perlin(seed=rng, freq=freq * lacunarity**i), gain**i) for i in range(octaves)]
+    norm = sum(a for _, a in layers)
+
+    def fn(p):
+        total = np.zeros(len(p), dtype=np.float32)
+        for f, amp in layers:
+            total += amp * (1.0 - np.abs(f(p))) ** 2
+        return (total / norm).astype(np.float32)
+
+    return Field(fn)
+
+
+def billow(seed=None, freq: float = 1.0, octaves: int = 4,
+           lacunarity: float = 2.0, gain: float = 0.5) -> Field:
+    """Billow: per octave |perlin|. Range ~[0, 1]. Puffy dunes/hills."""
+    rng = _resolve_rng(seed)
+    layers = [(perlin(seed=rng, freq=freq * lacunarity**i), gain**i) for i in range(octaves)]
+    norm = sum(a for _, a in layers)
+
+    def fn(p):
+        total = np.zeros(len(p), dtype=np.float32)
+        for f, amp in layers:
+            total += amp * np.abs(f(p))
+        return (total / norm).astype(np.float32)
+
+    return Field(fn)
+
+
+def _hash3(cell: np.ndarray, seed: int) -> np.ndarray:
+    """Deterministic per-cell feature-point offset in [0, 1)^3 from integer cell + seed."""
+    x = cell[:, 0].astype(np.int64)
+    y = cell[:, 1].astype(np.int64)
+    z = cell[:, 2].astype(np.int64)
+    base = (x * 73856093) ^ (y * 19349663) ^ (z * 83492791) ^ (seed * 2654435761)
+
+    def rnd(salt):
+        h = (base ^ (salt * 40503)).astype(np.uint64)
+        h ^= h >> np.uint64(13)
+        h *= np.uint64(0x9E3779B1)
+        h ^= h >> np.uint64(15)
+        return (h & np.uint64(0xFFFFFF)).astype(np.float64) / float(0x1000000)
+
+    return np.stack([rnd(1), rnd(2), rnd(3)], axis=1)
+
+
+def worley(seed=None, freq: float = 1.0, feature: str = "f1", metric: str = "euclidean") -> Field:
+    """Cellular/Voronoi noise: distance to nearest feature point (f1) or F2-F1 (f2f1)."""
+    seed_int = int(_resolve_rng(seed).integers(0, 2**31 - 1))
+
+    def fn(points):
+        p = points * freq
+        base = np.floor(p).astype(np.int64)
+        best1 = np.full(len(p), np.inf)
+        best2 = np.full(len(p), np.inf)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    cell = base + np.array([dx, dy, dz], dtype=np.int64)
+                    fp = cell.astype(np.float64) + _hash3(cell, seed_int)
+                    diff = p - fp
+                    if metric == "manhattan":
+                        d = np.abs(diff).sum(axis=1)
+                    else:
+                        d = np.sqrt((diff * diff).sum(axis=1))
+                    closer = d < best1
+                    best2 = np.where(closer, best1, np.minimum(best2, d))
+                    best1 = np.where(closer, d, best1)
+        out = (best2 - best1) if feature == "f2f1" else best1
+        return out.astype(np.float32)
+
+    return Field(fn)
+
+
+_AXIS = {"x": 0, "y": 1, "z": 2}
+
+
+def constant(value) -> Field:
+    """A field that returns `value` everywhere."""
+    v = float(value)
+    return Field(lambda p: np.full(len(p), v, dtype=np.float32))
+
+
+def coord(axis: str) -> Field:
+    """The world coordinate along `axis` ("x"|"y"|"z") as a field (ramps/masks)."""
+    i = _AXIS[axis]
+    return Field(lambda p: p[:, i].astype(np.float32))
+
+
+def distance(center=(0, 0, 0)) -> Field:
+    """Euclidean distance from `center` (islands, craters, radial masks)."""
+    c = np.asarray(center, dtype=np.float64).reshape(1, 3)
+    return Field(lambda p: np.linalg.norm(p - c, axis=1).astype(np.float32))
