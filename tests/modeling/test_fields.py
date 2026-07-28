@@ -93,6 +93,13 @@ def test_worley_f2f1_is_ridge_like():
     assert v.max() > 0.1          # some cellular structure exists
 
 
+def test_field_shift_samples_offset():
+    from manifoldx.modeling.fields import Field
+    f = Field(lambda p: p[:, 2])                      # z-coordinate
+    pts = np.array([[0, 0, 0], [0, 0, 5]], dtype=np.float64)
+    assert np.allclose(f.shift((0, 0, 10))(pts), [10, 15])   # samples at z + 10
+
+
 def test_constant_coord_distance():
     pts = np.array([[0, 0, 0], [3, 4, 0], [0, 0, 2]], dtype=np.float64)
     assert np.allclose(fields.constant(2.5)(pts), [2.5, 2.5, 2.5])

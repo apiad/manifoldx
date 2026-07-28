@@ -90,6 +90,10 @@ class Field:
     def bias(self, b):
         return self + b
 
+    def shift(self, offset):
+        o = np.asarray(offset, dtype=np.float64).reshape(1, 3)
+        return Field(lambda p: self(p + o))
+
     def warp(self, amount, fx=None, fy=None, fz=None):
         fx = _as_field(0.0 if fx is None else fx)
         fy = _as_field(0.0 if fy is None else fy)
