@@ -3,7 +3,7 @@ import argparse
 import wgpu
 import sys
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from pathlib import Path
 from time import perf_counter_ns
 
@@ -60,8 +60,12 @@ class EntityHandle:
         self.transform = _TransformProxy(engine.store, index)
 
     def set_geometry(self, mesh):
-        """Overwrite this entity's vertex buffer from `mesh` (requires equal vertex count)."""
-        geo = mesh.to_geometry()
+        """Overwrite this entity's vertex buffer (requires equal vertex count).
+
+        `mesh` is a modeling.Mesh or an already-baked geometry dict (so results
+        shipped back from `submit_process` can be applied without reconstruction).
+        """
+        geo = mesh.to_geometry() if hasattr(mesh, "to_geometry") else mesh
         n_new = geo["positions"].shape[0]
         reg = self._engine._geometry_registry
         orig = reg._geometries.get(self._geometry_id)
@@ -205,6 +209,7 @@ class Engine:
         self.elapsed: float = 0.0
         self.background_color = (0.1, 0.1, 0.2)  # RGB clear color; set for e.g. fog horizon
         self._executor = None
+        self._process_executor = None
         self._pending_tasks = []
         self.fog_enabled = False
         self.fog_start = 0.0
@@ -430,6 +435,21 @@ class Engine:
                 self._executor = ThreadPoolExecutor(max_workers=1)
             return Task(self._executor.submit(fn, *args, **kwargs), self)
         return submit
+
+    def submit_process(self, fn, *args):
+        """Run `fn(*args)` in a separate process (no GIL contention); returns a Task.
+
+        For CPU-bound work heavy enough that a thread would stall the render loop
+        (numpy holds the GIL through its Python-level parts). `fn` must be a
+        top-level picklable function returning picklable data; scripts using this
+        must guard their setup with `if __name__ == "__main__":` (spawn context).
+        """
+        if self._process_executor is None:
+            import multiprocessing as mp
+            self._process_executor = ProcessPoolExecutor(
+                max_workers=1, mp_context=mp.get_context("spawn")
+            )
+        return Task(self._process_executor.submit(fn, *args), self)
 
     def _drain_tasks(self):
         """Fire on_ready callbacks for finished tasks (main thread)."""

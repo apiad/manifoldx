@@ -1,11 +1,16 @@
-"""Real-time terrain streaming — CPU patches generated on a background thread.
+"""Real-time terrain streaming — CPU patches generated in a worker *process*.
 
-A ring of K static, world-aligned terrain patches tiles the ground ahead of a
-forward-flying camera. Each patch is generated off the render thread by
-`@engine.background`; when ready it is swapped into the rearmost slot in place
-(`handle.set_geometry`) and repositioned. Shader distance fog dissolves the
-horizon. The render loop stays GPU-bound (~60 fps) — generation is amortized off
-the hot path — versus `modeling_ridge_flyby.py`'s per-frame regen (~1.7 fps).
+World-aligned terrain patches tile the ground ahead of a forward-flying camera.
+Each patch is built in a separate process via `engine.submit_process` and swapped
+into a fixed pool of recycled mesh slots (`handle.set_geometry`) when ready.
+
+A separate *process* (not a thread) is essential: a patch takes ~1 s of numpy,
+which holds the GIL through its Python-level parts and would freeze the render
+thread for ~0.9 s. A process shares no GIL, so the render loop never stalls; the
+patch's arrays ship back over IPC in a couple of milliseconds. (Because it uses
+a spawn-context process pool, all engine/GPU setup lives under
+`if __name__ == "__main__":`, and the patch builder is a top-level pure function
+the worker can import cleanly.)
 
     uv run python examples/modeling_terrain_stream.py
     uv run python examples/modeling_terrain_stream.py --render --duration 10 --output /tmp/stream.mp4
@@ -18,14 +23,9 @@ from manifoldx.components import Transform, Mesh, Material
 from manifoldx.modeling import Mesh as GeoMesh, fields, Gradient
 from manifoldx.resources import DirectionalLight, StandardMaterial
 
-engine = mx.Engine("Terrain Stream", width=1024, height=768)
-engine.background_color = (0.72, 0.78, 0.86)
-engine.set_sun(DirectionalLight(color="#fff0dc", intensity=3.1, direction=(-0.5, -0.55, -0.65)))
-engine.enable_fog(start=30, end=110)
-
-# ---- the world, composed from primitives (pure, thread-safe) ----
+# ---- pure module-level world (imported cleanly by the worker process) --------
 HEIGHT, DEPTH, SPEED, K = 9.0, 52.0, 9.0, 3
-CAM_Y, LOOK_Y, LOOK_AHEAD = 12.0, 2.5, 28.0        # above the peaks, tilted down, looking forward
+CAM_Y, LOOK_Y, LOOK_AHEAD = 12.0, 2.5, 28.0        # above the peaks, tilted down, forward
 TEMPLATE = GeoMesh.plane(width=44, depth=DEPTH, segments=180)
 terrain = (
     fields.ridged(seed=5, freq=0.11) * 0.74        # big ridges
@@ -36,54 +36,60 @@ palette = Gradient([(0.00, "#2f5788"), (0.05, "#c6b884"), (0.11, "#4f7a2c"),
                     (0.40, "#59702e"), (0.58, "#7c6440"), (0.76, "#8f857a"),
                     (0.90, "#c2bcb4"), (0.98, "#ffffff")])
 
-# Boundary vertices of the patch grid — pinned across the smooth pass so adjacent
-# patches keep meeting exactly (smoothing edges would break the seamless join).
+# Boundary vertices — pinned across the smooth pass so adjacent patches keep
+# meeting exactly (smoothing edges would break the seamless join).
 _X, _Z = TEMPLATE.positions[:, 0], TEMPLATE.positions[:, 2]
-_EDGE = (
-    np.isclose(_X, _X.min()) | np.isclose(_X, _X.max())
-    | np.isclose(_Z, _Z.min()) | np.isclose(_Z, _Z.max())
-)
+_EDGE = (np.isclose(_X, _X.min()) | np.isclose(_X, _X.max())
+         | np.isclose(_Z, _Z.min()) | np.isclose(_Z, _Z.max()))
 
 
-@engine.background
-def patch_at(world_z):
+def build_patch(world_z):
+    """Pure, picklable: the terrain patch at `world_z` as a baked geometry dict."""
     raw = TEMPLATE.displace(terrain.shift((0, 0, world_z)), amount=HEIGHT)
     smoothed = raw.smooth(iterations=1, strength=0.5)   # tame the spikiest peaks
     pos = smoothed.positions.copy()
     pos[_EDGE] = raw.positions[_EDGE]                    # keep patch borders seamless
     return (smoothed.with_positions(pos)
-            .color_by(fields.coord("y").remap(0.0, HEIGHT, 0.0, 1.0), palette))
+            .color_by(fields.coord("y").remap(0.0, HEIGHT, 0.0, 1.0), palette)
+            .to_geometry())
 
 
-# ---- a ring of K recycled slots (built synchronously at startup) ----
-slots = [
-    engine.spawn(
-        Mesh(patch_at(i * DEPTH).wait().to_geometry()),
-        Material(StandardMaterial("#ffffff", roughness=0.86, vertex_colors=True)),
-        Transform(pos=(0, 0, i * DEPTH)),
-    )
-    for i in range(K)
-]
-engine.camera.set_pose((0, CAM_Y, 0), (0, LOOK_Y, LOOK_AHEAD))
+def main():
+    engine = mx.Engine("Terrain Stream", width=1024, height=768)
+    engine.background_color = (0.72, 0.78, 0.86)
+    engine.set_sun(DirectionalLight(color="#fff0dc", intensity=3.1, direction=(-0.5, -0.55, -0.65)))
+    engine.enable_fog(start=30, end=110)
 
-st = {"next_z": K * DEPTH, "pending": None, "rear": 0}
+    # A ring of K recycled slots, built synchronously at startup.
+    slots = [
+        engine.spawn(
+            Mesh(build_patch(i * DEPTH)),
+            Material(StandardMaterial("#ffffff", roughness=0.86, vertex_colors=True)),
+            Transform(pos=(0, 0, i * DEPTH)),
+        )
+        for i in range(K)
+    ]
+    engine.camera.set_pose((0, CAM_Y, 0), (0, LOOK_Y, LOOK_AHEAD))
 
+    st = {"next_z": K * DEPTH, "pending": None, "rear": 0}
 
-@engine.system
-def stream(query, dt):
-    # Fly forward: the look-at target advances with the camera (fixes looking back).
-    z = SPEED * engine.elapsed
-    engine.camera.set_pose((0, CAM_Y, z), (0, LOOK_Y, z + LOOK_AHEAD))
-    if st["pending"] is None and z > (st["rear"] + 1) * DEPTH:
-        st["pending"] = patch_at(st["next_z"])            # generate the next patch off-thread
-    if st["pending"] is not None and st["pending"].ready:
-        slot = slots[st["rear"] % K]
-        slot.set_geometry(st["pending"].result)           # main-thread swap-in (in place)
-        slot.transform.pos = (0, 0, st["next_z"])
-        st["next_z"] += DEPTH
-        st["rear"] += 1
-        st["pending"] = None
+    @engine.system
+    def stream(query, dt):
+        # Fly forward: the look-at target advances with the camera.
+        z = SPEED * engine.elapsed
+        engine.camera.set_pose((0, CAM_Y, z), (0, LOOK_Y, z + LOOK_AHEAD))
+        if st["pending"] is None and z > (st["rear"] + 1) * DEPTH:
+            st["pending"] = engine.submit_process(build_patch, st["next_z"])  # generate off-process
+        if st["pending"] is not None and st["pending"].ready:
+            slot = slots[st["rear"] % K]
+            slot.set_geometry(st["pending"].result)      # main-thread swap-in (in place)
+            slot.transform.pos = (0, 0, st["next_z"])
+            st["next_z"] += DEPTH
+            st["rear"] += 1
+            st["pending"] = None
+
+    engine.cli()
 
 
 if __name__ == "__main__":
-    engine.cli()
+    main()
