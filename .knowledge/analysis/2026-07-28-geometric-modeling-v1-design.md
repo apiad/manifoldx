@@ -97,7 +97,7 @@ Pure per-vertex numpy on `positions`, zero topology change, normals recomputed a
 - `taper(factor, axis)` — scale cross-section proportional to position along `axis`.
 - `displace(field, amount, along="normal"|vector)` — offset each vertex by a sampled scalar field (the PCG workhorse: terrain, blobs, greebles).
 
-Deferred to the tail of this batch (pricier, need extra machinery): `ffd(lattice)` free-form deformation, and `bend_along_curve(curve)`.
+`ffd(resolution)` free-form deformation — **landed** as a post-v1 addition: a Bezier control lattice (`FFD` class, `Mesh.ffd(resolution)`) embedding the mesh; move `points`, call `apply()`. An unmoved lattice reproduces the mesh exactly. Demo `examples/modeling_ffd.py` animates the lattice per frame, pushing warped vertices straight into the GPU buffer (FFD preserves vertex count) for a real-time breathing mesh. Still deferred: `bend_along_curve(curve)`.
 
 **Demo payoff:** `examples/modeling_asteroid.py` (the Batch 0 seam demo) upgrades in place — `.displace(noise.fbm(seed=7, octaves=5), amount=0.35)` turns the icosphere into a lumpy rock, then `.twist(...)`/`.smooth(1)` refine it into a recognizable procedural asteroid. Renders to MP4 via the existing `--render` smoke path for visual regression.
 

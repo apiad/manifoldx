@@ -190,6 +190,11 @@ class Mesh:
     def translate(self, offset) -> "Mesh":
         return self.with_positions(self.positions + np.asarray(offset, dtype=np.float32))
 
+    def ffd(self, resolution=(2, 2, 2)):
+        """Return an FFD control lattice embedding this mesh (move points, then .apply())."""
+        from manifoldx.modeling.ffd import FFD
+        return FFD(self, resolution)
+
     # --- Booleans (delegated to modeling.boolean; lazy import avoids a cycle) ---
 
     def union(self, other: "Mesh") -> "Mesh":
