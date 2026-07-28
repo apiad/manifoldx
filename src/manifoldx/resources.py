@@ -161,7 +161,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let N = normalize(in.world_normal);
     let V = normalize(globals.camera_pos - in.world_pos);
-    let fresnel = pow(1.0 - max(dot(N, V), 0.0), 2.5);
+    let fresnel = pow(1.0 - max(dot(N, V), 0.0), 3.2);
     return vec4<f32>(material.params.rgb, fresnel * material.params.a);
 }
 """
