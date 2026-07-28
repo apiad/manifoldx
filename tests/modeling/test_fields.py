@@ -41,3 +41,28 @@ def test_warp_shifts_sampling():
     ones = Field(lambda p: np.ones(len(p)))
     warped = X.warp(1.0, fx=ones)      # sample X at x + 1 → values shift up by 1
     assert np.allclose(warped(_pts()), [1, 2, 3])
+
+
+from manifoldx.modeling import noise  # noqa: E402
+
+
+def _grid(k=200):
+    return np.random.default_rng(0).uniform(-3, 3, size=(k, 3)).astype(np.float32)
+
+
+def test_perlin_fbm_are_fields():
+    assert isinstance(fields.perlin(seed=1), Field)
+    assert isinstance(fields.fbm(seed=1), Field)
+
+
+def test_perlin_deterministic_and_bounded():
+    pts = _grid(500)
+    a, b = fields.perlin(seed=7)(pts), fields.perlin(seed=7)(pts)
+    assert np.array_equal(a, b)
+    assert a.shape == (500,) and a.min() >= -1.5 and a.max() <= 1.5
+
+
+def test_noise_shim_matches_fields():
+    pts = _grid()
+    assert np.array_equal(noise.fbm(seed=3, octaves=4)(pts), fields.fbm(seed=3, octaves=4)(pts))
+    assert callable(noise.perlin(seed=2))
