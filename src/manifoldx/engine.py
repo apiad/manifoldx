@@ -3,6 +3,7 @@ import argparse
 import wgpu
 import sys
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from time import perf_counter_ns
 
@@ -16,6 +17,33 @@ from manifoldx.renderer import RenderPipeline
 from manifoldx.components import Component, Transform, Mesh, Material
 from manifoldx.camera import Camera
 from manifoldx.input import InputState, _InputBridge
+
+
+class Task:
+    """Handle to a value being computed on the engine's background worker."""
+
+    def __init__(self, future, engine):
+        self._future = future
+        self._engine = engine
+        self._cb = None
+
+    @property
+    def ready(self) -> bool:
+        return self._future.done()
+
+    @property
+    def result(self):
+        if not self._future.done():
+            raise RuntimeError("Task result not ready; check .ready or use .wait()")
+        return self._future.result()
+
+    def wait(self):
+        return self._future.result()
+
+    def on_ready(self, cb):
+        self._cb = cb
+        self._engine._pending_tasks.append(self)
+        return self
 
 
 class Engine:
@@ -109,6 +137,12 @@ class Engine:
         self._start_time = None
         self.elapsed: float = 0.0
         self.background_color = (0.1, 0.1, 0.2)  # RGB clear color; set for e.g. fog horizon
+        self._executor = None
+        self._pending_tasks = []
+        self.fog_enabled = False
+        self.fog_start = 0.0
+        self.fog_end = 1.0
+        self.fog_color = (0.1, 0.1, 0.2)
 
         # Register built-in components
         Transform.register(self.store)
@@ -317,6 +351,38 @@ class Engine:
     def add_light(self, light):
         """Add a single light to the external lights list."""
         self._lights.append(light)
+
+    def background(self, fn):
+        """Decorator: run `fn` on a background worker thread; calls return a Task.
+
+        The decorated function must be pure (no GPU / engine-state mutation); it
+        returns plain data delivered back to the main thread.
+        """
+        def submit(*args, **kwargs):
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(max_workers=1)
+            return Task(self._executor.submit(fn, *args, **kwargs), self)
+        return submit
+
+    def _drain_tasks(self):
+        """Fire on_ready callbacks for finished tasks (main thread)."""
+        if not self._pending_tasks:
+            return
+        still = []
+        for t in self._pending_tasks:
+            if t._future.done():
+                if t._cb is not None:
+                    t._cb(t._future.result())
+            else:
+                still.append(t)
+        self._pending_tasks = still
+
+    def enable_fog(self, start, end, color=None):
+        """Linear distance fog for StandardMaterial; color defaults to background_color."""
+        self.fog_enabled = True
+        self.fog_start = float(start)
+        self.fog_end = float(end)
+        self.fog_color = tuple(color) if color is not None else tuple(self.background_color)
 
     def set_sun(self, light):
         """Set the single directional sun (a DirectionalLight).
@@ -576,6 +642,8 @@ class Engine:
 
     def _draw_frame(self):
         """Draw a single frame. Backend-agnostic - used by both run() and render()."""
+        # Deliver finished background-task callbacks on the main thread.
+        self._drain_tasks()
         # Check if we should stop (only for run() with event loop)
         if not self._running:
             return False  # Stop the event loop
