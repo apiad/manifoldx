@@ -58,3 +58,24 @@ def test_extrude_empty_mask_identity():
     base = Mesh.box(1, 1, 1)
     out = base.extrude(np.zeros(base.faces.shape[0], bool), distance=1.0)
     assert out.faces.shape == base.faces.shape
+
+
+def test_decimate_reduces_faces_and_stays_valid():
+    base = Mesh.icosphere(subdivisions=4)            # 20480 faces
+    low = base.decimate(grid=8)
+    assert low.faces.shape[0] < base.faces.shape[0] // 4
+    assert low.faces.shape[0] > 0
+    assert low.faces.max() < low.positions.shape[0]
+    assert np.all(np.isfinite(low.positions))
+
+
+def test_decimate_preserves_bounding_box_roughly():
+    base = Mesh.icosphere(subdivisions=4, radius=2.0)
+    low = base.decimate(grid=10)
+    assert np.allclose(np.abs(low.positions).max(axis=0), 2.0, atol=0.4)
+
+
+def test_decimate_no_degenerate_faces():
+    low = Mesh.icosphere(subdivisions=3).decimate(grid=6)
+    a, b, c = low.faces[:, 0], low.faces[:, 1], low.faces[:, 2]
+    assert np.all((a != b) & (b != c) & (a != c))
