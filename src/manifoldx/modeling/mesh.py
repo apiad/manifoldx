@@ -141,3 +141,9 @@ class Mesh:
     def taper(self, factor: float, axis: str = "y") -> "Mesh":
         from manifoldx.modeling import deform
         return deform.taper(self, factor, axis)
+
+    # --- Sculpt brushes (delegated to modeling.sculpt; lazy import avoids a cycle) ---
+
+    def draw(self, center, radius: float, strength: float, profile: str = "smooth") -> "Mesh":
+        from manifoldx.modeling import sculpt
+        return sculpt.draw(self, center, radius, strength, profile)
