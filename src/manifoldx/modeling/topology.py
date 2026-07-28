@@ -188,4 +188,11 @@ def decimate(mesh: Mesh, grid: int = 32) -> Mesh:
     a, b, c = faces[:, 0], faces[:, 1], faces[:, 2]
     keep = (a != b) & (b != c) & (a != c)
     faces = faces[keep]
-    return Mesh(positions=rep.astype(np.float32), faces=faces.astype(np.uint32))
+
+    # Compact out clusters no surviving face references (they would be orphan
+    # vertices with zero normals).
+    used = np.unique(faces)
+    remap = np.full(m, -1, dtype=np.int64)
+    remap[used] = np.arange(len(used))
+    faces = remap[faces]
+    return Mesh(positions=rep[used].astype(np.float32), faces=faces.astype(np.uint32))

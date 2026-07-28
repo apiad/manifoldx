@@ -58,7 +58,15 @@ class Mesh:
         for k in range(3):
             np.add.at(normals, f[:, k], face_n)
         lengths = np.linalg.norm(normals, axis=1, keepdims=True)
-        lengths[lengths == 0] = 1.0
+        # Degenerate vertices (e.g. folds where opposing face normals cancel)
+        # get a fallback direction so every output normal is unit-length.
+        degenerate = lengths[:, 0] == 0.0
+        if degenerate.any():
+            fallback = p[degenerate] - p.mean(axis=0)
+            flen = np.linalg.norm(fallback, axis=1, keepdims=True)
+            fallback = np.where(flen == 0, np.array([0.0, 0.0, 1.0]), fallback / np.where(flen == 0, 1.0, flen))
+            normals[degenerate] = fallback
+            lengths[degenerate, 0] = 1.0
         normals = (normals / lengths).astype(np.float32)
         return replace(self, normals=normals)
 

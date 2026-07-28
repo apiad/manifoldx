@@ -114,7 +114,7 @@ A `Falloff` region model (center + radius + smoothstep profile) selecting a weig
 
 - `subdivide(iterations, scheme="midpoint"|"loop")` — increases resolution; also an *enabler* for high-res inputs to Batches 1–2. Midpoint first, Loop second.
 - `extrude(faces_selection, distance)` — extrude a face selection along normals.
-- `decimate(target_faces)` — quadric-error-metric simplification. The expensive tail of this batch (real algorithm, careful edge-collapse bookkeeping); lands last.
+- `decimate(grid)` — **v1: grid vertex-clustering** (snap vertices to a lattice over the bounding box, drop collapsed faces, compact orphans). Robust and always valid. Quadric-error-metric edge collapse is the quality refinement, **deferred** — clustering ships first because it is safe to build unattended and demonstrably reduces triangle count.
 
 ### Batch 4 — Booleans *(highest cost — own design cycle)*
 
