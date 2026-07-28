@@ -33,14 +33,11 @@ engine.spawn(
 
 # --- The warping blob ----------------------------------------------------
 base = GeoMesh.icosphere(subdivisions=4)          # smooth, enough verts to deform cleanly
-geo0 = base.to_geometry()
-GEO_ID = engine._geometry_registry.register(geo0)  # capture id so we can push new verts each frame
 ffd = base.ffd(resolution=(3, 3, 3))
 _LATTICE0 = ffd.points.copy()
-_N = base.positions.shape[0]
 
-engine.spawn(
-    Mesh(geo0),
+blob = engine.spawn(
+    Mesh(base.to_geometry()),
     Material(StandardMaterial(color="#8a5cd0", roughness=0.35, metallic=0.15)),  # violet
     Transform(pos=(0, 2.2, 0), scale=(1.8, 1.8, 1.8)),
 )
@@ -54,16 +51,7 @@ def warp(query: Query[Transform], dt: float):
     p[..., 1] += 0.30 * np.sin(t * 1.7 + _LATTICE0[..., 0] * 2.0)
     p[..., 2] += 0.35 * np.cos(t * 1.1 + _LATTICE0[..., 1] * 2.2)
     ffd.points[:] = p
-    m = ffd.apply()
-
-    bufs = engine._geometry_registry.get_gpu_buffers(GEO_ID)
-    if bufs is None:
-        return  # buffers not created until the first render pass
-    geo = m.to_geometry()
-    interleaved = np.empty((_N, 6), dtype=np.float32)
-    interleaved[:, :3] = geo["positions"]
-    interleaved[:, 3:] = geo["normals"]
-    engine._device.queue.write_buffer(bufs["vertex_buffer"], 0, interleaved.tobytes())
+    blob.set_geometry(ffd.apply())          # in-place vertex-buffer update, no reach-ins
 
     # A slow tumble so the warp reads from every angle.
     query[Transform].rot += Transform.rotation(x=dt * 0.1, y=dt * 0.3, z=0)

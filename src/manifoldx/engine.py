@@ -71,6 +71,7 @@ class EntityHandle:
                 f"set_geometry requires equal vertex count (have {n_old}, got {n_new}); "
                 "the in-place update cannot resize the buffer."
             )
+        bufs = reg.get_gpu_buffers(self._geometry_id)
         if bufs is None:
             return  # buffers not created until the first render pass
         stride = bufs["stride"] // 4

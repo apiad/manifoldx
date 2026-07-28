@@ -50,12 +50,11 @@ palette = Gradient([
 FOG_COL = np.array(FOG, dtype=np.float32)
 FOG_START, FOG_END = 20.0, 50.0
 
-# --- Register geometry so we can push new verts each frame ---------------
+# --- Spawn once with a vcolor geometry; push new verts each frame --------
 geo0 = GeoMesh(positions=BASE.astype(np.float32), faces=FACES).recompute_normals().to_geometry()
 geo0["colors"] = np.tile(FOG_COL, (N, 1))  # presence of colours selects the vcolor interleave
-GEO_ID = engine._geometry_registry.register(geo0)
 
-engine.spawn(
+land = engine.spawn(
     Mesh(geo0),
     Material(StandardMaterial(color="#ffffff", roughness=0.92, vertex_colors=True)),
     Transform(pos=(0, 0, 0)),
@@ -82,14 +81,7 @@ def flyby(query: Query[Transform], dt: float):
     fog = np.clip((dist - FOG_START) / (FOG_END - FOG_START), 0.0, 1.0)[:, None]
     color = color * (1.0 - fog) + FOG_COL[None, :] * fog
 
-    bufs = engine._geometry_registry.get_gpu_buffers(GEO_ID)
-    if bufs is None:
-        return
-    inter = np.empty((N, 9), dtype=np.float32)
-    inter[:, :3] = m.positions
-    inter[:, 3:6] = m.normals
-    inter[:, 6:9] = color
-    engine._device.queue.write_buffer(bufs["vertex_buffer"], 0, inter.tobytes())
+    land.set_geometry(m.with_colors(color))          # in-place update, no reach-ins
 
 
 if __name__ == "__main__":
