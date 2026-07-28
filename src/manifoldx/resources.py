@@ -439,12 +439,65 @@ _STANDARDMATERIAL_TEXTURED_SHADER = (
 )
 
 
+_STANDARDMATERIAL_VCOLOR_SHADER = (
+    _STANDARDMATERIAL_SHADER.replace(
+        "    @location(1) normal:   vec3<f32>,\n    @builtin(instance_index) instance: u32,",
+        "    @location(1) normal:   vec3<f32>,\n"
+        "    @location(2) color:    vec3<f32>,\n"
+        "    @builtin(instance_index) instance: u32,",
+    )
+    .replace(
+        "    @location(1) world_pos:    vec3<f32>,\n};",
+        "    @location(1) world_pos:    vec3<f32>,\n    @location(2) vcolor:       vec3<f32>,\n};",
+    )
+    .replace(
+        "    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);\n"
+        "    return out;",
+        "    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);\n"
+        "    out.vcolor = in.color;\n"
+        "    return out;",
+    )
+    .replace(
+        "    let F0 = mix(vec3<f32>(0.04), material.albedo, material.metallic);",
+        "    let vertex_albedo = in.vcolor * material.albedo;\n"
+        "    let F0 = mix(vec3<f32>(0.04), vertex_albedo, material.metallic);",
+    )
+    .replace(
+        "Lo += calculatePointLight(N, V, in.world_pos, F0,\n"
+        "                                      material.albedo, material.metallic,\n"
+        "                                      material.roughness, light);",
+        "Lo += calculatePointLight(N, V, in.world_pos, F0,\n"
+        "                                      vertex_albedo, material.metallic,\n"
+        "                                      material.roughness, light);",
+    )
+    .replace(
+        "Lo += calculateSun(N, V, F0, material.albedo, material.metallic, material.roughness) * s;",
+        "Lo += calculateSun(N, V, F0, vertex_albedo, material.metallic, material.roughness) * s;",
+    )
+    .replace(
+        "Lo += calculateSpot(N, V, in.world_pos, F0, material.albedo,\n"
+        "                            material.metallic, material.roughness) * s;",
+        "Lo += calculateSpot(N, V, in.world_pos, F0, vertex_albedo,\n"
+        "                            material.metallic, material.roughness) * s;",
+    )
+    .replace(
+        "        let diffuse_ibl = kD * irradiance * material.albedo;",
+        "        let diffuse_ibl = kD * irradiance * vertex_albedo;",
+    )
+    .replace(
+        "    var ambient = vec3<f32>(0.03) * material.albedo * material.ao;",
+        "    var ambient = vec3<f32>(0.03) * vertex_albedo * material.ao;",
+    )
+)
+
+
 class StandardMaterial(Material):
     """PBR material with GGX BRDF. Optional 2D albedo map."""
 
     binding_slot = 1
 
-    def __init__(self, color, roughness=0.5, metallic=0.0, ao=1.0, albedo_map=None):
+    def __init__(self, color, roughness=0.5, metallic=0.0, ao=1.0, albedo_map=None,
+                 vertex_colors=False):
         from manifoldx.textures import TextureHandle
 
         if albedo_map is not None and not isinstance(albedo_map, TextureHandle):
@@ -458,10 +511,15 @@ class StandardMaterial(Material):
         self.metallic = metallic
         self.ao = ao
         self.albedo_map = albedo_map
+        self.vertex_colors = vertex_colors
 
     @property
     def pipeline_subtype(self):
-        return "textured" if self.albedo_map is not None else None
+        if self.albedo_map is not None:
+            return "textured"
+        if self.vertex_colors:
+            return "vcolor"
+        return None
 
     def get_texture_bindings(self):
         if self.albedo_map is None:
@@ -469,7 +527,9 @@ class StandardMaterial(Material):
         return {4: self.albedo_map}
 
     @classmethod
-    def _compile(cls, textured: bool = False) -> str:
+    def _compile(cls, textured: bool = False, vertex_colors: bool = False) -> str:
+        if vertex_colors:
+            return _STANDARDMATERIAL_VCOLOR_SHADER
         return _STANDARDMATERIAL_TEXTURED_SHADER if textured else _STANDARDMATERIAL_SHADER
 
     @classmethod
@@ -555,6 +615,7 @@ class GeometryRegistry:
         if positions is not None:
             has_normals = "normals" in geometry_obj
             has_uvs = "uvs" in geometry_obj
+            has_colors = "colors" in geometry_obj
 
             if has_normals and has_uvs:
                 normals = geometry_obj["normals"].astype(np.float32)
@@ -568,6 +629,20 @@ class GeometryRegistry:
                 buffers["stride"] = 8 * 4  # pos(3) + normal(3) + uv(2)
                 buffers["has_normals"] = True
                 buffers["has_uvs"] = True
+                buffers["has_colors"] = False
+            elif has_normals and has_colors:
+                normals = geometry_obj["normals"].astype(np.float32)
+                colors = geometry_obj["colors"].astype(np.float32)
+                n_verts = len(positions)
+                interleaved = np.zeros((n_verts, 9), dtype=np.float32)
+                interleaved[:, 0:3] = positions
+                interleaved[:, 3:6] = normals
+                interleaved[:, 6:9] = colors
+                data = interleaved.tobytes()
+                buffers["stride"] = 9 * 4  # pos(3) + normal(3) + color(3)
+                buffers["has_normals"] = True
+                buffers["has_uvs"] = False
+                buffers["has_colors"] = True
             elif has_normals:
                 normals = geometry_obj["normals"].astype(np.float32)
                 n_verts = len(positions)
@@ -578,11 +653,13 @@ class GeometryRegistry:
                 buffers["stride"] = 6 * 4
                 buffers["has_normals"] = True
                 buffers["has_uvs"] = False
+                buffers["has_colors"] = False
             else:
                 data = positions.tobytes()
                 buffers["stride"] = 3 * 4
                 buffers["has_normals"] = False
                 buffers["has_uvs"] = False
+                buffers["has_colors"] = False
 
             vertex_buffer = self._device.create_buffer(
                 size=len(data),

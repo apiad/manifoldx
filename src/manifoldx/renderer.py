@@ -805,6 +805,8 @@ class RenderPipeline:
         )
         if is_textured:
             shader_source = material._compile(textured=True)
+        elif material_subtype == "vcolor":
+            shader_source = material._compile(vertex_colors=True)
         else:
             shader_source = material._compile()
         shader_module = device.create_shader_module(code=shader_source)
@@ -1010,6 +1012,14 @@ class RenderPipeline:
                 vertex_attributes.append(
                     {
                         "format": wgpu.VertexFormat.float32x2,
+                        "offset": 6 * 4,
+                        "shader_location": 2,
+                    }
+                )
+            elif material_subtype == "vcolor":
+                vertex_attributes.append(
+                    {
+                        "format": wgpu.VertexFormat.float32x3,
                         "offset": 6 * 4,
                         "shader_location": 2,
                     }
