@@ -153,8 +153,10 @@ struct Globals {
     spot_intensity:  f32,           // offset 396
     spot_cos_outer:  f32,           // offset 400
     shadow_caster:   u32,           // offset 404  (0=none, 1=sun, 2=spot)
-    _pad_spot0:      f32,           // offset 408
-    _pad_spot1:      f32,           // offset 412
+    fog_start:       f32,           // offset 408
+    fog_end:         f32,           // offset 412
+    fog_color:       vec3<f32>,     // offset 416
+    fog_enabled:     u32,           // offset 428
 };
 
 struct Transforms {
@@ -386,6 +388,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = ambient + Lo;
     color = color / (color + vec3<f32>(1.0));
     color = pow(color, vec3<f32>(1.0 / 2.2));
+    if globals.fog_enabled != 0u {
+        let fd = clamp((distance(globals.camera_pos, in.world_pos) - globals.fog_start)
+                       / (globals.fog_end - globals.fog_start), 0.0, 1.0);
+        color = mix(color, globals.fog_color, fd);
+    }
     return vec4<f32>(color, 1.0);
 }
 """

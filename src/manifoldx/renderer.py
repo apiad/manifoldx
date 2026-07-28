@@ -339,7 +339,7 @@ class RenderPipeline:
         #   + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes
         #   + shadow block: light_view_proj(64) + sun(32) + shadow params(16) = 352 bytes total
         self._globals_buffer = device.create_buffer(
-            size=416,
+            size=432,  # ... + fog block (start/end/color/enabled) = 432
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
@@ -1348,7 +1348,7 @@ class RenderPipeline:
         # then the shadow block: light_view_proj(64) + sun_direction(12)+pad(4)
         # + sun_color(12)+sun_intensity(4) + shadow_enabled(4)+bias(4)+map_size(4)+pad(4) = 112 bytes,
         # total 352 bytes.
-        globals_data = np.zeros(416, dtype=np.uint8)
+        globals_data = np.zeros(432, dtype=np.uint8)
         globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
         globals_data[64:128] = np.frombuffer(view_mat.tobytes(), dtype=np.uint8)
         proj_mat = camera.get_projection_matrix(aspect, near=camera.near, far=camera.far).T.astype(
@@ -1434,6 +1434,15 @@ class RenderPipeline:
 
         # shadow_caster @404
         globals_data[404:408] = np.frombuffer(np.uint32(caster).tobytes(), dtype=np.uint8)
+
+        # fog block @408 — start/end/color/enabled (zero = off, skipped by the shader)
+        if getattr(engine, "fog_enabled", False):
+            globals_data[408:412] = np.frombuffer(np.float32(engine.fog_start).tobytes(), dtype=np.uint8)
+            globals_data[412:416] = np.frombuffer(np.float32(engine.fog_end).tobytes(), dtype=np.uint8)
+            globals_data[416:428] = np.frombuffer(
+                np.asarray(engine.fog_color, dtype=np.float32).tobytes(), dtype=np.uint8
+            )
+            globals_data[428:432] = np.frombuffer(np.uint32(1).tobytes(), dtype=np.uint8)
 
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 

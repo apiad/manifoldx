@@ -87,7 +87,7 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
                 "resource": {
                     "buffer": rp._globals_buffer,
                     "offset": 0,
-                    "size": 416,
+                    "size": 432,
                 },
             },
             {
