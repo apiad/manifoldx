@@ -73,7 +73,7 @@ def box(width: float = 1.0, height: float = 1.0, depth: float = 1.0) -> Mesh:
     ]
     faces = []
     for a, b, c, d in quads:
-        faces += [[a, b, c], [a, c, d]]
+        faces += [[a, c, b], [a, d, c]]   # CCW from outside (outward normals)
     return Mesh(positions=corners, faces=np.array(faces, dtype=np.uint32))
 
 
@@ -128,5 +128,5 @@ def torus(major: float = 1.0, minor: float = 0.35,
             b = ((i + 1) % major_segments) * minor_segments + j
             c = i * minor_segments + (j + 1) % minor_segments
             d = ((i + 1) % major_segments) * minor_segments + (j + 1) % minor_segments
-            faces += [[a, b, c], [b, d, c]]
+            faces += [[a, c, b], [b, c, d]]   # CCW from outside (outward normals)
     return Mesh(positions=positions, faces=np.array(faces, dtype=np.uint32))

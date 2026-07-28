@@ -186,3 +186,20 @@ class Mesh:
     def decimate(self, grid: int = 32) -> "Mesh":
         from manifoldx.modeling import topology
         return topology.decimate(self, grid)
+
+    def translate(self, offset) -> "Mesh":
+        return self.with_positions(self.positions + np.asarray(offset, dtype=np.float32))
+
+    # --- Booleans (delegated to modeling.boolean; lazy import avoids a cycle) ---
+
+    def union(self, other: "Mesh") -> "Mesh":
+        from manifoldx.modeling import boolean
+        return boolean.union(self, other)
+
+    def difference(self, other: "Mesh") -> "Mesh":
+        from manifoldx.modeling import boolean
+        return boolean.difference(self, other)
+
+    def intersection(self, other: "Mesh") -> "Mesh":
+        from manifoldx.modeling import boolean
+        return boolean.intersection(self, other)
