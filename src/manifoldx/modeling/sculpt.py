@@ -72,3 +72,26 @@ def flatten(mesh: Mesh, center, radius: float, strength: float, profile: str = "
     signed = (mesh.positions - plane_point[None, :]) @ plane_normal   # (N,)
     out = mesh.positions - (strength * w * signed)[:, None] * plane_normal[None, :]
     return mesh.with_positions(out).recompute_normals()
+
+
+def smooth(mesh: Mesh, iterations: int = 1, strength: float = 1.0,
+           center=None, radius=None, profile: str = "smooth") -> Mesh:
+    if iterations <= 0:
+        return mesh
+    adj = mesh.adjacency()
+    n = len(mesh.positions)
+    deg = np.maximum(np.diff(adj.offsets), 1)
+    src = np.repeat(np.arange(n), np.diff(adj.offsets))
+    if center is not None and radius is not None:
+        gate = Falloff(center, radius, profile).weights(mesh.positions)
+    else:
+        gate = np.ones(n, dtype=np.float32)
+
+    positions = mesh.positions.astype(np.float32)
+    for _ in range(iterations):
+        sums = np.zeros_like(positions)
+        np.add.at(sums, src, positions[adj.neighbors])
+        avg = sums / deg[:, None]
+        positions = positions + (strength * gate)[:, None] * (avg - positions)
+
+    return mesh.with_positions(positions).recompute_normals()

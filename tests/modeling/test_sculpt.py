@@ -1,5 +1,5 @@
 import numpy as np
-from manifoldx.modeling import Mesh, Falloff
+from manifoldx.modeling import Mesh, Falloff, noise
 
 
 def test_adjacency_of_single_triangle():
@@ -83,3 +83,27 @@ def test_flatten_reduces_height_variation_in_region():
     assert spread_out <= spread_in + 1e-4
     far = base.positions[:, 0] < 0.0
     assert np.allclose(out.positions[far], base.positions[far], atol=1e-4)
+
+
+def _roughness(m):
+    adj = m.adjacency()
+    deg = np.diff(adj.offsets)
+    src = np.repeat(np.arange(len(m.positions)), deg)
+    sums = np.zeros_like(m.positions)
+    np.add.at(sums, src, m.positions[adj.neighbors])
+    avg = sums / np.maximum(deg, 1)[:, None]
+    return np.linalg.norm(m.positions - avg, axis=1).mean()
+
+
+def test_smooth_reduces_roughness_globally():
+    rough = Mesh.icosphere(subdivisions=3).displace(
+        noise.fbm(seed=5, octaves=5), amount=0.25,
+    )
+    smoothed = rough.smooth(iterations=3)
+    assert smoothed.positions.shape == rough.positions.shape
+    assert _roughness(smoothed) < _roughness(rough)
+
+
+def test_smooth_zero_iterations_is_identity():
+    m = Mesh.icosphere(subdivisions=2)
+    assert np.allclose(m.smooth(iterations=0).positions, m.positions)

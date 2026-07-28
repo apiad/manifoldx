@@ -159,3 +159,8 @@ class Mesh:
     def flatten(self, center, radius: float, strength: float, profile: str = "smooth") -> "Mesh":
         from manifoldx.modeling import sculpt
         return sculpt.flatten(self, center, radius, strength, profile)
+
+    def smooth(self, iterations: int = 1, strength: float = 1.0,
+               center=None, radius=None, profile: str = "smooth") -> "Mesh":
+        from manifoldx.modeling import sculpt
+        return sculpt.smooth(self, iterations, strength, center, radius, profile)
