@@ -3,8 +3,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import NamedTuple
 
 import numpy as np
+
+
+class VertexAdjacency(NamedTuple):
+    """One-ring vertex adjacency in CSR form.
+
+    Vertex i's neighbors are neighbors[offsets[i]:offsets[i + 1]].
+    """
+
+    offsets: np.ndarray    # (N + 1,) int64
+    neighbors: np.ndarray  # (E,) int32
+
+
+def _build_adjacency(faces: np.ndarray, n_vertices: int) -> VertexAdjacency:
+    f = faces.astype(np.int64)
+    # Directed edges for all three triangle sides, both ways.
+    edges = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]], axis=0)
+    edges = np.concatenate([edges, edges[:, ::-1]], axis=0)
+    edges = np.unique(edges, axis=0)                 # dedup, sorts by (src, dst)
+    counts = np.bincount(edges[:, 0], minlength=n_vertices)
+    offsets = np.zeros(n_vertices + 1, dtype=np.int64)
+    offsets[1:] = np.cumsum(counts)
+    return VertexAdjacency(offsets=offsets, neighbors=edges[:, 1].astype(np.int32))
 
 
 @dataclass(frozen=True)
@@ -64,6 +87,14 @@ class Mesh:
             normals=None if normals is None else np.ascontiguousarray(normals, dtype=np.float32),
             uvs=None if uvs is None else np.ascontiguousarray(uvs, dtype=np.float32),
         )
+
+    def adjacency(self) -> "VertexAdjacency":
+        """One-ring vertex adjacency (CSR), built once and cached on the instance."""
+        cached = getattr(self, "_adjacency_cache", None)
+        if cached is None:
+            cached = _build_adjacency(self.faces, len(self.positions))
+            object.__setattr__(self, "_adjacency_cache", cached)
+        return cached
 
     # --- Primitives (delegated to modeling.primitives; lazy import avoids a cycle) ---
 
