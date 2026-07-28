@@ -164,3 +164,9 @@ class Mesh:
                center=None, radius=None, profile: str = "smooth") -> "Mesh":
         from manifoldx.modeling import sculpt
         return sculpt.smooth(self, iterations, strength, center, radius, profile)
+
+    # --- Topology (delegated to modeling.topology; lazy import avoids a cycle) ---
+
+    def subdivide(self, iterations: int = 1, scheme: str = "midpoint") -> "Mesh":
+        from manifoldx.modeling import topology
+        return topology.subdivide(self, iterations, scheme)
