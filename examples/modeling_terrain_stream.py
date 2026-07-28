@@ -22,12 +22,17 @@ engine.set_sun(DirectionalLight(color="#fff0dc", intensity=3.1, direction=(-0.5,
 engine.enable_fog(start=30, end=110)
 
 # ---- the world, composed from primitives (pure, thread-safe) ----
-HEIGHT, DEPTH, SPEED, K = 8.0, 52.0, 9.0, 3
-TEMPLATE = GeoMesh.plane(width=44, depth=DEPTH, segments=150)
-terrain = (fields.ridged(seed=5, freq=0.12) * 0.85
-           + fields.fbm(seed=7, freq=0.5) * 0.15).warp(1.3, fx=fields.fbm(2, 0.15), fz=fields.fbm(9, 0.15))
-palette = Gradient([(0.00, "#3a5f8a"), (0.06, "#c2b280"), (0.16, "#4a7a3a"),
-                    (0.45, "#5f6e38"), (0.65, "#6e5a44"), (0.82, "#8a8078"), (0.96, "#ffffff")])
+HEIGHT, DEPTH, SPEED, K = 9.0, 52.0, 9.0, 3
+CAM_Y, LOOK_Y, LOOK_AHEAD = 12.0, 2.5, 28.0        # above the peaks, tilted down, looking forward
+TEMPLATE = GeoMesh.plane(width=44, depth=DEPTH, segments=180)
+terrain = (
+    fields.ridged(seed=5, freq=0.11) * 0.74        # big ridges
+    + fields.ridged(seed=11, freq=0.28) * 0.14     # secondary ridges
+    + fields.fbm(seed=7, freq=0.9) * 0.09          # fine surface texture
+).warp(1.3, fx=fields.fbm(2, 0.14), fz=fields.fbm(9, 0.14))
+palette = Gradient([(0.00, "#2f5788"), (0.05, "#c6b884"), (0.11, "#4f7a2c"),
+                    (0.40, "#59702e"), (0.58, "#7c6440"), (0.76, "#8f857a"),
+                    (0.90, "#c2bcb4"), (0.98, "#ffffff")])
 
 
 @engine.background
@@ -41,20 +46,22 @@ def patch_at(world_z):
 slots = [
     engine.spawn(
         Mesh(patch_at(i * DEPTH).wait().to_geometry()),
-        Material(StandardMaterial("#ffffff", roughness=0.92, vertex_colors=True)),
+        Material(StandardMaterial("#ffffff", roughness=0.86, vertex_colors=True)),
         Transform(pos=(0, 0, i * DEPTH)),
     )
     for i in range(K)
 ]
-engine.camera.set_pose((0, 6.5, -5), (0, 2.5, 22))
+engine.camera.set_pose((0, CAM_Y, 0), (0, LOOK_Y, LOOK_AHEAD))
 
 st = {"next_z": K * DEPTH, "pending": None, "rear": 0}
 
 
 @engine.system
 def stream(query, dt):
-    engine.camera.move_by((0, 0, SPEED * dt))
-    if st["pending"] is None and engine.camera.position[2] > (st["rear"] + 1) * DEPTH:
+    # Fly forward: the look-at target advances with the camera (fixes looking back).
+    z = SPEED * engine.elapsed
+    engine.camera.set_pose((0, CAM_Y, z), (0, LOOK_Y, z + LOOK_AHEAD))
+    if st["pending"] is None and z > (st["rear"] + 1) * DEPTH:
         st["pending"] = patch_at(st["next_z"])            # generate the next patch off-thread
     if st["pending"] is not None and st["pending"].ready:
         slot = slots[st["rear"] % K]
