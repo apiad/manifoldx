@@ -108,6 +108,7 @@ class Engine:
         self._last_time = None
         self._start_time = None
         self.elapsed: float = 0.0
+        self.background_color = (0.1, 0.1, 0.2)  # RGB clear color; set for e.g. fog horizon
 
         # Register built-in components
         Transform.register(self.store)
@@ -666,7 +667,7 @@ class Engine:
                 {
                     "view": texture_view,
                     "resolve_target": None,
-                    "clear_value": (0.1, 0.1, 0.2, 1.0),  # Dark blue background
+                    "clear_value": (*self.background_color, 1.0),
                     "load_op": wgpu.LoadOp.clear,
                     "store_op": wgpu.StoreOp.store,
                 }
