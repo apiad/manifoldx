@@ -44,3 +44,31 @@ def draw(mesh: Mesh, center, radius: float, strength: float, profile: str = "smo
     region_normal /= np.linalg.norm(region_normal) or 1.0
     out = mesh.positions + (strength * w)[:, None] * region_normal[None, :]
     return mesh.with_positions(out).recompute_normals()
+
+
+def inflate(mesh: Mesh, center, radius: float, strength: float, profile: str = "smooth") -> Mesh:
+    w, base = _selected(mesh, center, radius, profile)
+    out = mesh.positions + (strength * w)[:, None] * base.normals
+    return mesh.with_positions(out).recompute_normals()
+
+
+def pinch(mesh: Mesh, center, radius: float, strength: float, profile: str = "smooth") -> Mesh:
+    w = Falloff(center, radius, profile).weights(mesh.positions)
+    c = np.asarray(center, dtype=np.float32).reshape(3)
+    to_center = c[None, :] - mesh.positions
+    out = mesh.positions + (strength * w)[:, None] * to_center
+    return mesh.with_positions(out).recompute_normals()
+
+
+def flatten(mesh: Mesh, center, radius: float, strength: float, profile: str = "smooth") -> Mesh:
+    w, base = _selected(mesh, center, radius, profile)
+    sel = w > 0.0
+    if not sel.any():
+        return mesh
+    ws = w[sel][:, None]
+    plane_point = (ws * mesh.positions[sel]).sum(axis=0) / ws.sum()
+    plane_normal = (ws * base.normals[sel]).sum(axis=0)
+    plane_normal /= np.linalg.norm(plane_normal) or 1.0
+    signed = (mesh.positions - plane_point[None, :]) @ plane_normal   # (N,)
+    out = mesh.positions - (strength * w * signed)[:, None] * plane_normal[None, :]
+    return mesh.with_positions(out).recompute_normals()

@@ -147,3 +147,15 @@ class Mesh:
     def draw(self, center, radius: float, strength: float, profile: str = "smooth") -> "Mesh":
         from manifoldx.modeling import sculpt
         return sculpt.draw(self, center, radius, strength, profile)
+
+    def inflate(self, center, radius: float, strength: float, profile: str = "smooth") -> "Mesh":
+        from manifoldx.modeling import sculpt
+        return sculpt.inflate(self, center, radius, strength, profile)
+
+    def pinch(self, center, radius: float, strength: float, profile: str = "smooth") -> "Mesh":
+        from manifoldx.modeling import sculpt
+        return sculpt.pinch(self, center, radius, strength, profile)
+
+    def flatten(self, center, radius: float, strength: float, profile: str = "smooth") -> "Mesh":
+        from manifoldx.modeling import sculpt
+        return sculpt.flatten(self, center, radius, strength, profile)
