@@ -19,6 +19,72 @@ from manifoldx.camera import Camera
 from manifoldx.input import InputState, _InputBridge
 
 
+class _TransformProxy:
+    """Read/write the Transform row of a single entity (pos 0:3, rot 3:7, scale 7:10)."""
+
+    def __init__(self, store, index):
+        self._store, self._i = store, index
+
+    @property
+    def pos(self):
+        return self._store._components["Transform"][self._i, 0:3].copy()
+
+    @pos.setter
+    def pos(self, v):
+        self._store._components["Transform"][self._i, 0:3] = np.asarray(v, np.float32)
+
+    @property
+    def rot(self):
+        return self._store._components["Transform"][self._i, 3:7].copy()
+
+    @rot.setter
+    def rot(self, v):
+        self._store._components["Transform"][self._i, 3:7] = np.asarray(v, np.float32)
+
+    @property
+    def scale(self):
+        return self._store._components["Transform"][self._i, 7:10].copy()
+
+    @scale.setter
+    def scale(self, v):
+        self._store._components["Transform"][self._i, 7:10] = np.asarray(v, np.float32)
+
+
+class EntityHandle:
+    """A handle to a spawned entity: move its transform, swap its geometry in place."""
+
+    def __init__(self, engine, index, geometry_id):
+        self._engine = engine
+        self.index = index
+        self._geometry_id = geometry_id
+        self.transform = _TransformProxy(engine.store, index)
+
+    def set_geometry(self, mesh):
+        """Overwrite this entity's vertex buffer from `mesh` (requires equal vertex count)."""
+        geo = mesh.to_geometry()
+        n_new = geo["positions"].shape[0]
+        reg = self._engine._geometry_registry
+        orig = reg._geometries.get(self._geometry_id)
+        n_old = orig["positions"].shape[0] if orig is not None else n_new
+        if n_new != n_old:
+            raise ValueError(
+                f"set_geometry requires equal vertex count (have {n_old}, got {n_new}); "
+                "the in-place update cannot resize the buffer."
+            )
+        if bufs is None:
+            return  # buffers not created until the first render pass
+        stride = bufs["stride"] // 4
+        inter = np.zeros((n_new, stride), dtype=np.float32)
+        inter[:, 0:3] = geo["positions"]
+        if stride >= 6:
+            inter[:, 3:6] = geo["normals"]
+        if bufs.get("has_colors"):
+            inter[:, 6:9] = geo["colors"]
+        elif bufs.get("has_uvs"):
+            inter[:, 6:8] = geo["uvs"]
+        self._engine._device.queue.write_buffer(bufs["vertex_buffer"], 0, inter.tobytes())
+
+
 class Task:
     """Handle to a value being computed on the engine's background worker."""
 
@@ -551,6 +617,7 @@ class Engine:
         """Spawn entities - register components immediately, then emit SPAWN command."""
         # Handle Mesh, Material, and Transform component objects
         processed_kwargs = {}
+        mesh_geo_id = None
 
         # Convert positional args to kwargs by class name
         for arg in args:
@@ -573,6 +640,8 @@ class Engine:
                     processed_kwargs[name] = value.get_data(n, self._material_registry)
                 else:
                     processed_kwargs[name] = value.get_data(n, self._geometry_registry)
+                    if name == "Mesh":
+                        mesh_geo_id = getattr(value, "_geometry_id", None)
             elif np.isscalar(value):
                 # Broadcast scalars to arrays
                 processed_kwargs[name] = np.full((n,), value, dtype=np.float32)
@@ -585,7 +654,9 @@ class Engine:
 
         # NOW spawn the entities immediately (not deferred)
         if n > 0:
-            self.store.spawn(n, **processed_kwargs)
+            indices = self.store.spawn(n, **processed_kwargs)
+            return EntityHandle(self, int(indices[0]), mesh_geo_id)
+        return None
 
     def destroy(self, indices):
         """Destroy entities matching condition by emitting DESTROY command."""
