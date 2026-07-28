@@ -98,3 +98,15 @@ class Mesh:
     def displace(self, field, amount: float = 1.0, along="normal") -> "Mesh":
         from manifoldx.modeling import deform
         return deform.displace(self, field, amount, along)
+
+    def twist(self, angle: float, axis: str = "y") -> "Mesh":
+        from manifoldx.modeling import deform
+        return deform.twist(self, angle, axis)
+
+    def bend(self, angle: float, axis: str = "z", along: str = "x") -> "Mesh":
+        from manifoldx.modeling import deform
+        return deform.bend(self, angle, axis, along)
+
+    def taper(self, factor: float, axis: str = "y") -> "Mesh":
+        from manifoldx.modeling import deform
+        return deform.taper(self, factor, axis)
