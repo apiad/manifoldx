@@ -23,3 +23,16 @@ def test_asteroid_pipeline_produces_valid_geometry():
     assert geo["indices"].max() < geo["positions"].shape[0]
     assert np.all(np.isfinite(geo["positions"]))
     assert np.allclose(np.linalg.norm(geo["normals"], axis=1), 1.0, atol=1e-4)
+
+
+def test_asteroid_with_smooth_pass_valid():
+    rock = (
+        Mesh.icosphere(subdivisions=4)
+        .displace(noise.fbm(seed=7, octaves=5), amount=0.35)
+        .twist(angle=0.4, axis="y")
+        .taper(factor=0.2, axis="y")
+        .smooth(iterations=1, strength=0.5)
+    )
+    geo = rock.to_geometry()
+    assert np.all(np.isfinite(geo["positions"]))
+    assert np.allclose(np.linalg.norm(geo["normals"], axis=1), 1.0, atol=1e-4)

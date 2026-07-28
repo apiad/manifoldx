@@ -21,6 +21,7 @@ rock = (
     .displace(noise.fbm(seed=7, octaves=5), amount=0.35)
     .twist(angle=0.4, axis="y")
     .taper(factor=0.2, axis="y")
+    .smooth(iterations=1, strength=0.5)
 )
 rock_geometry = rock.to_geometry()
 rock_material = mx.material.standard(color="#8c8073", roughness=0.9)  # hex string, per pbr_demo
