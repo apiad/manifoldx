@@ -86,7 +86,7 @@ The subsystem ships across multiple implementation plans, one per batch (mirrori
 
 ### Batch 0 — Foundation *(vertical slice)*
 
-The `Mesh` value type, `primitives.py` (box/plane/icosphere/cylinder/torus — lifting and reusing the existing `resources.py`/`viz.geometry` generators where they exist, not duplicating), `recompute_normals`, `adjacency`, `noise.py`, and `to_geometry`/`from_geometry`. **End-to-end deliverable:** a demo that generates a primitive in code and spawns it — proving the whole seam before any operator exists.
+The `Mesh` value type, `primitives.py` (box/plane/icosphere/cylinder/torus — lifting and reusing the existing `resources.py`/`viz.geometry` generators where they exist, not duplicating), `recompute_normals`, `adjacency`, `noise.py`, and `to_geometry`/`from_geometry`. **End-to-end deliverable:** `examples/modeling_asteroid.py` spawns a bare `Mesh.icosphere(4)` via `.to_geometry()`, PBR-lit with `StandardMaterial`, slowly rotating — viewable but plain, proving the `modeling → GPU` seam before any operator exists. This is the smoke-test demo the whole subsystem is validated against; it grows one operator at a time through Batch 1.
 
 ### Batch 1 — Deformers *(highest value/buck)*
 
@@ -98,6 +98,8 @@ Pure per-vertex numpy on `positions`, zero topology change, normals recomputed a
 - `displace(field, amount, along="normal"|vector)` — offset each vertex by a sampled scalar field (the PCG workhorse: terrain, blobs, greebles).
 
 Deferred to the tail of this batch (pricier, need extra machinery): `ffd(lattice)` free-form deformation, and `bend_along_curve(curve)`.
+
+**Demo payoff:** `examples/modeling_asteroid.py` (the Batch 0 seam demo) upgrades in place — `.displace(noise.fbm(seed=7, octaves=5), amount=0.35)` turns the icosphere into a lumpy rock, then `.twist(...)`/`.smooth(1)` refine it into a recognizable procedural asteroid. Renders to MP4 via the existing `--render` smoke path for visual regression.
 
 ### Batch 2 — Sculpt brushes *(high value, moderate)*
 
