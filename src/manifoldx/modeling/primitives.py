@@ -58,3 +58,75 @@ def _subdivide_midpoint(verts: np.ndarray, faces: np.ndarray):
         new_faces += [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]
 
     return np.array(verts, dtype=np.float64), np.array(new_faces, dtype=np.int64)
+
+
+def box(width: float = 1.0, height: float = 1.0, depth: float = 1.0) -> Mesh:
+    hx, hy, hz = width / 2, height / 2, depth / 2
+    corners = np.array(
+        [[-hx, -hy, -hz], [hx, -hy, -hz], [hx, hy, -hz], [-hx, hy, -hz],
+         [-hx, -hy, hz], [hx, -hy, hz], [hx, hy, hz], [-hx, hy, hz]],
+        dtype=np.float32,
+    )
+    quads = [
+        (0, 1, 2, 3), (5, 4, 7, 6), (4, 0, 3, 7),
+        (1, 5, 6, 2), (3, 2, 6, 7), (4, 5, 1, 0),
+    ]
+    faces = []
+    for a, b, c, d in quads:
+        faces += [[a, b, c], [a, c, d]]
+    return Mesh(positions=corners, faces=np.array(faces, dtype=np.uint32))
+
+
+def plane(width: float = 1.0, depth: float = 1.0, segments: int = 1) -> Mesh:
+    n = segments + 1
+    xs = np.linspace(-width / 2, width / 2, n)
+    zs = np.linspace(-depth / 2, depth / 2, n)
+    gx, gz = np.meshgrid(xs, zs)
+    positions = np.stack([gx.ravel(), np.zeros(n * n), gz.ravel()], axis=1).astype(np.float32)
+    faces = []
+    for i in range(segments):
+        for j in range(segments):
+            a = i * n + j
+            b = a + 1
+            c = a + n
+            d = c + 1
+            faces += [[a, c, b], [b, c, d]]
+    return Mesh(positions=positions, faces=np.array(faces, dtype=np.uint32))
+
+
+def cylinder(radius: float = 1.0, height: float = 2.0, segments: int = 32) -> Mesh:
+    ang = np.linspace(0, 2 * np.pi, segments, endpoint=False)
+    ring = np.stack([np.cos(ang) * radius, np.sin(ang) * radius], axis=1)
+    top = np.column_stack([ring[:, 0], np.full(segments, height / 2), ring[:, 1]])
+    bot = np.column_stack([ring[:, 0], np.full(segments, -height / 2), ring[:, 1]])
+    center_top = [0, height / 2, 0]
+    center_bot = [0, -height / 2, 0]
+    positions = np.vstack([top, bot, center_top, center_bot]).astype(np.float32)
+    ct, cb = 2 * segments, 2 * segments + 1
+    faces = []
+    for i in range(segments):
+        n = (i + 1) % segments
+        faces += [[i, n, segments + i], [n, segments + n, segments + i]]  # side
+        faces += [[ct, n, i]]                                             # top cap
+        faces += [[cb, segments + i, segments + n]]                       # bottom cap
+    return Mesh(positions=positions, faces=np.array(faces, dtype=np.uint32))
+
+
+def torus(major: float = 1.0, minor: float = 0.35,
+          major_segments: int = 32, minor_segments: int = 16) -> Mesh:
+    u = np.linspace(0, 2 * np.pi, major_segments, endpoint=False)
+    v = np.linspace(0, 2 * np.pi, minor_segments, endpoint=False)
+    uu, vv = np.meshgrid(u, v, indexing="ij")
+    x = (major + minor * np.cos(vv)) * np.cos(uu)
+    y = minor * np.sin(vv)
+    z = (major + minor * np.cos(vv)) * np.sin(uu)
+    positions = np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1).astype(np.float32)
+    faces = []
+    for i in range(major_segments):
+        for j in range(minor_segments):
+            a = i * minor_segments + j
+            b = ((i + 1) % major_segments) * minor_segments + j
+            c = i * minor_segments + (j + 1) % minor_segments
+            d = ((i + 1) % major_segments) * minor_segments + (j + 1) % minor_segments
+            faces += [[a, b, c], [b, d, c]]
+    return Mesh(positions=positions, faces=np.array(faces, dtype=np.uint32))

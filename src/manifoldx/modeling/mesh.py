@@ -71,3 +71,24 @@ class Mesh:
     def icosphere(cls, subdivisions: int = 2, radius: float = 1.0) -> "Mesh":
         from manifoldx.modeling import primitives
         return primitives.icosphere(subdivisions, radius)
+
+    @classmethod
+    def box(cls, width: float = 1.0, height: float = 1.0, depth: float = 1.0) -> "Mesh":
+        from manifoldx.modeling import primitives
+        return primitives.box(width, height, depth)
+
+    @classmethod
+    def plane(cls, width: float = 1.0, depth: float = 1.0, segments: int = 1) -> "Mesh":
+        from manifoldx.modeling import primitives
+        return primitives.plane(width, depth, segments)
+
+    @classmethod
+    def cylinder(cls, radius: float = 1.0, height: float = 2.0, segments: int = 32) -> "Mesh":
+        from manifoldx.modeling import primitives
+        return primitives.cylinder(radius, height, segments)
+
+    @classmethod
+    def torus(cls, major: float = 1.0, minor: float = 0.35,
+              major_segments: int = 32, minor_segments: int = 16) -> "Mesh":
+        from manifoldx.modeling import primitives
+        return primitives.torus(major, minor, major_segments, minor_segments)
