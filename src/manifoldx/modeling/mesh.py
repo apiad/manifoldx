@@ -92,3 +92,9 @@ class Mesh:
               major_segments: int = 32, minor_segments: int = 16) -> "Mesh":
         from manifoldx.modeling import primitives
         return primitives.torus(major, minor, major_segments, minor_segments)
+
+    # --- Deformers (delegated to modeling.deform; lazy import avoids a cycle) ---
+
+    def displace(self, field, amount: float = 1.0, along="normal") -> "Mesh":
+        from manifoldx.modeling import deform
+        return deform.displace(self, field, amount, along)
