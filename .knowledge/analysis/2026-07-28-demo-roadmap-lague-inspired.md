@@ -3,6 +3,15 @@
 **Date:** 2026-07-28
 **Status:** living roadmap (draft for discussion)
 
+## Examples vs demos (locked convention)
+
+Two kinds of runnable code, split by folder:
+
+- **`examples/`** — *focused*. One file, one feature, minimal code. Purpose: **documentation**. Named by the feature (`shadows.py`, `fields.py`, `booleans.py`), never `*_demo.py`.
+- **`demos/`** — *show-off*. Game-like / sim-like experiences combining many systems, possibly multi-file + assets. Purpose: **show off the engine**. Each roadmap item below that is an end-to-end experience lands as a `demos/<name>` (a folder when it needs >1 file); single-feature primitives it needs get a minimal `examples/<name>.py`.
+
+Each folder carries a `README.md` stating this. The sweep that established it moved `labyrinth_fps`, `terrain_stream`, `sun_earth_moon`, `smoke` into `demos/` and renamed the focused `*_demo.py` files to feature names.
+
 ## Why this fits
 
 [Sebastian Lague's Coding Adventures](https://www.youtube.com/playlist?list=PLFt_AvWsXl0ehjAfLFsp1PGaatzAwo0uK) are, almost entirely: **data-driven simulation + procedural generation + volumetric/atmospheric rendering**. That is manifoldx's exact thesis — numpy-SoA ECS with vectorized physics, the Python→WGSL compute transpiler, instanced rendering, DVR volume rendering, and the new `modeling`/`fields` stack. Much of his catalog maps onto engine capabilities that *already exist* (the repo ships `nbody`, `boids`, `gas`, volume rendering, compute kernels). So these demos are a natural showcase, not a reach.

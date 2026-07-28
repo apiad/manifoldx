@@ -207,33 +207,45 @@ The `examples/boids.py` demo shows **emergent behavior** from simple local rules
 
 All three use **pure numpy** — zero Python loops in the hot path. The ECS overhead is ~microseconds/frame; the bottleneck is GPU fill-rate, not CPU physics.
 
+Two kinds of runnable code: **`examples/`** are focused — one feature, minimal
+code (documentation); **`demos/`** are show-off — game-like / sim-like
+experiences combining many systems. See each folder's `README.md`.
+
+### `examples/` — focused feature examples
+
 | Example                  | Description                                                                |
 | ------------------------ | -------------------------------------------------------------------------- |
 | `hello_world.py`         | Minimal empty window                                                       |
 | `cube.py`                | Rotating cube with Phong material                                          |
-| `pbr_demo.py`            | 3×2 grid demonstrating PBR materials + 3 orbiting lights                   |
+| `pbr.py`                 | 3×2 grid demonstrating PBR materials + 3 orbiting lights                   |
+| `shadows.py` / `spotlight.py` | Directional-sun and spot-light shadow mapping                         |
+| `ibl.py`                 | Image-based lighting (split-sum environment reflection)                    |
+| `textures.py`            | Textured PBR: a UV-mapped teapot with an albedo map                        |
 | `spheres.py`             | Many spheres with physics-like behavior                                    |
-| `nbody.py`               | 500-body gravitational simulation with pure-numpy physics                  |
-| `gas.py`                 | 500-particle ideal gas with collisions and virtual walls                   |
-| `boids.py`               | 300-agent flocking simulation with emergent swarm behavior                 |
-| `scatter_plot.py`        | Declarative `manifoldx.viz` API: 500-particle scatter in ~30 lines         |
-| `nbody_compute.py`       | N-body simulation ported to a GPU compute kernel (Phase-2 transpiler)      |
-| `gas_compute.py`         | Ideal-gas demo on the GPU, including race-free pairwise collisions         |
-| `point_cloud_demo.py`    | Sci-viz `PointCloud` + `ColormapMaterial` sprite path                      |
-| `point_cloud_compute.py` | Protoplanetary disk: 10000 particles, GPU kinematics, colormapped on speed |
-| `axes_demo.py`           | World-anchored axes, screen-anchored HUD, scale bar, colormap legend       |
-| `volume_demo.py`         | Direct volume rendering of a 64³ Gaussian blob                             |
-| `smoke_demo.py`          | Tileable Perlin FBM volumetric smoke with camera motion                    |
-| `event_dolly.py`         | Async camera dolly with `await engine.delay(...)`                          |
-| `event_pulse.py`         | Sync handler emitting `engine.spawn` on a custom event                     |
-| `input_orbit.py`         | Drag-to-orbit + wheel-zoom via the input event bus                         |
-| `input_fly.py`           | WASD fly cam through a procedural city skyline, via input polling          |
+| `nbody.py` / `gas.py` / `boids.py` | Pure-numpy gravity / ideal-gas / flocking simulations            |
+| `nbody_compute.py` / `gas_compute.py` / `point_cloud_compute.py` | Same, ported to GPU compute kernels       |
+| `scatter_plot.py` / `point_cloud.py` / `axes.py` | Sci-viz `manifoldx.viz` primitives                        |
+| `volume.py`              | Direct volume rendering of a 64³ Gaussian blob                            |
+| `gui.py`                 | Immediate-ish GUI widgets (panels, sliders, toggles)                       |
+| `fields.py` / `color_by.py` | Composable field algebra + per-vertex coloring (procedural terrain)     |
+| `deformers.py` / `sculpt`* / `topology.py` / `booleans.py` / `ffd.py` | `manifoldx.modeling` operators       |
+| `event_dolly.py` / `event_pulse.py` | Event bus (async dolly, sync spawn-on-event)                    |
+| `input_orbit.py` / `input_fly.py` | Drag-to-orbit and WASD fly-cam via the input layer                |
 
-Run an example:
+### `demos/` — end-to-end showcases
+
+| Demo | Description |
+| --- | --- |
+| `terrain_stream.py` | Infinite procedural-terrain flyby with shader fog; patches generated in a worker process and streamed into a recycled slot pool |
+| `labyrinth_fps.py`  | First-person maze crawl with a shadow-casting flashlight |
+| `sun_earth_moon.py` | Textured Earth + Moon orbiting a sun (bundled NASA imagery) |
+| `smoke.py`          | Volumetric Perlin-FBM smoke with camera motion |
+
+Run one:
 
 ```bash
-python examples/nbody.py              # Interactive window
-python examples/nbody.py --render 60  # Render 60s video to nbody.mp4
+python examples/nbody.py                 # interactive window
+python demos/terrain_stream.py --render --duration 8 --output flyby.mp4
 ```
 
 ## Features
