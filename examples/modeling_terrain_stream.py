@@ -11,6 +11,8 @@ the hot path — versus `modeling_ridge_flyby.py`'s per-frame regen (~1.7 fps).
     uv run python examples/modeling_terrain_stream.py --render --duration 10 --output /tmp/stream.mp4
 """
 
+import numpy as np
+
 import manifoldx as mx
 from manifoldx.components import Transform, Mesh, Material
 from manifoldx.modeling import Mesh as GeoMesh, fields, Gradient
@@ -34,11 +36,22 @@ palette = Gradient([(0.00, "#2f5788"), (0.05, "#c6b884"), (0.11, "#4f7a2c"),
                     (0.40, "#59702e"), (0.58, "#7c6440"), (0.76, "#8f857a"),
                     (0.90, "#c2bcb4"), (0.98, "#ffffff")])
 
+# Boundary vertices of the patch grid — pinned across the smooth pass so adjacent
+# patches keep meeting exactly (smoothing edges would break the seamless join).
+_X, _Z = TEMPLATE.positions[:, 0], TEMPLATE.positions[:, 2]
+_EDGE = (
+    np.isclose(_X, _X.min()) | np.isclose(_X, _X.max())
+    | np.isclose(_Z, _Z.min()) | np.isclose(_Z, _Z.max())
+)
+
 
 @engine.background
 def patch_at(world_z):
-    return (TEMPLATE
-            .displace(terrain.shift((0, 0, world_z)), amount=HEIGHT)
+    raw = TEMPLATE.displace(terrain.shift((0, 0, world_z)), amount=HEIGHT)
+    smoothed = raw.smooth(iterations=1, strength=0.5)   # tame the spikiest peaks
+    pos = smoothed.positions.copy()
+    pos[_EDGE] = raw.positions[_EDGE]                    # keep patch borders seamless
+    return (smoothed.with_positions(pos)
             .color_by(fields.coord("y").remap(0.0, HEIGHT, 0.0, 1.0), palette))
 
 
