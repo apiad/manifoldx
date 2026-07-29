@@ -1028,7 +1028,8 @@ class RenderPipeline:
             geom_stride = (geometry_buffers or {}).get("stride", 6 * 4)
             _glow = material_subtype == "glow"        # alpha-blended rim-glow
             _scatter = material_subtype == "scatter"  # additive single-scattering atmosphere
-            _blended = _glow or _scatter
+            _cloud = material_subtype == "cloud"      # alpha-blended procedural cloud shell
+            _blended = _glow or _scatter or _cloud
             vertex_attributes = [
                 {
                     "format": wgpu.VertexFormat.float32x3,
@@ -1085,7 +1086,7 @@ class RenderPipeline:
                     "entry_point": "fs_main",
                     "targets": [
                         _scatter_target(texture_format) if _scatter
-                        else _glow_target(texture_format) if _glow
+                        else _glow_target(texture_format) if (_glow or _cloud)
                         else {"format": texture_format}
                     ],
                 },

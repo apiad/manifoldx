@@ -20,12 +20,16 @@ import numpy as np
 import manifoldx as mx
 from manifoldx.components import Transform, Mesh, Material
 from manifoldx.modeling import Mesh as GeoMesh, fields, Gradient
-from manifoldx.resources import DirectionalLight, StandardMaterial, AtmosphereScatteringMaterial, WaterMaterial
+from manifoldx.resources import (
+    DirectionalLight, StandardMaterial, AtmosphereScatteringMaterial, WaterMaterial, CloudMaterial,
+)
 from manifoldx.sky import starfield
 
 # ---- pure module-level world (imported cleanly by the worker process) --------
 R, SEA, PEAK, SUBDIV = 10.0, 0.65, 0.85, 7             # gentle terrain (peaks ~8.5% of radius)
 RA = R * 1.20                                           # atmosphere top (the low orbit flies inside it)
+RC = R * 1.10                                           # cloud deck (just above the peaks)
+CLOUD_DRIFT = 0.0016                                    # radians/frame the cloud shell rotates
 ALT_START = 32.0                                        # high-orbit start altitude
 ORBIT_ALT = 1.5                                         # low-orbit altitude (inside the atmosphere)
 PITCH = 0.37                                           # down-tilt in low orbit (horizon ~40% from bottom)
@@ -64,7 +68,8 @@ def main():
     engine.background_color = tuple(SPACE)
     engine.set_sun(DirectionalLight(color="#fff4e8", intensity=SUN_I, direction=(-0.6, -0.3, -0.55)))
 
-    starfield(engine, count=1800, radius=R * 40.0, seed=11)   # space backdrop
+    starfield(engine, count=1800, radius=R * 40.0, seed=11,   # space backdrop; fades under daylight
+              ground_radius=R, atmo_top=RA - R)
     planet_geo = engine.submit_process(build_planet).wait()   # generate off-thread, block once
     engine.spawn(Mesh(planet_geo),
                  Material(StandardMaterial("#ffffff", roughness=0.95, vertex_colors=True)),
@@ -72,6 +77,10 @@ def main():
     engine.spawn(Mesh(GeoMesh.icosphere(SUBDIV - 1, R).to_geometry()),
                  Material(WaterMaterial(color="#0a2352", fresnel_power=4.0)),
                  Transform())
+    # Procedural cloud deck (fbm coverage, sun-lit, alpha) — drifts by slowly rotating the shell.
+    cloud = engine.spawn(Mesh(GeoMesh.icosphere(6, RC).to_geometry()),
+                         Material(CloudMaterial(coverage=0.52, softness=0.14, freq=4.0, opacity=0.9)),
+                         Transform())
     # Physically-based single-scattering atmosphere (Rayleigh+Mie) on a shell at RA.
     # Additive; provides the whole sky (blue day / sunset / dark night) from the sun angle.
     engine.spawn(Mesh(GeoMesh.icosphere(5, RA).to_geometry()),
@@ -89,6 +98,11 @@ def main():
         sd = np.array([np.cos(sun_az), -0.28, np.sin(sun_az)])
         engine.set_sun(DirectionalLight(color="#fff4e8", intensity=SUN_I,
                                         direction=tuple(sd / np.linalg.norm(sd))))
+        # Drift the clouds by slowly spinning their shell about a slightly tilted axis.
+        ang = f * CLOUD_DRIFT
+        ax = np.array([0.12, 1.0, 0.05])
+        ax /= np.linalg.norm(ax)
+        cloud.transform.rot = (*(ax * np.sin(ang / 2)), np.cos(ang / 2))
         dp = min(f / DESCENT_FRAMES, 1.0)                     # descent progress → holds at 1
         dpe = dp * dp * (3 - 2 * dp)                          # smoothstep ease
         cam_r = (R + ALT_START) * (1 - dpe) + (R + ORBIT_ALT) * dpe

@@ -437,6 +437,131 @@ class AtmosphereScatteringMaterial(Material):
         )
 
 
+_CLOUD_SHADER = """
+struct Globals {
+    vp: mat4x4<f32>, view: mat4x4<f32>, proj: mat4x4<f32>,
+    camera_pos: vec3<f32>, _pad0: f32,
+    viewport_size: vec2<f32>, _pad1: vec2<f32>,
+    ibl_intensity: f32, ibl_enabled: u32, _pad_ibl: vec2<f32>,
+    light_view_proj: mat4x4<f32>,
+    sun_direction: vec3<f32>, _pad_sun0: f32,
+    sun_color: vec3<f32>, sun_intensity: f32,
+};
+struct Transforms { models: array<mat4x4<f32>> };
+struct CloudUniforms { params: vec4<f32> };   // x=coverage, y=softness, z=freq, w=opacity
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> transforms: Transforms;
+@group(0) @binding(2) var<uniform> material: CloudUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @builtin(instance_index) instance: u32,
+};
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) world_normal: vec3<f32>,
+    @location(1) local_pos: vec3<f32>,
+};
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let model = transforms.models[in.instance];
+    out.local_pos = in.position;                                // object space: pattern rides the shell
+    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
+    out.position = globals.vp * vec4<f32>((model * vec4<f32>(in.position, 1.0)).xyz, 1.0);
+    return out;
+}
+
+fn hash(p: vec3<f32>) -> f32 {
+    var p3 = fract(p * vec3<f32>(0.1031, 0.1030, 0.0973));
+    p3 = p3 + dot(p3, p3.yxz + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+fn vnoise(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let n000 = hash(i + vec3<f32>(0.0, 0.0, 0.0));
+    let n100 = hash(i + vec3<f32>(1.0, 0.0, 0.0));
+    let n010 = hash(i + vec3<f32>(0.0, 1.0, 0.0));
+    let n110 = hash(i + vec3<f32>(1.0, 1.0, 0.0));
+    let n001 = hash(i + vec3<f32>(0.0, 0.0, 1.0));
+    let n101 = hash(i + vec3<f32>(1.0, 0.0, 1.0));
+    let n011 = hash(i + vec3<f32>(0.0, 1.0, 1.0));
+    let n111 = hash(i + vec3<f32>(1.0, 1.0, 1.0));
+    let x00 = mix(n000, n100, u.x);
+    let x10 = mix(n010, n110, u.x);
+    let x01 = mix(n001, n101, u.x);
+    let x11 = mix(n011, n111, u.x);
+    return mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z);
+}
+fn fbm(p0: vec3<f32>) -> f32 {
+    var s = 0.0;
+    var a = 0.5;
+    var q = p0;
+    for (var k: i32 = 0; k < 5; k = k + 1) {
+        s = s + a * vnoise(q);
+        q = q * 2.02;
+        a = a * 0.5;
+    }
+    return s;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let dir = normalize(in.local_pos);
+    let freq = material.params.z;
+    // Two-octave-warped fbm for puffy, clumped coverage.
+    let warp = fbm(dir * freq * 0.5) * 0.6;
+    let d = fbm(dir * freq + vec3<f32>(warp));
+    let cover = smoothstep(material.params.x, material.params.x + material.params.y, d);
+    if cover < 0.02 { discard; }
+
+    let N = normalize(in.world_normal);
+    let sun = normalize(-globals.sun_direction);
+    let day = smoothstep(-0.15, 0.30, dot(N, sun));            // 0 night, 1 day
+    // Bright sunlit tops, cool shadowed undersides at the terminator, dark at night.
+    let lit = mix(vec3<f32>(0.55, 0.60, 0.72), vec3<f32>(1.0, 0.99, 0.96), day);
+    let alpha = cover * material.params.w * clamp(0.25 + 0.75 * day, 0.0, 1.0);
+    return vec4<f32>(lit, alpha);
+}
+"""
+
+
+class CloudMaterial(Material):
+    """Procedural cloud shell: fbm coverage, sun-lit, alpha-blended. Rotate the shell to drift."""
+
+    binding_slot = 0
+
+    def __init__(self, coverage: float = 0.55, softness: float = 0.12,
+                 freq: float = 3.0, opacity: float = 0.9):
+        self.coverage = coverage
+        self.softness = softness
+        self.freq = freq
+        self.opacity = opacity
+
+    @property
+    def pipeline_subtype(self):
+        return "cloud"
+
+    @classmethod
+    def _compile(cls) -> str:
+        return _CLOUD_SHADER
+
+    @classmethod
+    def uniform_type(cls) -> Dict[str, str]:
+        return {"params": "vec4<f32>"}
+
+    def get_data(self, n: int, registry) -> np.ndarray:
+        return np.tile(
+            np.array([self.coverage, self.softness, self.freq, self.opacity], dtype=np.float32),
+            (n, 1),
+        )
+
+
 class AtmosphereMaterial(Material):
     """Unlit fresnel rim-glow (blended) — an atmosphere halo shell."""
 

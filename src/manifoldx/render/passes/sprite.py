@@ -176,7 +176,10 @@ def make_sprite_bind_group(rp, bind_group_layout, material, mat_buffer):
             "resource": {
                 "buffer": rp._globals_buffer,
                 "offset": 0,
-                "size": 240,
+                # Bind the full globals block (not just the compact 240 prefix) so
+                # sprite/point shaders may also read the lighting fields (sun, etc.).
+                # Shaders declaring only the short struct still read a valid prefix.
+                "size": rp._globals_buffer.size,
             },
         },
         {
