@@ -127,7 +127,12 @@ class BasicMaterial(Material):
 _ATMOSPHERE_SHADER = """
 struct Globals {
     vp: mat4x4<f32>, view: mat4x4<f32>, proj: mat4x4<f32>,
-    camera_pos: vec3<f32>, _pad: f32,
+    camera_pos: vec3<f32>, _pad0: f32,
+    viewport_size: vec2<f32>, _pad1: vec2<f32>,
+    ibl_intensity: f32, ibl_enabled: u32, _pad_ibl: vec2<f32>,
+    light_view_proj: mat4x4<f32>,
+    sun_direction: vec3<f32>, _pad_sun0: f32,
+    sun_color: vec3<f32>, sun_intensity: f32,
 };
 struct Transforms { models: array<mat4x4<f32>> };
 struct GlowUniforms { params: vec4<f32> };   // rgb = colour, a = intensity
@@ -159,10 +164,20 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let N = normalize(in.world_normal);
+    let N = normalize(in.world_normal);            // radial (outward)
     let V = normalize(globals.camera_pos - in.world_pos);
     let fresnel = pow(1.0 - max(dot(N, V), 0.0), 3.2);
-    return vec4<f32>(material.params.rgb, fresnel * material.params.a);
+
+    // Day/night: the shell glows where it faces the sun, fades on the night side.
+    let sun = normalize(-globals.sun_direction);
+    let face = dot(N, sun);
+    let day = smoothstep(-0.25, 0.35, face);
+    // Warm sunset tint near the terminator.
+    let dusk = smoothstep(-0.35, 0.05, face) * (1.0 - smoothstep(0.05, 0.5, face));
+    let col = mix(material.params.rgb, vec3<f32>(1.0, 0.5, 0.28), dusk * 0.7);
+
+    let alpha = fresnel * material.params.a * clamp(day + dusk * 0.5, 0.0, 1.0);
+    return vec4<f32>(col, alpha);
 }
 """
 

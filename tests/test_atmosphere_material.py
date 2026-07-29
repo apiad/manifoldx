@@ -14,3 +14,8 @@ def test_glow_uniform_is_rgb_intensity():
     d = AtmosphereMaterial((0.5, 0.7, 1.0), intensity=2.0).get_data(3, None)
     assert d.shape == (3, 4)
     assert np.allclose(d[0], [0.5, 0.7, 1.0, 2.0])
+
+
+def test_atmosphere_is_sun_aware():
+    src = AtmosphereMaterial._compile()
+    assert "sun_direction" in src                              # day/night driven by the sun
