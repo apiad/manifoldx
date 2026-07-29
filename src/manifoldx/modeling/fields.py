@@ -18,71 +18,80 @@ def _resolve_rng(seed) -> np.random.Generator:
 
 
 class Field:
-    """A composable scalar field over 3-D space."""
+    """A composable scalar field over 3-D space.
 
-    def __init__(self, fn):
+    Alongside the numpy callable, a Field optionally carries a symbolic AST
+    (``_ast``) describing how it was built. Sources and combinators populate it,
+    which lets ``manifoldx.modeling.gpu_fields.field_to_wgsl`` transpile the
+    field to a GPU shader. The AST is purely additive — the CPU path is the
+    callable and is unaffected. ``_ast`` is ``None`` for hand-written callables.
+    """
+
+    def __init__(self, fn, ast=None):
         self._fn = fn
+        self._ast = ast
 
     def __call__(self, points: np.ndarray) -> np.ndarray:
         p = np.asarray(points, dtype=np.float64)
         return np.asarray(self._fn(p), dtype=np.float32)
 
+    def _bin(self, o, op, np_fn):
+        o = _as_field(o)
+        return Field(lambda p: np_fn(self(p), o(p)), ast=(op, self._ast, o._ast))
+
     # --- arithmetic ---
     def __add__(self, o):
-        o = _as_field(o)
-        return Field(lambda p: self(p) + o(p))
+        return self._bin(o, "add", lambda a, b: a + b)
 
     __radd__ = __add__
 
     def __sub__(self, o):
-        o = _as_field(o)
-        return Field(lambda p: self(p) - o(p))
+        return self._bin(o, "sub", lambda a, b: a - b)
 
     def __rsub__(self, o):
         o = _as_field(o)
-        return Field(lambda p: o(p) - self(p))
+        return Field(lambda p: o(p) - self(p), ast=("sub", o._ast, self._ast))
 
     def __mul__(self, o):
-        o = _as_field(o)
-        return Field(lambda p: self(p) * o(p))
+        return self._bin(o, "mul", lambda a, b: a * b)
 
     __rmul__ = __mul__
 
     def __truediv__(self, o):
-        o = _as_field(o)
-        return Field(lambda p: self(p) / o(p))
+        return self._bin(o, "div", lambda a, b: a / b)
 
     def __rtruediv__(self, o):
         o = _as_field(o)
-        return Field(lambda p: o(p) / self(p))
+        return Field(lambda p: o(p) / self(p), ast=("div", o._ast, self._ast))
 
     def __neg__(self):
-        return Field(lambda p: -self(p))
+        return Field(lambda p: -self(p), ast=("neg", self._ast))
 
     # --- combinators ---
     def mix(self, other, t):
         other, tf = _as_field(other), _as_field(t)
-        return Field(lambda p: self(p) * (1.0 - tf(p)) + other(p) * tf(p))
+        return Field(lambda p: self(p) * (1.0 - tf(p)) + other(p) * tf(p),
+                     ast=("mix", self._ast, other._ast, tf._ast))
 
     def minimum(self, other):
-        other = _as_field(other)
-        return Field(lambda p: np.minimum(self(p), other(p)))
+        return self._bin(other, "min", np.minimum)
 
     def maximum(self, other):
-        other = _as_field(other)
-        return Field(lambda p: np.maximum(self(p), other(p)))
+        return self._bin(other, "max", np.maximum)
 
     def clamp(self, lo, hi):
-        return Field(lambda p: np.clip(self(p), lo, hi))
+        return Field(lambda p: np.clip(self(p), lo, hi),
+                     ast=("clamp", self._ast, float(lo), float(hi)))
 
     def remap(self, a, b, c, d):
-        return Field(lambda p: c + (self(p) - a) * (d - c) / (b - a))
+        return Field(lambda p: c + (self(p) - a) * (d - c) / (b - a),
+                     ast=("remap", self._ast, float(a), float(b), float(c), float(d)))
 
     def abs(self):
-        return Field(lambda p: np.abs(self(p)))
+        return Field(lambda p: np.abs(self(p)), ast=("abs", self._ast))
 
     def power(self, n):
-        return Field(lambda p: np.power(self(p), n))
+        return Field(lambda p: np.power(self(p), n), ast=("pow", self._ast, float(n)))
 
     def scale(self, s):
         return self * s
@@ -92,7 +101,8 @@ class Field:
 
     def shift(self, offset):
         o = np.asarray(offset, dtype=np.float64).reshape(1, 3)
-        return Field(lambda p: self(p + o))
+        off = tuple(float(v) for v in o.reshape(3))
+        return Field(lambda p: self(p + o), ast=("shift", self._ast, off))
 
     def warp(self, amount, fx=None, fy=None, fz=None):
         fx = _as_field(0.0 if fx is None else fx)
@@ -103,19 +113,26 @@ class Field:
             offset = np.stack([fx(p), fy(p), fz(p)], axis=1) * amount
             return self(p + offset)
 
-        return Field(fn)
+        return Field(fn, ast=("warp", self._ast, fx._ast, fy._ast, fz._ast, float(amount)))
 
 
 def _as_field(x) -> Field:
     if isinstance(x, Field):
         return x
     v = float(x)
-    return Field(lambda p, v=v: np.full(len(p), v, dtype=np.float32))
+    return Field(lambda p, v=v: np.full(len(p), v, dtype=np.float32), ast=("const", v))
 
 
 # =============================================================================
 # Noise sources
 # =============================================================================
+
+
+def _seed_int(seed) -> int:
+    """A stable integer seed for the GPU AST (WGSL noise is decorative, not a CPU match)."""
+    if isinstance(seed, (int, np.integer)):
+        return int(seed) & 0x7FFFFFFF
+    return 0
 
 
 def perlin(seed=None, freq: float = 1.0) -> Field:
@@ -166,7 +183,7 @@ def perlin(seed=None, freq: float = 1.0) -> Field:
         y1 = lerp(x01, x11, v)
         return lerp(y0, y1, w).astype(np.float32)
 
-    return Field(field)
+    return Field(field, ast=("perlin", _seed_int(seed), float(freq)))
 
 
 def fbm(seed=None, freq: float = 1.0, octaves: int = 4,
@@ -182,7 +199,8 @@ def fbm(seed=None, freq: float = 1.0, octaves: int = 4,
             total += amp * f(points)
         return (total / norm).astype(np.float32)
 
-    return Field(field)
+    return Field(field, ast=("fbm", _seed_int(seed), float(freq), int(octaves),
+                             float(lacunarity), float(gain)))
 
 
 def ridged(seed=None, freq: float = 1.0, octaves: int = 4,
@@ -198,7 +216,8 @@ def ridged(seed=None, freq: float = 1.0, octaves: int = 4,
             total += amp * (1.0 - np.abs(f(p))) ** 2
         return (total / norm).astype(np.float32)
 
-    return Field(fn)
+    return Field(fn, ast=("ridged", _seed_int(seed), float(freq), int(octaves),
+                          float(lacunarity), float(gain)))
 
 
 def billow(seed=None, freq: float = 1.0, octaves: int = 4,
@@ -214,7 +233,8 @@ def billow(seed=None, freq: float = 1.0, octaves: int = 4,
             total += amp * np.abs(f(p))
         return (total / norm).astype(np.float32)
 
-    return Field(fn)
+    return Field(fn, ast=("billow", _seed_int(seed), float(freq), int(octaves),
+                          float(lacunarity), float(gain)))
 
 
 def _hash3(cell: np.ndarray, seed: int) -> np.ndarray:
@@ -268,16 +288,18 @@ _AXIS = {"x": 0, "y": 1, "z": 2}
 def constant(value) -> Field:
     """A field that returns `value` everywhere."""
     v = float(value)
-    return Field(lambda p: np.full(len(p), v, dtype=np.float32))
+    return Field(lambda p: np.full(len(p), v, dtype=np.float32), ast=("const", v))
 
 
 def coord(axis: str) -> Field:
     """The world coordinate along `axis` ("x"|"y"|"z") as a field (ramps/masks)."""
     i = _AXIS[axis]
-    return Field(lambda p: p[:, i].astype(np.float32))
+    return Field(lambda p: p[:, i].astype(np.float32), ast=("coord", axis))
 
 
 def distance(center=(0, 0, 0)) -> Field:
     """Euclidean distance from `center` (islands, craters, radial masks)."""
     c = np.asarray(center, dtype=np.float64).reshape(1, 3)
-    return Field(lambda p: np.linalg.norm(p - c, axis=1).astype(np.float32))
+    ctr = tuple(float(v) for v in np.asarray(center, dtype=np.float64).reshape(3))
+    return Field(lambda p: np.linalg.norm(p - c, axis=1).astype(np.float32),
+                 ast=("dist", ctr))
