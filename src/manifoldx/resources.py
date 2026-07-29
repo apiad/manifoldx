@@ -335,7 +335,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let Hm = 0.012 * Rg;
     let betaR = vec3<f32>(5.5, 13.0, 30.0) / Rg;
     let betaM = vec3<f32>(0.5, 0.5, 0.5) / Rg;
-    let g = 0.78;
+    let g = 0.68;
 
     let atm = ray_sphere(cam, dir, Ra);
     if atm.y < atm.x || atm.y < 0.0 { return vec4<f32>(0.0); }
@@ -397,6 +397,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var col = material.params.z * haze * alt_gate * max(globals.sun_intensity, 0.5)
               * (sumR * betaR * phaseR + sumM * betaM * phaseM);
+
+    // Art-directed sunset warmth: the physical shadow test cuts the sky to black the
+    // instant the sun dips, so paint a warm glow near the horizon toward the sun,
+    // peaking as the sun crosses it. Additive, gated like the rest of the sky.
+    let up = normalize(cam);
+    let sun_elev = dot(up, sun);
+    let view_elev = dot(up, dir);
+    let toward = max(mu, 0.0);
+    let dusk = exp(-(sun_elev * sun_elev) / (2.0 * 0.13 * 0.13));       // peaks at the horizon
+    let band = clamp(1.0 - max(view_elev, 0.0) / 0.45, 0.0, 1.0);       // strongest low in the sky
+    let warm = vec3<f32>(1.5, 0.52, 0.18) * dusk * pow(toward, 2.5) * band;
+    col = col + warm * material.params.z * haze * alt_gate;
+
     col = vec3<f32>(1.0) - exp(-col * material.params.w);   // exposure tonemap
     col = pow(col, vec3<f32>(1.0 / 2.2));
     let lum = dot(col, vec3<f32>(0.2126, 0.7152, 0.0722));  // punch up saturation (art-directed)
