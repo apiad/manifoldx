@@ -66,7 +66,7 @@ def build_planet():
 
 
 def main():
-    engine = mx.Engine("Planet Dive", width=1024, height=768)
+    engine = mx.Engine("Planet Dive", width=1280, height=720)
     engine.background_color = tuple(SPACE)
     engine.set_sun(DirectionalLight(color="#fff4e8", intensity=SUN_I, direction=(-0.6, -0.3, -0.55)))
 
