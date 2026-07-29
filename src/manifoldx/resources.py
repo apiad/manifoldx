@@ -275,6 +275,156 @@ class WaterMaterial(Material):
         return np.tile(np.array([*rgb, self.fresnel_power], dtype=np.float32), (n, 1))
 
 
+_ATMO_SCATTER_SHADER = """
+struct Globals {
+    vp: mat4x4<f32>, view: mat4x4<f32>, proj: mat4x4<f32>,
+    camera_pos: vec3<f32>, _pad0: f32,
+    viewport_size: vec2<f32>, _pad1: vec2<f32>,
+    ibl_intensity: f32, ibl_enabled: u32, _pad_ibl: vec2<f32>,
+    light_view_proj: mat4x4<f32>,
+    sun_direction: vec3<f32>, _pad_sun0: f32,
+    sun_color: vec3<f32>, sun_intensity: f32,
+};
+struct Transforms { models: array<mat4x4<f32>> };
+struct AtmoUniforms { params: vec4<f32> };   // x=Rg, y=Ra, z=intensity, w=exposure
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> transforms: Transforms;
+@group(0) @binding(2) var<uniform> material: AtmoUniforms;
+
+const PI: f32 = 3.14159265;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @builtin(instance_index) instance: u32,
+};
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+};
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let model = transforms.models[in.instance];
+    out.world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    out.position = globals.vp * vec4<f32>(out.world_pos, 1.0);
+    return out;
+}
+
+// (t_near, t_far) of ray o+t*d with a sphere of radius r at the origin; near>far on miss.
+fn ray_sphere(o: vec3<f32>, d: vec3<f32>, r: f32) -> vec2<f32> {
+    let b = dot(o, d);
+    let c = dot(o, o) - r * r;
+    let disc = b * b - c;
+    if disc < 0.0 { return vec2<f32>(1.0, -1.0); }
+    let s = sqrt(disc);
+    return vec2<f32>(-b - s, -b + s);
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let Rg = material.params.x;
+    let Ra = material.params.y;
+    let cam = globals.camera_pos;
+    let dir = normalize(in.world_pos - cam);
+    let sun = normalize(-globals.sun_direction);
+
+    let Hr = 0.06 * Rg;
+    let Hm = 0.018 * Rg;
+    let betaR = vec3<f32>(5.5, 13.0, 30.0) / Rg;
+    let betaM = vec3<f32>(1.1, 1.1, 1.1) / Rg;
+    let g = 0.76;
+
+    let atm = ray_sphere(cam, dir, Ra);
+    if atm.y < atm.x || atm.y < 0.0 { return vec4<f32>(0.0); }
+    var t0 = max(atm.x, 0.0);
+    var t1 = atm.y;
+    let gnd = ray_sphere(cam, dir, Rg);
+    if gnd.x > 0.0 && gnd.x < t1 { t1 = gnd.x; }
+    if t1 <= t0 { return vec4<f32>(0.0); }
+
+    let seg = (t1 - t0) / 16.0;
+    var odR = 0.0;
+    var odM = 0.0;
+    var sumR = vec3<f32>(0.0);
+    var sumM = vec3<f32>(0.0);
+    let mu = dot(dir, sun);
+    let phaseR = 3.0 / (16.0 * PI) * (1.0 + mu * mu);
+    let g2 = g * g;
+    let phaseM = 3.0 / (8.0 * PI) * ((1.0 - g2) * (1.0 + mu * mu))
+                 / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * g * mu, 1.5));
+
+    for (var i: i32 = 0; i < 16; i = i + 1) {
+        let p = cam + dir * (t0 + seg * (f32(i) + 0.5));
+        let h = length(p) - Rg;
+        let dR = exp(-h / Hr) * seg;
+        let dM = exp(-h / Hm) * seg;
+        odR = odR + dR;
+        odM = odM + dM;
+
+        var sodR = 1.0e9;
+        var sodM = 1.0e9;
+        let sground = ray_sphere(p, sun, Rg);
+        if sground.x <= 0.0 {                       // sun above the local horizon
+            let satm = ray_sphere(p, sun, Ra);
+            let sseg = satm.y / 8.0;
+            sodR = 0.0;
+            sodM = 0.0;
+            for (var j: i32 = 0; j < 8; j = j + 1) {
+                let sp = p + sun * (sseg * (f32(j) + 0.5));
+                let sh = length(sp) - Rg;
+                sodR = sodR + exp(-sh / Hr) * sseg;
+                sodM = sodM + exp(-sh / Hm) * sseg;
+            }
+        }
+        let tau = betaR * (odR + sodR) + betaM * 1.1 * (odM + sodM);
+        let attn = exp(-tau);
+        sumR = sumR + attn * dR;
+        sumM = sumM + attn * dM;
+    }
+
+    var col = material.params.z * max(globals.sun_intensity, 0.5)
+              * (sumR * betaR * phaseR + sumM * betaM * phaseM);
+    col = vec3<f32>(1.0) - exp(-col * material.params.w);   // exposure tonemap
+    col = pow(col, vec3<f32>(1.0 / 2.2));
+    return vec4<f32>(col, 1.0);
+}
+"""
+
+
+class AtmosphereScatteringMaterial(Material):
+    """Physically-based single-scattering atmosphere (Rayleigh + Mie), rendered on a shell."""
+
+    binding_slot = 0
+
+    def __init__(self, ground_radius, atmosphere_radius, intensity: float = 22.0, exposure: float = 1.0):
+        self.ground_radius = ground_radius
+        self.atmosphere_radius = atmosphere_radius
+        self.intensity = intensity
+        self.exposure = exposure
+
+    @property
+    def pipeline_subtype(self):
+        return "scatter"
+
+    @classmethod
+    def _compile(cls) -> str:
+        return _ATMO_SCATTER_SHADER
+
+    @classmethod
+    def uniform_type(cls) -> Dict[str, str]:
+        return {"params": "vec4<f32>"}
+
+    def get_data(self, n: int, registry) -> np.ndarray:
+        return np.tile(
+            np.array([self.ground_radius, self.atmosphere_radius, self.intensity, self.exposure],
+                     dtype=np.float32),
+            (n, 1),
+        )
+
+
 class AtmosphereMaterial(Material):
     """Unlit fresnel rim-glow (blended) — an atmosphere halo shell."""
 

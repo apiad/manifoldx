@@ -28,6 +28,21 @@ def _glow_target(fmt):
     }
 
 
+def _scatter_target(fmt):
+    """Additive color target for the 'scatter' (single-scattering atmosphere) material."""
+    return {
+        "format": fmt,
+        "blend": {
+            "color": {"src_factor": wgpu.BlendFactor.one,
+                      "dst_factor": wgpu.BlendFactor.one,
+                      "operation": wgpu.BlendOperation.add},
+            "alpha": {"src_factor": wgpu.BlendFactor.one,
+                      "dst_factor": wgpu.BlendFactor.one,
+                      "operation": wgpu.BlendOperation.add},
+        },
+    }
+
+
 # Depth-only shadow-pass shader: transforms mesh geometry by the sun's
 # light_view_proj into the shadow map. No fragment stage (depth writes only).
 # Binds the shared Globals uniform (for light_view_proj) + a transforms storage.
@@ -1011,7 +1026,9 @@ class RenderPipeline:
             # Use the geometry's actual buffer stride so the pipeline
             # advances correctly over UV bytes the scalar shader doesn't read.
             geom_stride = (geometry_buffers or {}).get("stride", 6 * 4)
-            _glow = material_subtype == "glow"  # blended rim-glow (atmosphere)
+            _glow = material_subtype == "glow"        # alpha-blended rim-glow
+            _scatter = material_subtype == "scatter"  # additive single-scattering atmosphere
+            _blended = _glow or _scatter
             vertex_attributes = [
                 {
                     "format": wgpu.VertexFormat.float32x3,
@@ -1056,18 +1073,21 @@ class RenderPipeline:
                 primitive={
                     "topology": wgpu.PrimitiveTopology.triangle_list,
                     "front_face": wgpu.FrontFace.ccw,
-                    "cull_mode": wgpu.CullMode.none if _glow else wgpu.CullMode.back,
+                    "cull_mode": wgpu.CullMode.none if _blended else wgpu.CullMode.back,
                 },
                 depth_stencil={
                     "format": wgpu.TextureFormat.depth24plus,
-                    "depth_write_enabled": not _glow,
+                    "depth_write_enabled": not _blended,
                     "depth_compare": wgpu.CompareFunction.less,
                 },
                 fragment={
                     "module": shader_module,
                     "entry_point": "fs_main",
-                    "targets": [_glow_target(texture_format) if _glow
-                                else {"format": texture_format}],
+                    "targets": [
+                        _scatter_target(texture_format) if _scatter
+                        else _glow_target(texture_format) if _glow
+                        else {"format": texture_format}
+                    ],
                 },
             )
 

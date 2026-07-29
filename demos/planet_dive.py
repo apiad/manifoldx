@@ -1,10 +1,13 @@
 """Planet dive — fly from orbit down to a procedural planet's surface.
 
 A signed terrain field displaces an icosphere into continents + ocean basins,
-biome-colored; a glossy ocean sphere fills the basins; a fresnel `AtmosphereMaterial`
-shell gives the limb halo from space. A scripted descent eases the camera in while
-altitude drives the fog + background from space-black to sky-blue. The planet mesh
-is generated once in a worker process (no render-thread stall).
+biome-colored; a glossy ocean sphere fills the basins; a physically-based
+single-scattering `AtmosphereScatteringMaterial` shell (Rayleigh + Mie) renders
+the whole sky — blue day, sunset limb, dark starry night — directly from the sun
+angle. A scripted descent spirals the camera from high orbit down to a low
+equatorial pass (horizon ~40%, terrain down); the orbit itself carries us through
+day into night. The planet mesh is generated once in a worker process (no
+render-thread stall).
 
 Tier-1 slice (CPU). Next: GPU fields for near-surface detail.
 
@@ -17,25 +20,19 @@ import numpy as np
 import manifoldx as mx
 from manifoldx.components import Transform, Mesh, Material
 from manifoldx.modeling import Mesh as GeoMesh, fields, Gradient
-from manifoldx.resources import DirectionalLight, StandardMaterial, AtmosphereMaterial, WaterMaterial
+from manifoldx.resources import DirectionalLight, StandardMaterial, AtmosphereScatteringMaterial, WaterMaterial
 from manifoldx.sky import starfield
 
 # ---- pure module-level world (imported cleanly by the worker process) --------
 R, SEA, PEAK, SUBDIV = 10.0, 0.65, 0.85, 6              # gentle terrain (peaks ~8.5% of radius)
+RA = R * 1.20                                           # atmosphere top (the low orbit flies inside it)
 ALT_START = 32.0                                        # high-orbit start altitude
-ORBIT_ALT = 2.0                                         # low-orbit altitude (plane-over-terrain feel)
+ORBIT_ALT = 1.5                                         # low-orbit altitude (inside the atmosphere)
 PITCH = 0.37                                           # down-tilt in low orbit (horizon ~40% from bottom)
 DESCENT_FRAMES = 190                                    # descent completes ~here; then orbit
 AZ_RATE = 0.010                                         # radians/frame the camera circles
 SUN_RATE = 0.0015                                       # slow sun; the orbit itself carries us into night
 SPACE = np.array([0.02, 0.03, 0.06])
-SKY = np.array([0.55, 0.72, 0.96])
-SUNSET = np.array([0.95, 0.48, 0.32])
-
-
-def _smoothstep(a, b, x):
-    u = min(max((x - a) / (b - a), 0.0), 1.0)
-    return u * u * (3.0 - 2.0 * u)
 
 terrain = (
     fields.ridged(seed=4, freq=0.28) * 0.72
@@ -68,9 +65,10 @@ def main():
     engine.spawn(Mesh(GeoMesh.icosphere(SUBDIV - 1, R).to_geometry()),
                  Material(WaterMaterial(color="#0a2540", fresnel_power=4.0)),
                  Transform())
-    # atmosphere shell LAST so it composites over the opaque planet + ocean
-    engine.spawn(Mesh(GeoMesh.icosphere(4, R * 1.25).to_geometry()),
-                 Material(AtmosphereMaterial("#8fb8ff", intensity=1.0)),
+    # Physically-based single-scattering atmosphere (Rayleigh+Mie) on a shell at RA.
+    # Additive; provides the whole sky (blue day / sunset / dark night) from the sun angle.
+    engine.spawn(Mesh(GeoMesh.icosphere(5, RA).to_geometry()),
+                 Material(AtmosphereScatteringMaterial(R, RA, intensity=3.0, exposure=1.1)),
                  Transform())
 
     clock = {"frame": 0}
@@ -100,21 +98,9 @@ def main():
         # Bank so the terrain is DOWN (not sideways): up eases world-Y -> radially outward.
         up = (1 - dpe) * np.array([0.0, 1.0, 0.0]) + dpe * radial
         engine.camera.up = (up / np.linalg.norm(up)).astype(np.float32)
-
-        # Day/night sky: dark (stars show) on the night side, blue by day, sunset at the terminator.
-        local_sun = float(np.dot(radial, -sd))               # sun elevation in the local sky
-        day = _smoothstep(-0.15, 0.25, local_sun)            # 0 night, 1 day
-        dusk = max(0.0, 1.0 - abs(local_sun) / 0.30)         # peaks at the terminator
-        day_sky = SKY * day + SPACE * (1 - day)
-        day_sky = day_sky * (1 - 0.55 * dusk) + SUNSET * (0.55 * dusk)
-
-        alt = cam_r - R
-        t = float(np.clip((alt - ORBIT_ALT) / (ALT_START - ORBIT_ALT), 0.0, 1.0))
-        sky = day_sky * (1 - t) + SPACE * t                  # space (high) is always dark
-        engine.background_color = tuple(sky)
-        # Haze in the daylit atmosphere; thin + dark at night so terrain fades to night and stars show.
-        haze = (1 - t) * (0.25 + 0.75 * day)
-        engine.enable_fog(6.0 + 44.0 * (1 - haze), 45.0 + 255.0 * (1 - haze), color=tuple(sky))
+        # Background is always deep space; the scattering atmosphere provides the sky
+        # (blue day / sunset / dark night) physically from the sun angle.
+        engine.background_color = tuple(SPACE)
 
     engine.cli()
 
