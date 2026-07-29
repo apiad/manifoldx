@@ -20,8 +20,12 @@ from manifoldx.modeling import Mesh as GeoMesh, fields, Gradient
 from manifoldx.resources import DirectionalLight, StandardMaterial, AtmosphereMaterial
 
 # ---- pure module-level world (imported cleanly by the worker process) --------
-R, SEA, PEAK, SUBDIV = 10.0, 1.1, 1.6, 6
-ALT_START, ALT_SKIM, DESCENT_FRAMES = 30.0, 3.0, 260   # frame-paced (deterministic under --render)
+R, SEA, PEAK, SUBDIV = 10.0, 0.65, 0.85, 6              # gentle terrain (peaks ~8.5% of radius)
+ALT_START = 32.0                                        # high-orbit start altitude
+ORBIT_ALT = 2.0                                         # low-orbit altitude (plane-over-terrain feel)
+PITCH = 0.37                                           # down-tilt in low orbit (horizon ~40% from bottom)
+DESCENT_FRAMES = 190                                    # descent completes ~here; then orbit
+AZ_RATE = 0.010                                         # radians/frame the camera circles
 SPACE = np.array([0.02, 0.03, 0.06])
 SKY = np.array([0.55, 0.72, 0.96])
 
@@ -60,24 +64,34 @@ def main():
                  Material(AtmosphereMaterial("#8fb8ff", intensity=1.0)),
                  Transform())
 
-    approach = np.array([0.25, 0.35, 1.0])
-    approach /= np.linalg.norm(approach)
-    landing = approach * R
     clock = {"frame": 0}
 
     @engine.system
-    def descend(query, dt):
+    def fly(query, dt):
         clock["frame"] += 1
-        p = min(clock["frame"] / DESCENT_FRAMES, 1.0)        # frame-paced, wall-clock independent
-        pe = p * p * (3 - 2 * p)                              # smoothstep ease
-        cam_r = (R + ALT_START) * (1 - pe) + (R + ALT_SKIM) * pe
-        engine.camera.set_pose(tuple(approach * cam_r), tuple(landing))
+        f = clock["frame"]
+        dp = min(f / DESCENT_FRAMES, 1.0)                     # descent progress → holds at 1
+        dpe = dp * dp * (3 - 2 * dp)                          # smoothstep ease
+        cam_r = (R + ALT_START) * (1 - dpe) + (R + ORBIT_ALT) * dpe
+        az = 0.4 + f * AZ_RATE                               # continuously circle the planet (equatorial)
+
+        radial = np.array([np.sin(az), 0.0, np.cos(az)])     # outward (down = -radial)
+        forward = np.array([np.cos(az), 0.0, -np.sin(az)])   # orbit tangent (direction of travel)
+        cam = cam_r * radial
+        # Look at planet centre while high; ease to a forward + down gaze in low orbit.
+        orbit_look = forward - PITCH * radial                # forward, tilted down
+        orbit_look /= np.linalg.norm(orbit_look)
+        target = (1 - dpe) * np.zeros(3) + dpe * (cam + orbit_look * 22.0)
+        engine.camera.set_pose(tuple(cam), tuple(target))
+        # Bank so the terrain is DOWN (not sideways): up eases world-Y -> radially outward.
+        up = (1 - dpe) * np.array([0.0, 1.0, 0.0]) + dpe * radial
+        engine.camera.up = (up / np.linalg.norm(up)).astype(np.float32)
 
         alt = cam_r - R
-        t = float(np.clip((alt - ALT_SKIM) / (ALT_START - ALT_SKIM), 0.0, 1.0))
+        t = float(np.clip((alt - ORBIT_ALT) / (ALT_START - ORBIT_ALT), 0.0, 1.0))
         sky = SKY * (1 - t) + SPACE * t
         engine.background_color = tuple(sky)
-        engine.enable_fog(5.0 + 5000 * t, 60.0 + 1e4 * t, color=tuple(sky))
+        engine.enable_fog(6.0 + 5000 * t, 45.0 + 1e4 * t, color=tuple(sky))
 
     engine.cli()
 
