@@ -44,7 +44,8 @@ SPACE = np.array([0.02, 0.03, 0.06])
 terrain = (
     fields.ridged(seed=4, freq=0.24, octaves=5) * 0.72
     + fields.fbm(seed=8, freq=0.8, octaves=5) * 0.20
-    + fields.fbm(seed=15, freq=2.6, octaves=3) * 0.06      # fine near-surface detail
+    + fields.fbm(seed=15, freq=2.6, octaves=3) * 0.06      # medium detail
+    + fields.ridged(seed=21, freq=6.5, octaves=4) * 0.035  # fine near-surface roughness
 ).warp(0.7, fx=fields.fbm(2, 0.38), fz=fields.fbm(9, 0.38)).remap(0.0, 1.0, -SEA, PEAK)
 
 # Biome by elevation, with snow caps pushed in at high latitude.
