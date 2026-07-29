@@ -17,7 +17,8 @@ import numpy as np
 import manifoldx as mx
 from manifoldx.components import Transform, Mesh, Material
 from manifoldx.modeling import Mesh as GeoMesh, fields, Gradient
-from manifoldx.resources import DirectionalLight, StandardMaterial, AtmosphereMaterial
+from manifoldx.resources import DirectionalLight, StandardMaterial, AtmosphereMaterial, WaterMaterial
+from manifoldx.sky import starfield
 
 # ---- pure module-level world (imported cleanly by the worker process) --------
 R, SEA, PEAK, SUBDIV = 10.0, 0.65, 0.85, 6              # gentle terrain (peaks ~8.5% of radius)
@@ -26,6 +27,7 @@ ORBIT_ALT = 2.0                                         # low-orbit altitude (pl
 PITCH = 0.37                                           # down-tilt in low orbit (horizon ~40% from bottom)
 DESCENT_FRAMES = 190                                    # descent completes ~here; then orbit
 AZ_RATE = 0.010                                         # radians/frame the camera circles
+SUN_RATE = 0.006                                        # radians/frame the sun sweeps (day/night)
 SPACE = np.array([0.02, 0.03, 0.06])
 SKY = np.array([0.55, 0.72, 0.96])
 
@@ -52,12 +54,13 @@ def main():
     engine.background_color = tuple(SPACE)
     engine.set_sun(DirectionalLight(color="#fff4e8", intensity=3.2, direction=(-0.6, -0.3, -0.55)))
 
+    starfield(engine, count=1800, radius=R * 40.0, seed=11)   # space backdrop
     planet_geo = engine.submit_process(build_planet).wait()   # generate off-thread, block once
     engine.spawn(Mesh(planet_geo),
                  Material(StandardMaterial("#ffffff", roughness=0.95, vertex_colors=True)),
                  Transform())
     engine.spawn(Mesh(GeoMesh.icosphere(SUBDIV - 1, R).to_geometry()),
-                 Material(StandardMaterial("#1b3a6b", roughness=0.12, metallic=0.1)),
+                 Material(WaterMaterial(color="#0a2540", fresnel_power=4.0)),
                  Transform())
     # atmosphere shell LAST so it composites over the opaque planet + ocean
     engine.spawn(Mesh(GeoMesh.icosphere(4, R * 1.25).to_geometry()),
@@ -70,6 +73,11 @@ def main():
     def fly(query, dt):
         clock["frame"] += 1
         f = clock["frame"]
+        # Day/night: sweep the sun; water, terrain, and atmosphere all react to it.
+        sun_az = 0.7 + f * SUN_RATE
+        sd = np.array([np.cos(sun_az), -0.28, np.sin(sun_az)])
+        engine.set_sun(DirectionalLight(color="#fff4e8", intensity=3.2,
+                                        direction=tuple(sd / np.linalg.norm(sd))))
         dp = min(f / DESCENT_FRAMES, 1.0)                     # descent progress → holds at 1
         dpe = dp * dp * (3 - 2 * dp)                          # smoothstep ease
         cam_r = (R + ALT_START) * (1 - dpe) + (R + ORBIT_ALT) * dpe

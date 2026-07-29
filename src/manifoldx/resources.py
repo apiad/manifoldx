@@ -182,6 +182,99 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 """
 
 
+_WATER_SHADER = """
+struct Globals {
+    vp: mat4x4<f32>, view: mat4x4<f32>, proj: mat4x4<f32>,
+    camera_pos: vec3<f32>, _pad0: f32,
+    viewport_size: vec2<f32>, _pad1: vec2<f32>,
+    ibl_intensity: f32, ibl_enabled: u32, _pad_ibl: vec2<f32>,
+    light_view_proj: mat4x4<f32>,
+    sun_direction: vec3<f32>, _pad_sun0: f32,
+    sun_color: vec3<f32>, sun_intensity: f32,
+};
+struct Transforms { models: array<mat4x4<f32>> };
+struct WaterUniforms { params: vec4<f32> };   // rgb = deep colour, a = fresnel power
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> transforms: Transforms;
+@group(0) @binding(2) var<uniform> material: WaterUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @builtin(instance_index) instance: u32,
+};
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) world_normal: vec3<f32>,
+    @location(1) world_pos: vec3<f32>,
+};
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let model = transforms.models[in.instance];
+    out.world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
+    out.position = globals.vp * vec4<f32>(out.world_pos, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let N = normalize(in.world_normal);
+    let V = normalize(globals.camera_pos - in.world_pos);
+    let sun = normalize(-globals.sun_direction);
+    let sc = globals.sun_color * max(globals.sun_intensity, 0.5);
+
+    let ndl = max(dot(N, sun), 0.0);
+    let day = smoothstep(-0.05, 0.30, dot(N, sun));            // 0 night, 1 day
+    let deep = material.params.rgb;
+    var col = deep * (0.06 + 0.9 * ndl) * sc;                  // diffuse water (dark at night)
+
+    // Fresnel reflection of the sky (brighter, sky-tinted at grazing; only lit side).
+    let fresnel = pow(1.0 - max(dot(N, V), 0.0), material.params.a);
+    let sky = vec3<f32>(0.45, 0.62, 0.92) * day;
+    col = mix(col, sky, fresnel * 0.65);
+
+    // Sharp sun glint.
+    let H = normalize(V + sun);
+    let glint = pow(max(dot(N, H), 0.0), 220.0);
+    col += glint * sc * 1.4;
+
+    col = col / (col + vec3<f32>(1.0));                        // tonemap
+    col = pow(col, vec3<f32>(1.0 / 2.2));                      // gamma
+    return vec4<f32>(col, 1.0);
+}
+"""
+
+
+class WaterMaterial(Material):
+    """Sun-aware water: day/night diffuse, fresnel sky reflection, sharp sun glint."""
+
+    binding_slot = 0
+
+    def __init__(self, color=(0.04, 0.16, 0.35), fresnel_power: float = 4.0):
+        self.color = color
+        self.fresnel_power = fresnel_power
+
+    @classmethod
+    def _compile(cls) -> str:
+        return _WATER_SHADER
+
+    @classmethod
+    def uniform_type(cls) -> Dict[str, str]:
+        return {"params": "vec4<f32>"}
+
+    def get_data(self, n: int, registry) -> np.ndarray:
+        if isinstance(self.color, str):
+            h = self.color.lstrip("#")
+            rgb = [int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255]
+        else:
+            rgb = list(self.color[:3])
+        return np.tile(np.array([*rgb, self.fresnel_power], dtype=np.float32), (n, 1))
+
+
 class AtmosphereMaterial(Material):
     """Unlit fresnel rim-glow (blended) — an atmosphere halo shell."""
 

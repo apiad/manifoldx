@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+- **Reusable space/planet look: sun-aware materials, water, stars.** All react to the sun via the existing `Globals.sun_direction`/`sun_color`, so a moving sun gives a cohesive **day/night** cycle for free.
+  - **`AtmosphereMaterial` is now sun-aware** — the halo glows on the **day limb**, fades on the **night side**, and warms to a **sunset tint** near the terminator.
+  - **`WaterMaterial`** (new) — day/night water shading, fresnel sky-reflection at grazing, and a sharp sun **glint**; unlit (16-byte `vec4` uniform: deep colour + fresnel power).
+  - **`manifoldx.sky.starfield(engine, count, radius)`** — a reusable point-sprite star backdrop for any space scene.
+  - `demos/planet_dive.py` now uses all three plus a swept sun (day→dusk→night), and a `starfield` backdrop.
 - **`AtmosphereMaterial` + planet-dive demo.** A new unlit **fresnel rim-glow** material (`pipeline_subtype == "glow"`) renders an atmosphere-halo shell; the renderer gained a small "glow" pipeline branch (alpha blend, depth-write off, no cull) following the label/volume/gui blended-pass precedent. `demos/planet_dive.py`: fly from orbit to the surface of a procedural planet — signed terrain displaces an icosphere into continents + ocean basins (biome-colored), a glossy ocean sphere fills the basins, the atmosphere shell gives the limb halo from space, and a frame-paced descent drives fog + background from space-black to sky-blue. The planet mesh is generated once in a worker process (`submit_process`). First Tier-1 slice of the planet arc (design: `.knowledge/analysis/2026-07-28-planet-dive-slice-design.md`); next is GPU field evaluation for near-surface detail.
 
 ### Changed
