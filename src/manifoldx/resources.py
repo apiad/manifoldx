@@ -334,8 +334,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let Hr = 0.06 * Rg;
     let Hm = 0.012 * Rg;
     let betaR = vec3<f32>(5.5, 13.0, 30.0) / Rg;
-    let betaM = vec3<f32>(0.5, 0.5, 0.5) / Rg;
-    let g = 0.68;
+    let betaM = vec3<f32>(0.4, 0.4, 0.4) / Rg;
+    let g = 0.62;
 
     let atm = ray_sphere(cam, dir, Ra);
     if atm.y < atm.x || atm.y < 0.0 { return vec4<f32>(0.0); }
@@ -348,7 +348,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Rays that strike the planet (the disc) get their aerial haze knocked down so the
     // surface keeps its true colours; rays that miss (the limb from space, every upward
     // ray at the surface) keep the full sky/rim. View-dependent, so it holds at any altitude.
-    let haze = select(1.0, 0.28, hits_ground);
+    let haze = select(1.0, 0.14, hits_ground);
     // Altitude fade: full sky near the surface; from space fade to a thin rim so the
     // planet disc keeps its true colours instead of a milky additive veil.
     let cam_alt = length(cam) - Rg;
@@ -405,9 +405,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sun_elev = dot(up, sun);
     let view_elev = dot(up, dir);
     let toward = max(mu, 0.0);
-    let dusk = exp(-(sun_elev * sun_elev) / (2.0 * 0.13 * 0.13));       // peaks at the horizon
-    let band = clamp(1.0 - max(view_elev, 0.0) / 0.45, 0.0, 1.0);       // strongest low in the sky
-    let warm = vec3<f32>(1.5, 0.52, 0.18) * dusk * pow(toward, 2.5) * band;
+    let dusk = exp(-(sun_elev * sun_elev) / (2.0 * 0.12 * 0.12));       // peaks at the horizon
+    let band = clamp(1.0 - max(view_elev, 0.0) / 0.40, 0.0, 1.0);       // strongest low in the sky
+    let warm = vec3<f32>(0.9, 0.34, 0.12) * dusk * pow(toward, 3.0) * band;
     col = col + warm * material.params.z * haze * alt_gate;
 
     col = vec3<f32>(1.0) - exp(-col * material.params.w);   // exposure tonemap

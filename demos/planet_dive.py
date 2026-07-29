@@ -35,7 +35,8 @@ ORBIT_ALT = 1.5                                         # low-orbit altitude (in
 PITCH = 0.37                                           # down-tilt in low orbit (horizon ~40% from bottom)
 DESCENT_FRAMES = 190                                    # descent completes ~here; then orbit
 AZ_RATE = 0.010                                         # radians/frame the camera circles
-SUN_RATE = 0.0015                                       # slow sun; the orbit itself carries us into night
+SUN_RATE = 0.0040                                       # sun trails the orbit; day holds through the dive,
+                                                        # then sunset ~10s and night ~19s as we pull ahead
 SUN_I = 1.5                                             # sun intensity (kept low so land colours don't clip)
 SPACE = np.array([0.02, 0.03, 0.06])
 
@@ -79,7 +80,7 @@ def main():
                  Transform())
     # Procedural cloud deck (fbm coverage, sun-lit, alpha) — drifts by slowly rotating the shell.
     cloud = engine.spawn(Mesh(GeoMesh.icosphere(6, RC).to_geometry()),
-                         Material(CloudMaterial(coverage=0.52, softness=0.14, freq=4.0, opacity=0.9)),
+                         Material(CloudMaterial(coverage=0.46, softness=0.17, freq=4.4, opacity=0.48)),
                          Transform())
     # Physically-based single-scattering atmosphere (Rayleigh+Mie) on a shell at RA.
     # Additive; provides the whole sky (blue day / sunset / dark night) from the sun angle.
