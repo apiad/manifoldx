@@ -230,20 +230,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ndl = max(dot(N, sun), 0.0);
     let day = smoothstep(-0.05, 0.30, dot(N, sun));            // 0 night, 1 day
     let deep = material.params.rgb;
-    var col = deep * (0.06 + 0.9 * ndl) * sc;                  // diffuse water (dark at night)
+    var col = deep * (0.12 + 0.88 * ndl);                      // saturated diffuse water (dark at night)
 
-    // Fresnel reflection of the sky (brighter, sky-tinted at grazing; only lit side).
+    // Fresnel reflection of the sky (sky-tinted at grazing only; keeps open water deep-blue).
     let fresnel = pow(1.0 - max(dot(N, V), 0.0), material.params.a);
-    let sky = vec3<f32>(0.45, 0.62, 0.92) * day;
-    col = mix(col, sky, fresnel * 0.65);
+    let sky = vec3<f32>(0.42, 0.60, 0.90) * day;
+    col = mix(col, sky, fresnel * 0.30);
 
-    // Sharp sun glint.
+    // Sharp, small sun glint (day side only — no giant specular blob on the open sphere).
     let H = normalize(V + sun);
-    let glint = pow(max(dot(N, H), 0.0), 220.0);
-    col += glint * sc * 1.4;
+    let glint = pow(max(dot(N, H), 0.0), 500.0);
+    col += glint * sc * 0.20 * day;
 
-    col = col / (col + vec3<f32>(1.0));                        // tonemap
-    col = pow(col, vec3<f32>(1.0 / 2.2));                      // gamma
+    // No desaturating reinhard — water is LDR now, so keep the deep colour saturated.
+    col = pow(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));  // gamma
     return vec4<f32>(col, 1.0);
 }
 """
@@ -332,18 +332,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sun = normalize(-globals.sun_direction);
 
     let Hr = 0.06 * Rg;
-    let Hm = 0.018 * Rg;
+    let Hm = 0.012 * Rg;
     let betaR = vec3<f32>(5.5, 13.0, 30.0) / Rg;
-    let betaM = vec3<f32>(1.1, 1.1, 1.1) / Rg;
-    let g = 0.76;
+    let betaM = vec3<f32>(0.5, 0.5, 0.5) / Rg;
+    let g = 0.78;
 
     let atm = ray_sphere(cam, dir, Ra);
     if atm.y < atm.x || atm.y < 0.0 { return vec4<f32>(0.0); }
     var t0 = max(atm.x, 0.0);
     var t1 = atm.y;
     let gnd = ray_sphere(cam, dir, Rg);
-    if gnd.x > 0.0 && gnd.x < t1 { t1 = gnd.x; }
+    let hits_ground = gnd.x > 0.0 && gnd.x < t1;
+    if hits_ground { t1 = gnd.x; }
     if t1 <= t0 { return vec4<f32>(0.0); }
+    // Rays that strike the planet (the disc) get their aerial haze knocked down so the
+    // surface keeps its true colours; rays that miss (the limb from space, every upward
+    // ray at the surface) keep the full sky/rim. View-dependent, so it holds at any altitude.
+    let haze = select(1.0, 0.28, hits_ground);
+    // Altitude fade: full sky near the surface; from space fade to a thin rim so the
+    // planet disc keeps its true colours instead of a milky additive veil.
+    let cam_alt = length(cam) - Rg;
+    let atmo_h = Ra - Rg;
+    let alt_gate = mix(1.0, 0.16, smoothstep(atmo_h, atmo_h * 3.0, cam_alt));
 
     let seg = (t1 - t0) / 16.0;
     var odR = 0.0;
@@ -385,10 +395,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         sumM = sumM + attn * dM;
     }
 
-    var col = material.params.z * max(globals.sun_intensity, 0.5)
+    var col = material.params.z * haze * alt_gate * max(globals.sun_intensity, 0.5)
               * (sumR * betaR * phaseR + sumM * betaM * phaseM);
     col = vec3<f32>(1.0) - exp(-col * material.params.w);   // exposure tonemap
     col = pow(col, vec3<f32>(1.0 / 2.2));
+    let lum = dot(col, vec3<f32>(0.2126, 0.7152, 0.0722));  // punch up saturation (art-directed)
+    col = max(mix(vec3<f32>(lum), col, 1.4), vec3<f32>(0.0));
     return vec4<f32>(col, 1.0);
 }
 """

@@ -24,7 +24,7 @@ from manifoldx.resources import DirectionalLight, StandardMaterial, AtmosphereSc
 from manifoldx.sky import starfield
 
 # ---- pure module-level world (imported cleanly by the worker process) --------
-R, SEA, PEAK, SUBDIV = 10.0, 0.65, 0.85, 6              # gentle terrain (peaks ~8.5% of radius)
+R, SEA, PEAK, SUBDIV = 10.0, 0.65, 0.85, 7             # gentle terrain (peaks ~8.5% of radius)
 RA = R * 1.20                                           # atmosphere top (the low orbit flies inside it)
 ALT_START = 32.0                                        # high-orbit start altitude
 ORBIT_ALT = 1.5                                         # low-orbit altitude (inside the atmosphere)
@@ -32,16 +32,23 @@ PITCH = 0.37                                           # down-tilt in low orbit 
 DESCENT_FRAMES = 190                                    # descent completes ~here; then orbit
 AZ_RATE = 0.010                                         # radians/frame the camera circles
 SUN_RATE = 0.0015                                       # slow sun; the orbit itself carries us into night
+SUN_I = 1.5                                             # sun intensity (kept low so land colours don't clip)
 SPACE = np.array([0.02, 0.03, 0.06])
 
+# Continents (ridged) + rolling hills + fine detail, domain-warped for organic coastlines.
 terrain = (
-    fields.ridged(seed=4, freq=0.28) * 0.72
-    + fields.fbm(seed=8, freq=0.9) * 0.18
-).warp(0.6, fx=fields.fbm(2, 0.4), fz=fields.fbm(9, 0.4)).remap(0.0, 1.0, -SEA, PEAK)
+    fields.ridged(seed=4, freq=0.24, octaves=5) * 0.72
+    + fields.fbm(seed=8, freq=0.8, octaves=5) * 0.20
+    + fields.fbm(seed=15, freq=2.6, octaves=3) * 0.06      # fine near-surface detail
+).warp(0.7, fx=fields.fbm(2, 0.38), fz=fields.fbm(9, 0.38)).remap(0.0, 1.0, -SEA, PEAK)
 
-biome = fields.distance().remap(R - SEA, R + PEAK, 0.0, 1.0).clamp(0.0, 1.0)
-palette = Gradient([(0.00, "#243a5e"), (0.26, "#c2b280"), (0.36, "#3f6f2e"),
-                    (0.60, "#5f6e38"), (0.78, "#7a6a52"), (0.90, "#9a9088"), (1.0, "#ffffff")])
+# Biome by elevation, with snow caps pushed in at high latitude.
+height01 = fields.distance().remap(R - SEA, R + PEAK, 0.0, 1.0).clamp(0.0, 1.0)
+polar = fields.coord("y").scale(1.0 / R).abs().remap(0.55, 0.92, 0.0, 1.0).clamp(0.0, 1.0)
+biome = (height01 + polar * 0.45).clamp(0.0, 1.0)
+palette = Gradient([(0.00, "#0a1a3a"), (0.40, "#14314f"), (0.44, "#d9c89a"),
+                    (0.50, "#3f8f2f"), (0.62, "#226b1f"), (0.72, "#6e5236"),
+                    (0.82, "#8a8378"), (0.90, "#f4f8ff"), (1.00, "#ffffff")])
 
 
 def build_planet():
@@ -55,7 +62,7 @@ def build_planet():
 def main():
     engine = mx.Engine("Planet Dive", width=1024, height=768)
     engine.background_color = tuple(SPACE)
-    engine.set_sun(DirectionalLight(color="#fff4e8", intensity=3.2, direction=(-0.6, -0.3, -0.55)))
+    engine.set_sun(DirectionalLight(color="#fff4e8", intensity=SUN_I, direction=(-0.6, -0.3, -0.55)))
 
     starfield(engine, count=1800, radius=R * 40.0, seed=11)   # space backdrop
     planet_geo = engine.submit_process(build_planet).wait()   # generate off-thread, block once
@@ -63,12 +70,12 @@ def main():
                  Material(StandardMaterial("#ffffff", roughness=0.95, vertex_colors=True)),
                  Transform())
     engine.spawn(Mesh(GeoMesh.icosphere(SUBDIV - 1, R).to_geometry()),
-                 Material(WaterMaterial(color="#0a2540", fresnel_power=4.0)),
+                 Material(WaterMaterial(color="#0a2352", fresnel_power=4.0)),
                  Transform())
     # Physically-based single-scattering atmosphere (Rayleigh+Mie) on a shell at RA.
     # Additive; provides the whole sky (blue day / sunset / dark night) from the sun angle.
     engine.spawn(Mesh(GeoMesh.icosphere(5, RA).to_geometry()),
-                 Material(AtmosphereScatteringMaterial(R, RA, intensity=3.0, exposure=1.1)),
+                 Material(AtmosphereScatteringMaterial(R, RA, intensity=6.0, exposure=1.4)),
                  Transform())
 
     clock = {"frame": 0}
@@ -80,7 +87,7 @@ def main():
         # Day/night: sweep the sun; water, terrain, and atmosphere all react to it.
         sun_az = 0.7 + f * SUN_RATE
         sd = np.array([np.cos(sun_az), -0.28, np.sin(sun_az)])
-        engine.set_sun(DirectionalLight(color="#fff4e8", intensity=3.2,
+        engine.set_sun(DirectionalLight(color="#fff4e8", intensity=SUN_I,
                                         direction=tuple(sd / np.linalg.norm(sd))))
         dp = min(f / DESCENT_FRAMES, 1.0)                     # descent progress → holds at 1
         dpe = dp * dp * (3 - 2 * dp)                          # smoothstep ease
