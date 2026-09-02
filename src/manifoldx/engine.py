@@ -971,8 +971,13 @@ class Engine:
         if frame_count is None:
             frame_count = int(duration * fps)
 
-        # Use fixed timestep for video rendering
+        # Use fixed timestep for video rendering. This has to go through
+        # set_fixed_timestep: otherwise _compute_dt() takes the wall-clock
+        # branch and overwrites self.elapsed every frame, so scripted camera
+        # paths get paced by how fast the host renders instead of by the
+        # video timeline.
         dt = 1.0 / fps
+        self.set_fixed_timestep(dt)
 
         # Import backends module for lazy canvas creation
         from manifoldx.backends import get_offscreen_canvas
