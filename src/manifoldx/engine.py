@@ -234,6 +234,7 @@ class Engine:
         # Still-frame rendering (render_frame): the offscreen canvas is created
         # once, at the first call's size.
         self._still_size = None
+        self._id_materials = {}  # label -> FlatMaterial, kept alive for the registry
 
         # Directional sun (separate from the point-light array). Consumed by
         # StandardMaterial as a directional term; also a shadow caster.
@@ -903,8 +904,37 @@ class Engine:
             frame = self._render_canvas.draw()
         return np.asarray(frame)[:, :, :3].copy()
 
+    def _flat_for_label(self, label: int):
+        from manifoldx.resources import FlatMaterial
+
+        if label not in self._id_materials:
+            rgb = ((label & 255) / 255, ((label >> 8) & 255) / 255, ((label >> 16) & 255) / 255)
+            self._id_materials[label] = FlatMaterial(rgb)
+        return self._id_materials[label]
+
     def _render_ids(self, groups):
-        raise NotImplementedError("ids pass: Task 6")
+        """Draw every entity flat in its group's label colour; restore afterwards.
+
+        Returns (h*ss, w*ss) int32 labels: 0 for background and entities in no
+        group, i + 1 for groups[i]. Labels are never downsampled.
+        """
+        mats = self.store._components["Material"]
+        alive = np.where(self.store._alive)[0]
+        saved = mats[alive].copy()
+        saved_view = (self.background_color, self._environment, self.fog_enabled)
+        try:
+            mats[alive, 0] = self._material_registry.register(self._flat_for_label(0))
+            for label, indices in enumerate(groups, start=1):
+                idx = np.asarray(list(indices), dtype=np.int64)
+                mats[idx, 0] = self._material_registry.register(self._flat_for_label(label))
+            self.background_color = (0.0, 0.0, 0.0)
+            self._environment = None
+            self.fog_enabled = False
+            rgb = self._draw_still().astype(np.int32)
+        finally:
+            mats[alive] = saved
+            self.background_color, self._environment, self.fog_enabled = saved_view
+        return rgb[..., 0] | (rgb[..., 1] << 8) | (rgb[..., 2] << 16)
 
     def _pump_aio_loop(self) -> None:
         """Drive the engine's asyncio loop until quiescent (when applicable).
