@@ -2,6 +2,7 @@
 import numpy as np
 
 from manifoldx.components import Material, Mesh, Transform
+from manifoldx.gui.style import parse_color
 from manifoldx.resources import StandardMaterial, sphere
 
 from .solve import PosedFigure
@@ -16,12 +17,13 @@ def _unit_sphere():
     return _UNIT_SPHERE
 
 
-def _shade(color: str, k: float) -> str:
-    r, g, b = (int(color.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
-    return "#%02x%02x%02x" % (int(r * k), int(g * k), int(b * k))
+def _shade(color, k: float) -> tuple[float, float, float]:
+    """`color` (hex string or float tuple) darkened by `k`."""
+    rgb = parse_color(color)[:3] if isinstance(color, str) else tuple(color)[:3]
+    return tuple(c * k for c in rgb)
 
 
-def spawn_mannequin(engine, fig: PosedFigure, at=(0.0, 0.0, 0.0), color: str = "#cccccc",
+def spawn_mannequin(engine, fig: PosedFigure, at=(0.0, 0.0, 0.0), color="#cccccc",
                     roughness: float = 0.6) -> list[int]:
     """Spawn every part of `fig` at world offset `at`; the nose is darker so gaze reads."""
     body = StandardMaterial(color=color, roughness=roughness)

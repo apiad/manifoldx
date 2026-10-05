@@ -32,3 +32,11 @@ def test_head_projects_onto_the_mannequin_in_the_id_pass():
     (x, y), = e.camera.project(head, 160, 120)[0]
     assert labels[int(y), int(x)] == 1
     assert labels[2, 2] == 0
+
+
+@pytest.mark.parametrize("color", ["#cc3333", (0.8, 0.2, 0.2), (0.8, 0.2, 0.2, 1.0)])
+def test_spawn_accepts_hex_and_tuple_colours(color):
+    # Review F1: a tuple colour used to crash in _shade (no .lstrip on tuple).
+    e = _engine()
+    fig = solve("stand", Proportions.measured("male"), height=1.7)
+    assert len(spawn_mannequin(e, fig, color=color)) == len(fig.parts)
