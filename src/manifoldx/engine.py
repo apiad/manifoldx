@@ -231,6 +231,10 @@ class Engine:
         # IBL environment — set via set_environment()
         self._environment = None
 
+        # Still-frame rendering (render_frame): the offscreen canvas is created
+        # once, at the first call's size.
+        self._still_size = None
+
         # Directional sun (separate from the point-light array). Consumed by
         # StandardMaterial as a directional term; also a shadow caster.
         self._sun = None
@@ -850,6 +854,53 @@ class Engine:
         self._device.queue.submit([command_encoder.finish()])
 
         return True  # Continue rendering
+
+    # One frame is enough: shadows and IBL are complete on the first frame
+    # (measured: identical output for 1, 2 and 3 frames, with shadows and with IBL).
+    _STILL_FRAMES = 1
+
+    def render_frame(self, *, supersample: int = 2, pass_: str = "beauty", groups=None):
+        """Render one still frame headless and return it as a numpy array.
+
+        beauty: (h, w, 3) uint8, sRGB, area-downsampled from (h*ss, w*ss).
+        Systems run once per drawn frame, so animated scenes advance.
+        """
+        if pass_ not in ("beauty", "ids"):
+            raise ValueError(f"pass_ must be 'beauty' or 'ids', got {pass_!r}")
+        self._ensure_offscreen(supersample)
+        if pass_ == "ids":
+            return self._render_ids(groups or [])
+        rgb = self._draw_still()
+        if supersample == 1:
+            return rgb
+        ss = supersample
+        small = rgb.reshape(self.h, ss, self.w, ss, 3).mean(axis=(1, 3))
+        return np.round(small).astype(np.uint8)
+
+    def _ensure_offscreen(self, supersample: int):
+        size = (self.w * supersample, self.h * supersample)
+        if self._still_size is None:
+            from manifoldx.backends import get_offscreen_canvas
+
+            self._init_canvas(get_offscreen_canvas(width=size[0], height=size[1]))
+            self._running = True
+            self._event_bus.dispatch_immediate(self, "startup", {})
+            self._still_size = size
+        elif self._still_size != size:
+            first = self._still_size[0] // self.w
+            raise ValueError(
+                f"render_frame: supersample is fixed at {first} for this engine, got {supersample}"
+            )
+
+    def _draw_still(self) -> np.ndarray:
+        frame = None
+        for _ in range(self._STILL_FRAMES):
+            self._draw_frame()
+            frame = self._render_canvas.draw()
+        return np.asarray(frame)[:, :, :3].copy()
+
+    def _render_ids(self, groups):
+        raise NotImplementedError("ids pass: Task 6")
 
     def _pump_aio_loop(self) -> None:
         """Drive the engine's asyncio loop until quiescent (when applicable).
