@@ -26,7 +26,7 @@ class PosedFigure:
     points: dict
     parts: list
     bounds: tuple
-    height: float
+    stature: float  # the figure standing; its posed height is in `bounds`
 
 
 def facing(origin, target) -> float:
@@ -84,5 +84,5 @@ def solve(pose, proportions: Proportions, height: float = 1.75, yaw: float = 0.0
         points={n: place(v) for n, v in points.items()},
         parts=[Part(p.kind, p.joint, place(p.center), p.rotation, p.radii * k) for p in parts],
         bounds=(place(lo), place(hi)),
-        height=height,
+        stature=height,
     )

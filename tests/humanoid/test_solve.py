@@ -108,3 +108,11 @@ def test_hands_behind_meet_at_the_lower_back(body):
         assert abs(hand[0]) < 0.06, hand
         assert p.dims["trochanter_height"] < hand[1] < p.dims["waist_height"] + 0.05, hand
         assert hand[2] < -0.07, hand  # behind the back
+
+
+def test_posed_figure_reports_stature_not_posed_height():
+    # Review F2: a seated figure reported height == 1.75 while spanning 1.342.
+    fig = solve("seated", _male(), height=1.75)
+    assert fig.stature == 1.75
+    assert not hasattr(fig, "height")
+    assert fig.bounds[1][1] - fig.bounds[0][1] < fig.stature
