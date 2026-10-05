@@ -37,3 +37,8 @@ def test_typos_fail_naming_the_bad_key(spec, bad):
 
 def test_joint_order_has_parents_first():
     assert JOINTS[0] == "pelvis" and JOINTS.index("spine") < JOINTS.index("shoulder_l")
+
+
+def test_a_bare_number_instead_of_angles_names_the_joint():
+    with pytest.raises(ValueError, match="shoulder_r"):
+        Pose.parse({"shoulder_r": 70})

@@ -55,3 +55,32 @@ def test_skybox_does_not_leak_into_the_background():
     e.set_environment(env)
     labels = e.render_frame(supersample=1, pass_="ids", groups=[[a], [b]])
     assert labels[2, 48] == 0
+
+
+def test_id_pass_ignores_point_clouds_and_gui():
+    # Review finding: a non-mesh entity used to get FlatMaterial and crash the
+    # sprite path; GUI panels used to blend into the label map.
+    e, a, b, _ = _scene()
+    from manifoldx.gui import Panel, Text
+    from manifoldx.viz import ColormapMaterial, PointCloud, Radius, ScalarValue
+    e.spawn(PointCloud(), Material(ColormapMaterial(cmap="viridis", vmin=0.0, vmax=1.0)),
+            Transform(pos=(0.0, -0.9, 0.0)), ScalarValue(value=0.5), Radius(radius=0.4), n=1)
+    e.gui.append(Panel(children=[Text("HUD")], anchor="top-left"))
+    labels = e.render_frame(supersample=1, pass_="ids", groups=[[a], [b]])
+    assert set(np.unique(labels)) <= {0, 1, 2}
+    assert len(e.gui) == 1  # restored
+
+
+def test_id_pass_does_not_run_the_simulation():
+    # Review finding: the id pass ran systems, so labels belonged to the next frame.
+    e, a, b, _ = _scene()
+    calls = []
+
+    @e.system
+    def tick(query: mx.Query[Transform], dt: float):
+        calls.append(1)
+
+    e.render_frame(supersample=1)
+    frame, n = e._frame_index, len(calls)
+    e.render_frame(supersample=1, pass_="ids", groups=[[a], [b]])
+    assert (e._frame_index, len(calls)) == (frame, n)

@@ -37,6 +37,8 @@ def _expand(spec: dict) -> dict[str, dict[str, float]]:
         if key not in PAIRS and key not in JOINTS:
             raise ValueError(f"unknown joint {key!r}; joints: {', '.join(JOINTS)}; "
                              f"both sides: {', '.join(PAIRS)}")
+        if not isinstance(angles, dict):
+            raise ValueError(f"{key!r}: expected {{angle: degrees}}, e.g. {{'flex': 30}}; got {angles!r}")
         for a in angles:
             if a not in ANGLES:
                 raise ValueError(f"unknown angle {a!r} on {key!r}; angles: {', '.join(ANGLES)}")

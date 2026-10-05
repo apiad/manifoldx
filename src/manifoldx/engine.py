@@ -117,6 +117,25 @@ class Task:
         return self
 
 
+
+def _configure_swapchain(context, device, adapter):
+    """Configure the canvas with an sRGB format and return the format used.
+
+    Shaders write linear colour and rely on the sRGB target to encode gamma
+    once. A plain 8-bit preferred format is upgraded to its sRGB variant; if
+    the surface rejects that, the plain format is used (colours then render
+    too dark, which beats failing to start).
+    """
+    preferred = str(context.get_preferred_format(adapter))
+    if preferred in ("rgba8unorm", "bgra8unorm"):
+        try:
+            context.configure(device=device, format=f"{preferred}-srgb")
+            return f"{preferred}-srgb"
+        except Exception:
+            pass
+    context.configure(device=device, format=preferred)
+    return preferred
+
 class Engine:
     def __init__(
         self,
@@ -714,15 +733,8 @@ class Engine:
         self._device = self._adapter.request_device_sync()
 
         # Get preferred texture format from canvas context
-        # Shaders write linear colour and the sRGB target encodes gamma, once.
-        # Force the sRGB variant when the preferred format is plain 8-bit.
-        texture_format = self._wgpu_context.get_preferred_format(self._adapter)
-        if str(texture_format) in ("rgba8unorm", "bgra8unorm"):
-            texture_format = f"{texture_format}-srgb"
-        self._texture_format = texture_format
-
-        # Configure the swap chain
-        self._wgpu_context.configure(device=self._device, format=texture_format)
+        # Configure the swap chain (sRGB target: it encodes gamma, once)
+        self._texture_format = _configure_swapchain(self._wgpu_context, self._device, self._adapter)
 
         # Update registries with device reference
         self._geometry_registry._device = self._device
@@ -801,6 +813,11 @@ class Engine:
         self._compute_runner.run_all(dt)
         self._frame_index += 1
 
+        self._render_only(dt)
+        return True  # Continue rendering
+
+    def _render_only(self, dt):
+        """Steps 8 onward of _draw_frame: draw the current state, no simulation."""
         # Step 8: render pipeline.
         self._render_pipeline.run(self, dt)
 
@@ -858,7 +875,6 @@ class Engine:
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
 
-        return True  # Continue rendering
 
     # One frame is enough: shadows and IBL are complete on the first frame
     # (measured: identical output for 1, 2 and 3 frames, with shadows and with IBL).
@@ -897,10 +913,13 @@ class Engine:
                 f"render_frame: supersample is fixed at {first} for this engine, got {supersample}"
             )
 
-    def _draw_still(self) -> np.ndarray:
+    def _draw_still(self, simulate: bool = True) -> np.ndarray:
         frame = None
         for _ in range(self._STILL_FRAMES):
-            self._draw_frame()
+            if simulate:
+                self._draw_frame()
+            else:
+                self._render_only(getattr(self, "_last_dt", 0.0) or 0.0)
             frame = self._render_canvas.draw()
         return np.asarray(frame)[:, :, :3].copy()
 
@@ -912,28 +931,54 @@ class Engine:
             self._id_materials[label] = FlatMaterial(rgb)
         return self._id_materials[label]
 
+    def _mesh_path_entities(self, alive):
+        """Alive entities the mesh pass draws: real geometry, not axis/label/volume."""
+        from manifoldx.viz import AxisMaterial, LabelMaterial, VolumeMaterial
+
+        comps = self.store._components
+        if "Mesh" not in comps:
+            return np.zeros(len(alive), dtype=bool)
+        geom = comps["Mesh"][alive, 0]
+        mat_ids = comps["Material"][alive, 0]
+        special = (AxisMaterial, LabelMaterial, VolumeMaterial)
+        return np.array([
+            g > 0 and not isinstance(self._material_registry.get(int(m)), special)
+            for g, m in zip(geom, mat_ids)
+        ], dtype=bool)
+
     def _render_ids(self, groups):
-        """Draw every entity flat in its group's label colour; restore afterwards.
+        """Draw every mesh flat in its group's label colour; restore afterwards.
 
         Returns (h*ss, w*ss) int32 labels: 0 for background and entities in no
-        group, i + 1 for groups[i]. Labels are never downsampled.
+        group, i + 1 for groups[i]. Labels are never downsampled. Non-mesh
+        entities (point clouds, labels, axes, volumes) and the GUI are hidden,
+        and no systems run: the labels describe the same state as the last
+        beauty frame.
         """
-        mats = self.store._components["Material"]
+        from manifoldx.gui.widgets import _GuiRoot
+
+        comps = self.store._components
+        mats = comps["Material"]
         alive = np.where(self.store._alive)[0]
-        saved = mats[alive].copy()
-        saved_view = (self.background_color, self._environment, self.fog_enabled)
+        meshes = alive[self._mesh_path_entities(alive)]
+        others = np.setdiff1d(alive, meshes)
+        saved_mats = mats[alive].copy()
+        saved_view = (self.background_color, self._environment, self.fog_enabled, self.gui)
         try:
-            mats[alive, 0] = self._material_registry.register(self._flat_for_label(0))
+            mats[meshes, 0] = self._material_registry.register(self._flat_for_label(0))
             for label, indices in enumerate(groups, start=1):
-                idx = np.asarray(list(indices), dtype=np.int64)
+                idx = np.intersect1d(np.asarray(list(indices), dtype=np.int64), meshes)
                 mats[idx, 0] = self._material_registry.register(self._flat_for_label(label))
+            self.store._alive[others] = False  # not drawn by any pass
             self.background_color = (0.0, 0.0, 0.0)
             self._environment = None
             self.fog_enabled = False
-            rgb = self._draw_still().astype(np.int32)
+            self.gui = _GuiRoot()
+            rgb = self._draw_still(simulate=False).astype(np.int32)
         finally:
-            mats[alive] = saved
-            self.background_color, self._environment, self.fog_enabled = saved_view
+            mats[alive] = saved_mats
+            self.store._alive[others] = True
+            self.background_color, self._environment, self.fog_enabled, self.gui = saved_view
         return rgb[..., 0] | (rgb[..., 1] << 8) | (rgb[..., 2] << 16)
 
     def _pump_aio_loop(self) -> None:
