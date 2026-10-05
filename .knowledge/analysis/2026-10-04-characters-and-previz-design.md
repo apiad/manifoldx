@@ -26,7 +26,7 @@ In:
 3. The double-gamma fix for sRGB targets.
 4. `FlatMaterial` and an id pass.
 5. `Camera.project(...)`: world points to pixel coordinates and depth.
-6. `examples/characters.py`.
+6. `examples/humanoid.py`.
 
 Out (later sub-projects or later versions): inverse kinematics, animation and
 skinning, hands with fingers, faces and expressions, clothing, props and
@@ -193,7 +193,7 @@ Per-op tests, as elsewhere in the repo:
 - **Projection:** `Camera.project` of a spawned sphere's centre lands on the
   sphere in `render_frame`'s output.
 - Render tests gate on `get_offscreen_canvas` and skip without a backend.
-- Smoke: `uv run python examples/characters.py --render`, three posed figures
+- Smoke: `uv run python examples/humanoid.py --render`, three posed figures
   with different presets.
 
 ## Decisions at review
