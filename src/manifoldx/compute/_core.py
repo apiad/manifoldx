@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, Optional, TypeVar
 
 import numpy as np
+from dataclasses import dataclass, field
 
 
 # =============================================================================
@@ -513,7 +514,6 @@ def _round_up(value: int, multiple: int) -> int:
     return ((value + multiple - 1) // multiple) * multiple
 
 
-from dataclasses import dataclass, field
 
 
 @dataclass
