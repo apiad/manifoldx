@@ -73,3 +73,38 @@ def test_facing_points_at_a_target():
     assert facing((0, 0), (0, 1)) == pytest.approx(0)
     assert facing((1, 0, 1), (1, 5, 0)) == pytest.approx(180)
 
+
+
+@pytest.mark.parametrize("body", ["male", "female"])
+def test_hands_on_hips_rests_each_hand_on_the_side_of_the_hip(body):
+    p = Proportions.measured(body)
+    fig = solve("hands_on_hips", p, height=1.0)
+    side_x = p.dims["hip_breadth"] / 2
+    hip_y = (p.dims["waist_height"] + p.dims["trochanter_height"]) / 2
+    for s, sign in (("l", 1), ("r", -1)):
+        hand = fig.points[f"hand_{s}"]
+        assert abs(hand[0] * sign - side_x) < 0.03, hand
+        assert abs(hand[1] - hip_y) < 0.03, hand
+        assert abs(hand[2]) < 0.04, hand  # not out in front of the body
+
+
+@pytest.mark.parametrize("body", ["male", "female"])
+def test_arms_crossed_brings_each_hand_across_the_chest(body):
+    p = Proportions.measured(body)
+    fig = solve("arms_crossed", p, height=1.0)
+    for s, sign in (("l", 1), ("r", -1)):
+        hand = fig.points[f"hand_{s}"]
+        assert hand[0] * sign < 0, hand  # past the midline, on the other side
+        assert p.dims["waist_height"] < hand[1] < p.dims["axilla_height"], hand
+        assert hand[2] > 0.05, hand  # in front of the chest
+
+
+@pytest.mark.parametrize("body", ["male", "female"])
+def test_hands_behind_meet_at_the_lower_back(body):
+    p = Proportions.measured(body)
+    fig = solve("hands_behind", p, height=1.0)
+    for s in ("l", "r"):
+        hand = fig.points[f"hand_{s}"]
+        assert abs(hand[0]) < 0.06, hand
+        assert p.dims["trochanter_height"] < hand[1] < p.dims["waist_height"] + 0.05, hand
+        assert hand[2] < -0.07, hand  # behind the back

@@ -46,6 +46,9 @@ def test_beauty_is_unchanged_by_an_id_pass():
 
 def test_skybox_does_not_leak_into_the_background():
     e, a, b, _ = _scene()
+    # Present one frame before enabling the skybox: enabling it before the
+    # first present locks up some drivers (CHANGELOG, IBL known limitation).
+    e.render_frame(supersample=1)
     from manifoldx.ibl import EnvironmentMap
     env = EnvironmentMap.from_sky(zenith=(0.2, 0.4, 0.9), horizon=(0.8, 0.8, 0.9), ground=(0.2, 0.2, 0.2))
     env.show_skybox = True

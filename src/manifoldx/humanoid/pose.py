@@ -18,10 +18,14 @@ POSES: dict[str, dict] = {
     "stand": {"shoulders": {"abduct": 6}, "elbows": {"flex": 10}},
     "t": {"shoulders": {"abduct": 90}},
     "seated": {"hips": {"flex": 90}, "knees": {"flex": 90}},
-    "arms_crossed": {"shoulders": {"flex": 30, "abduct": -25}, "elbows": {"flex": 115}},
-    "hands_on_hips": {"shoulders": {"abduct": 35, "flex": -10}, "elbows": {"flex": 100},
-                      "wrists": {"flex": -20}},
-    "hands_behind": {"shoulders": {"flex": -25, "abduct": -5}, "elbows": {"flex": 30}},
+    # Upper arms hang, rotated inward, so the bent forearms cross the chest.
+    "arms_crossed": {"shoulders": {"flex": 10, "abduct": 0, "twist": -60}, "elbows": {"flex": 105}},
+    # Elbows out, upper arms rotated inward so the bent forearms reach back to
+    # the side of the hip (found by search: hand within 1 cm of it).
+    "hands_on_hips": {"shoulders": {"abduct": 65, "flex": -10, "twist": -85},
+                      "elbows": {"flex": 120}, "wrists": {"flex": -20}},
+    # Arms back and rotated inward so the hands meet at the lower back.
+    "hands_behind": {"shoulders": {"flex": -40, "abduct": 40, "twist": -90}, "elbows": {"flex": 90}},
     "lean_rail": {"spine": {"flex": 12}, "shoulders": {"flex": 40}, "elbows": {"flex": 50}},
 }
 
