@@ -1,6 +1,6 @@
 # Characters and previz rendering
 
-**Status:** draft, awaiting review.
+**Status:** approved 2026-10-05. Package name: `manifoldx.humanoid`.
 
 Sub-project 1 of the mosaico scene-storytelling effort
 (`vault/Atlas/Architecture/2026-10-04-mosaico-scene-storytelling-design.md` in the
@@ -20,7 +20,7 @@ moves it into the engine with tests.
 
 In:
 
-1. `manifoldx.characters`: skeleton, poses, proportions, posing solver,
+1. `manifoldx.humanoid`: skeleton, poses, proportions, posing solver,
    mannequin builder.
 2. `Engine.render_frame(...)`: one still frame to a numpy array.
 3. The double-gamma fix for sRGB targets.
@@ -33,7 +33,7 @@ skinning, hands with fingers, faces and expressions, clothing, props and
 prefabs (they stay in mosaico for now), outline compositing (mosaico does it
 from the id map), running in the browser.
 
-## 1. `manifoldx.characters`
+## 1. `manifoldx.humanoid`
 
 ### Skeleton
 
@@ -95,7 +95,7 @@ end to end, the ANSUR II segment lengths overshoot the span by about 11%.
 ### Solver
 
 ```python
-fig = characters.solve(pose, proportions, height=1.45, yaw=55)
+fig = humanoid.solve(pose, proportions, height=1.45, yaw=55)
 fig.joints["wrist_r"]      # world position (3,)
 fig.rotations["wrist_r"]   # world quaternion (x, y, z, w)
 fig.points["head"]         # derived points
@@ -111,7 +111,7 @@ computes it, because mosaico's scenes say `facing: archimedes`.
 ### Mannequin
 
 ```python
-ids = characters.spawn_mannequin(engine, fig, at=(x, y, z), color="#d1495b")
+ids = humanoid.spawn_mannequin(engine, fig, at=(x, y, z), color="#d1495b")
 ```
 
 Spawns the parts as rounded volumes: limbs and torso as ellipsoids (unit
@@ -196,9 +196,8 @@ Per-op tests, as elsewhere in the repo:
 - Smoke: `uv run python examples/characters.py --render`, three posed figures
   with different presets.
 
-## Open questions
+## Decisions at review
 
-- Package name: `manifoldx.characters` or `manifoldx.humanoid`.
-- Whether `Proportions` presets belong in manifoldx or in mosaico. Measured
-  proportions are general; "disney" and "chibi" are a storytelling concern.
-  Proposed: both in manifoldx, since games need stylised bodies too.
+- Package name: `manifoldx.humanoid`.
+- Style presets live in manifoldx next to the measured proportions, because
+  games need stylised bodies too.
