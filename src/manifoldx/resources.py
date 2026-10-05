@@ -94,7 +94,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 
 class BasicMaterial(Material):
-    """Unlit material with flat color."""
+    """Flat colour with a fixed head-on light (0.3 ambient + 0.7 Lambert from (1, 1, 1))."""
 
     binding_slot = 0
 
@@ -123,6 +123,27 @@ class BasicMaterial(Material):
                 color = np.append(color, 1.0)
         return np.tile(color, (n, 1))
 
+
+
+_FLATMATERIAL_SHADER = _BASICMATERIAL_SHADER.replace(
+    """    let normal = normalize(in.world_normal);
+    let light_dir = normalize(vec3<f32>(0.5773, 0.5773, 0.5773));
+    let diffuse = max(dot(normal, light_dir), 0.0);
+    let brightness = 0.3 + 0.7 * diffuse;
+    return vec4<f32>(material.color.rgb * brightness, material.color.a);""",
+    """    return material.color;""",
+).replace("BasicMaterialUniforms", "FlatMaterialUniforms")
+
+
+class FlatMaterial(BasicMaterial):
+    """Outputs its colour unchanged: no lighting, no tone mapping, no gamma.
+
+    Used for id passes, where every pixel must carry its object's exact colour.
+    """
+
+    @classmethod
+    def _compile(cls) -> str:
+        return _FLATMATERIAL_SHADER
 
 _ATMOSPHERE_SHADER = """
 struct Globals {
