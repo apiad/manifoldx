@@ -97,6 +97,25 @@ class Camera:
 
         return proj
 
+    def project(self, points, width, height):
+        """World points to pixel coordinates (origin top-left) and camera depth.
+
+        Uses the same view and projection matrices as the renderer, so a point
+        lands on the pixel the GPU draws it at. Depth is the distance along the
+        viewing direction.
+        """
+        pts = np.atleast_2d(np.asarray(points, dtype=np.float64))
+        m = (
+            self.get_projection_matrix(width / height, near=self.near, far=self.far)
+            @ self.get_view_matrix()
+        ).astype(np.float64)
+        clip = np.c_[pts, np.ones(len(pts))] @ m.T
+        w = clip[:, 3]
+        xy = np.empty((len(pts), 2))
+        xy[:, 0] = (clip[:, 0] / w + 1) / 2 * width
+        xy[:, 1] = (1 - clip[:, 1] / w) / 2 * height
+        return xy, w
+
     def move_to(self, position):
         """Set camera world position."""
         self.position = np.array(position, dtype=np.float32)
