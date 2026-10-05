@@ -713,7 +713,11 @@ class Engine:
         self._device = self._adapter.request_device_sync()
 
         # Get preferred texture format from canvas context
+        # Shaders write linear colour and the sRGB target encodes gamma, once.
+        # Force the sRGB variant when the preferred format is plain 8-bit.
         texture_format = self._wgpu_context.get_preferred_format(self._adapter)
+        if str(texture_format) in ("rgba8unorm", "bgra8unorm"):
+            texture_format = f"{texture_format}-srgb"
         self._texture_format = texture_format
 
         # Configure the swap chain

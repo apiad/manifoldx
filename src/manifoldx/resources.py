@@ -145,6 +145,13 @@ class FlatMaterial(BasicMaterial):
     def _compile(cls) -> str:
         return _FLATMATERIAL_SHADER
 
+    def get_data(self, n: int, registry) -> np.ndarray:
+        """Colour decoded from sRGB, so the sRGB render target writes back the exact value."""
+        c = super().get_data(n, registry)
+        rgb = c[:, :3]
+        c[:, :3] = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+        return c
+
 _ATMOSPHERE_SHADER = """
 struct Globals {
     vp: mat4x4<f32>, view: mat4x4<f32>, proj: mat4x4<f32>,
@@ -264,7 +271,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     col += glint * sc * 0.20 * day;
 
     // No desaturating reinhard — water is LDR now, so keep the deep colour saturated.
-    col = pow(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));  // gamma
+    col = clamp(col, vec3<f32>(0.0), vec3<f32>(1.0));  // the sRGB render target encodes gamma
     return vec4<f32>(col, 1.0);
 }
 """
@@ -432,7 +439,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     col = col + warm * material.params.z * haze * alt_gate;
 
     col = vec3<f32>(1.0) - exp(-col * material.params.w);   // exposure tonemap
-    col = pow(col, vec3<f32>(1.0 / 2.2));
+    // gamma: the sRGB render target encodes it
     let lum = dot(col, vec3<f32>(0.2126, 0.7152, 0.0722));  // punch up saturation (art-directed)
     col = max(mix(vec3<f32>(lum), col, 1.4), vec3<f32>(0.0));
     return vec4<f32>(col, 1.0);
@@ -889,7 +896,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var color = ambient + Lo;
     color = color / (color + vec3<f32>(1.0));
-    color = pow(color, vec3<f32>(1.0 / 2.2));
+    // gamma: the sRGB render target encodes it
     if globals.fog_enabled != 0u {
         let fd = clamp((distance(globals.camera_pos, in.world_pos) - globals.fog_start)
                        / (globals.fog_end - globals.fog_start), 0.0, 1.0);

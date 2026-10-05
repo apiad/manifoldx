@@ -62,7 +62,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
               * globals.ibl_intensity;
     // Reinhard tone map + sRGB gamma
     let mapped = color / (color + vec3<f32>(1.0));
-    let srgb   = pow(mapped, vec3<f32>(1.0 / 2.2));
+    let srgb   = mapped;  // the sRGB render target encodes gamma
     return vec4<f32>(srgb, 1.0);
 }
 """

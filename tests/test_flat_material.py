@@ -16,12 +16,16 @@ def test_shader_has_no_lighting_term():
     assert "material.color" in src
 
 
-def test_hex_and_tuple_colours_become_vec4():
+def _decode(c):
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def test_colours_are_decoded_from_srgb_for_the_srgb_target():
     hexed = FlatMaterial("#cc2222").get_data(2, None)
     assert hexed.shape == (2, 4) and hexed.dtype == np.float32
-    assert np.allclose(hexed[0], [0xCC / 255, 0x22 / 255, 0x22 / 255, 1.0])
+    assert np.allclose(hexed[0], [_decode(0xCC / 255), _decode(0x22 / 255), _decode(0x22 / 255), 1.0])
     tup = FlatMaterial((0.1, 0.2, 0.3)).get_data(1, None)
-    assert np.allclose(tup[0], [0.1, 0.2, 0.3, 1.0])
+    assert np.allclose(tup[0], [_decode(0.1), _decode(0.2), _decode(0.3), 1.0])
 
 
 def test_basic_material_no_longer_claims_to_be_unlit():
