@@ -118,6 +118,21 @@ class Task:
 
 
 
+
+def _block_mode(labels: np.ndarray, ss: int) -> np.ndarray:
+    """Reduce (h*ss, w*ss) labels to (h, w), each pixel the most frequent label of its block.
+
+    A mode, not a mean: averaging ids would invent labels on every edge.
+    Ties go to the block's first (top-left) label.
+    """
+    if ss == 1:
+        return labels
+    h, w = labels.shape[0] // ss, labels.shape[1] // ss
+    blocks = labels.reshape(h, ss, w, ss).transpose(0, 2, 1, 3).reshape(h, w, ss * ss)
+    counts = np.stack([(blocks == blocks[..., k:k + 1]).sum(-1) for k in range(ss * ss)], axis=-1)
+    pick = counts.argmax(-1)
+    return np.take_along_axis(blocks, pick[..., None], axis=-1)[..., 0]
+
 def _configure_swapchain(context, device, adapter):
     """Configure the canvas with an sRGB format and return the format used.
 
@@ -894,7 +909,7 @@ class Engine:
             raise ValueError(f"pass_ must be 'beauty' or 'ids', got {pass_!r}")
         self._ensure_offscreen(supersample)
         if pass_ == "ids":
-            return self._render_ids(groups or [])
+            return _block_mode(self._render_ids(groups or []), supersample)
         if not self._use_fixed_dt:
             self.set_fixed_timestep(dt)
         rgb = self._draw_still()
@@ -957,7 +972,7 @@ class Engine:
         """Draw every mesh flat in its group's label colour; restore afterwards.
 
         Returns (h*ss, w*ss) int32 labels: 0 for background and entities in no
-        group, i + 1 for groups[i]. Labels are never downsampled. Non-mesh
+        group, i + 1 for groups[i]; render_frame reduces them to (h, w). Non-mesh
         entities (point clouds, labels, axes, volumes) and the GUI are hidden,
         and no systems run: the labels describe the same state as the last
         beauty frame.

@@ -84,3 +84,12 @@ def test_id_pass_does_not_run_the_simulation():
     frame, n = e._frame_index, len(calls)
     e.render_frame(supersample=1, pass_="ids", groups=[[a], [b]])
     assert (e._frame_index, len(calls)) == (frame, n)
+
+
+def test_labels_come_back_at_the_beauty_size():
+    # Review F4: labels came back at (h*ss, w*ss) while the beauty frame is (h, w).
+    e, a, b, _ = _scene()
+    beauty = e.render_frame(supersample=2)
+    labels = e.render_frame(supersample=2, pass_="ids", groups=[[a], [b]])
+    assert labels.shape == beauty.shape[:2] == (48, 96)
+    assert set(np.unique(labels)) == {0, 1, 2}  # a mode never invents labels
