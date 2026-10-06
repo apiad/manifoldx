@@ -40,6 +40,27 @@ class Material(ABC):
         return {}
 
 
+def srgb_to_linear(rgb) -> np.ndarray:
+    """sRGB components in [0, 1] to linear light (the exact sRGB curve)."""
+    c = np.asarray(rgb, dtype=np.float32)
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4).astype(np.float32)
+
+
+def material_rgb(color) -> np.ndarray:
+    """A material colour (hex string or float tuple, both sRGB) as linear RGB.
+
+    Material colours mean the same as texture texels, which are uploaded as
+    sRGB and decoded on sampling: `#cc2222` as `color=` and as an albedo map
+    render alike.
+    """
+    if isinstance(color, str):
+        h = color.lstrip("#")
+        rgb = [int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0]
+    else:
+        rgb = list(color[:3])
+    return srgb_to_linear(rgb)
+
+
 _BASICMATERIAL_SHADER = """
 struct Globals {
     vp: mat4x4<f32>,
@@ -111,16 +132,8 @@ class BasicMaterial(Material):
 
     def get_data(self, n: int, registry) -> np.ndarray:
         """Return material data as numpy array (color as vec4)."""
-        if isinstance(self.color, str):
-            color_hex = self.color.lstrip("#")
-            r = int(color_hex[0:2], 16) / 255.0
-            g = int(color_hex[2:4], 16) / 255.0
-            b = int(color_hex[4:6], 16) / 255.0
-            color = np.array([r, g, b, 1.0], dtype=np.float32)
-        else:
-            color = np.array(self.color, dtype=np.float32)
-            if len(color) == 3:
-                color = np.append(color, 1.0)
+        alpha = 1.0 if isinstance(self.color, str) or len(self.color) == 3 else float(self.color[3])
+        color = np.append(material_rgb(self.color), alpha).astype(np.float32)
         return np.tile(color, (n, 1))
 
 
@@ -145,12 +158,6 @@ class FlatMaterial(BasicMaterial):
     def _compile(cls) -> str:
         return _FLATMATERIAL_SHADER
 
-    def get_data(self, n: int, registry) -> np.ndarray:
-        """Colour decoded from sRGB, so the sRGB render target writes back the exact value."""
-        c = super().get_data(n, registry)
-        rgb = c[:, :3]
-        c[:, :3] = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
-        return c
 
 _ATMOSPHERE_SHADER = """
 struct Globals {
@@ -295,11 +302,7 @@ class WaterMaterial(Material):
         return {"params": "vec4<f32>"}
 
     def get_data(self, n: int, registry) -> np.ndarray:
-        if isinstance(self.color, str):
-            h = self.color.lstrip("#")
-            rgb = [int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255]
-        else:
-            rgb = list(self.color[:3])
+        rgb = material_rgb(self.color)
         return np.tile(np.array([*rgb, self.fresnel_power], dtype=np.float32), (n, 1))
 
 
@@ -625,11 +628,7 @@ class AtmosphereMaterial(Material):
         return {"params": "vec4<f32>"}
 
     def get_data(self, n: int, registry) -> np.ndarray:
-        if isinstance(self.color, str):
-            h = self.color.lstrip("#")
-            rgb = [int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255]
-        else:
-            rgb = list(self.color[:3])
+        rgb = material_rgb(self.color)
         return np.tile(np.array([*rgb, self.intensity], dtype=np.float32), (n, 1))
 
 
@@ -1059,14 +1058,7 @@ class StandardMaterial(Material):
 
     def get_data(self, n: int, registry) -> np.ndarray:
         """Return material data as numpy array (albedo, roughness, metallic, ao + padding)."""
-        if isinstance(self.color, str):
-            color_hex = self.color.lstrip("#")
-            r = int(color_hex[0:2], 16) / 255.0
-            g = int(color_hex[2:4], 16) / 255.0
-            b = int(color_hex[4:6], 16) / 255.0
-            albedo = np.array([r, g, b], dtype=np.float32)
-        else:
-            albedo = np.array(self.color[:3], dtype=np.float32)
+        albedo = material_rgb(self.color)
 
         data = np.zeros((n, 8), dtype=np.float32)
         data[:, 0:3] = albedo

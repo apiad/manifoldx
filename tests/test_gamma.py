@@ -36,11 +36,11 @@ def test_target_encodes_and_no_shader_encodes_again():
 
 
 def test_lit_colour_keeps_its_saturation():
-    # Measured in the 2026-10-04 playground: #cc2222 under a sun read back as
-    # (198, 148, 148) with double gamma (g/r 0.75) and (144, 76, 76) after
-    # undoing one encoding (g/r 0.53).
+    # #cc2222 under a sun, measured on zion: (216, 167, 167) with double gamma
+    # (g/r 0.77); about 0.5 with gamma encoded once but the colour taken as
+    # linear; (164, 47, 47) with the colour decoded from sRGB (g/r 0.29).
     e = _engine()
     e.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(0, 0, -1)))
     e.spawn(Mesh(plane(10, 10)), Material(StandardMaterial(color="#cc2222", roughness=0.9)), Transform(pos=(0, 0, 0)))
     r, g, b = (int(v) for v in e.render_frame(supersample=1)[16, 16])
-    assert g / r < 0.65, (r, g, b)
+    assert g / r < 0.40, (r, g, b)
