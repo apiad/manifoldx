@@ -880,18 +880,25 @@ class Engine:
     # (measured: identical output for 1, 2 and 3 frames, with shadows and with IBL).
     _STILL_FRAMES = 1
 
-    def render_frame(self, *, supersample: int = 2, pass_: str = "beauty", groups=None):
+    def render_frame(self, *, supersample: int = 2, pass_: str = "beauty", groups=None,
+                     dt: float = 1 / 30):
         """Render one still frame headless and return it as a numpy array.
 
         beauty: (h, w, 3) uint8, sRGB, area-downsampled from (h*ss, w*ss).
-        Systems run once per drawn frame, so animated scenes advance.
+        Systems run once per beauty frame with a fixed `dt` (unless the engine
+        already has a fixed timestep), so an animated scene renders the same
+        whatever the wall clock does. The first call replaces the engine's
+        canvas with an offscreen one.
         """
         if pass_ not in ("beauty", "ids"):
             raise ValueError(f"pass_ must be 'beauty' or 'ids', got {pass_!r}")
         self._ensure_offscreen(supersample)
         if pass_ == "ids":
             return self._render_ids(groups or [])
+        if not self._use_fixed_dt:
+            self.set_fixed_timestep(dt)
         rgb = self._draw_still()
+        self.elapsed += self._fixed_dt_value
         if supersample == 1:
             return rgb
         ss = supersample

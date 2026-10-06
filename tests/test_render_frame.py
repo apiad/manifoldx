@@ -47,3 +47,29 @@ def test_unknown_pass_is_rejected():
     e = _engine()
     with pytest.raises(ValueError, match="pass_"):
         e.render_frame(pass_="depth")
+
+
+def test_animated_scene_is_reproducible_whatever_the_wall_clock():
+    # Review F3: render_frame simulated with wall-clock dt, so the same scene
+    # rendered with pauses between calls drifted.
+    import time
+    from manifoldx.components import Material, Mesh, Transform
+    from manifoldx.resources import FlatMaterial, cube
+
+    shots = []
+    for pause in (0.0, 0.2):
+        e = _engine()
+        e.spawn(Mesh(cube(0.4, 0.4, 0.4)), Material(FlatMaterial("#ffffff")), Transform(pos=(-1.0, 0, 0)))
+        e.camera.set_pose(position=(0, 0, 4), target=(0, 0, 0))
+
+        @e.system
+        def slide(query: mx.Query[Transform], dt: float):
+            pos = query[Transform].pos.data.copy()
+            pos[:, 0] += 2.0 * dt
+            query[Transform].pos = pos
+
+        for _ in range(3):
+            time.sleep(pause)
+            img = e.render_frame(supersample=1)
+        shots.append(img)
+    assert np.array_equal(shots[0], shots[1])
