@@ -76,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as a colour and (98, 19, 19) as a texture under the same light. Every
   material colour is now sRGB and decoded (`resources.material_rgb`), as in
   three.js and Blender. Together with the gamma fix, scenes render darker and
-  more saturated than before; the demos were re-tuned for it.
+  more saturated than before. Re-tuning the demos' lighting is tracked in #6.
 - `BasicMaterial`'s docstring claimed it was unlit; it applies a fixed light.
 
 - **Offline render was paced by the wall clock, not the video clock.** `render()` computed `dt = 1.0 / fps` under a "use fixed timestep for video rendering" comment but never called `set_fixed_timestep`, so `_compute_dt()` kept taking the wall-clock branch and overwrote `self.elapsed` with real elapsed seconds on every frame — clobbering the `self.elapsed = (frame_idx + 1) * dt` the render loop assigned. Systems reading `engine.elapsed` therefore saw *how long the render had been running*, so a scripted camera path advanced at whatever rate the host GPU happened to achieve. Concretely, a `--render --duration 26 --fps 12` pass on an Intel iGPU produced 312 correct frames containing only ~12 s of animation (the flythrough never left its first phase), and the same script on faster hardware would produce different motion. Every `demos/` flythrough was affected. Fixed by routing the computed `dt` through `set_fixed_timestep(dt)`; regression test in `tests/test_render_clock.py` asserts frame `i` observes `elapsed == i / fps` and that systems receive `dt == 1 / fps`.
