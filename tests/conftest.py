@@ -1,4 +1,4 @@
-"""pytest configuration - mock display-dependent modules for headless testing."""
+"""pytest configuration: mock display-dependent modules, skip GPU tests without a GPU."""
 
 import pytest
 from unittest.mock import MagicMock, patch
@@ -20,3 +20,35 @@ def mock_rendercanvas(monkeypatch):
         sys.modules["rendercanvas.glfw"] = mock_glfw
 
     yield
+
+
+def _gpu_adapter_available() -> bool:
+    try:
+        import wgpu
+
+        return wgpu.gpu.request_adapter_sync() is not None
+    except Exception:
+        return False
+
+
+def pytest_configure(config):
+    """Without a GPU adapter (CI runners), every adapter request skips its test.
+
+    Most render tests only guard on `get_offscreen_canvas`, which does not
+    touch the GPU, so on a GPU-less machine they used to error inside
+    `Engine._init_canvas`. Patching the adapter request turns every such
+    path, in fixtures or test bodies, into a clean skip with a reason.
+    """
+    if _gpu_adapter_available():
+        return
+    import wgpu
+
+    def _no_gpu(*args, **kwargs):
+        pytest.skip("no GPU adapter on this machine")
+
+    async def _no_gpu_async(*args, **kwargs):
+        pytest.skip("no GPU adapter on this machine")
+
+    # The first request above replaced wgpu.gpu with the backend's object.
+    wgpu.gpu.request_adapter_sync = _no_gpu
+    wgpu.gpu.request_adapter_async = _no_gpu_async

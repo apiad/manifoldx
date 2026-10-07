@@ -1,5 +1,5 @@
 import numpy as np
-from manifoldx.resources import AtmosphereMaterial
+from manifoldx.resources import AtmosphereMaterial, srgb_to_linear
 
 
 def test_glow_subtype_and_shader():
@@ -13,7 +13,8 @@ def test_glow_subtype_and_shader():
 def test_glow_uniform_is_rgb_intensity():
     d = AtmosphereMaterial((0.5, 0.7, 1.0), intensity=2.0).get_data(3, None)
     assert d.shape == (3, 4)
-    assert np.allclose(d[0], [0.5, 0.7, 1.0, 2.0])
+    # colours are sRGB and arrive decoded to linear; the intensity is passed through
+    assert np.allclose(d[0], [*srgb_to_linear([0.5, 0.7, 1.0]), 2.0])
 
 
 def test_atmosphere_is_sun_aware():

@@ -1,5 +1,5 @@
 import numpy as np
-from manifoldx.resources import WaterMaterial
+from manifoldx.resources import WaterMaterial, srgb_to_linear
 
 
 def test_water_shader_is_sun_aware_and_unlit():
@@ -12,4 +12,5 @@ def test_water_shader_is_sun_aware_and_unlit():
 def test_water_uniform_is_deep_color_plus_fresnel():
     d = WaterMaterial((0.05, 0.2, 0.4), fresnel_power=4.0).get_data(2, None)
     assert d.shape == (2, 4)
-    assert np.allclose(d[0], [0.05, 0.2, 0.4, 4.0])
+    # colours are sRGB and arrive decoded to linear; fresnel power is passed through
+    assert np.allclose(d[0], [*srgb_to_linear([0.05, 0.2, 0.4]), 4.0])

@@ -24,9 +24,10 @@ jobs:
           python-version: '3.13'
 
       - name: Install dependencies
-        # CI uses offline-only backend for headless rendering (video output)
-        # Desktop GUI tests are skipped in CI
-        run: uv sync --extra offline --dev
+        # Offline backend for headless rendering, Pillow (viz) for the texture
+        # tests. The runner has no GPU: tests/conftest.py turns every GPU
+        # adapter request into a skip, so render tests skip instead of erroring.
+        run: uv sync --extra offline --extra viz --dev
 
       - name: Run tests
         # Tests should pass with OFFSCREEN backend only
