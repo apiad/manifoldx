@@ -123,3 +123,16 @@ def test_top_level_export():
     import manifoldx as mx
     assert hasattr(mx, "load_obj")
     assert hasattr(mx, "load_texture")
+
+
+def test_uvs_convert_obj_bottom_left_origin_to_top_left(tmp_path):
+    """OBJ puts v=0 at the bottom of the image; textures are uploaded top row
+    first, so the loader must return v' = 1 - v (issue #7)."""
+    from manifoldx.assets.obj import load_obj
+    obj_path = tmp_path / "quad.obj"
+    obj_path.write_text(QUAD)
+
+    geo = load_obj(obj_path)
+    uv_at = {tuple(p): tuple(uv) for p, uv in zip(geo["positions"].tolist(), geo["uvs"].tolist())}
+    assert uv_at[(0.0, 0.0, 0.0)] == (0.0, 1.0)   # vt 0 0: bottom-left of the image
+    assert uv_at[(1.0, 1.0, 0.0)] == (1.0, 0.0)   # vt 1 1: top-right of the image

@@ -31,7 +31,7 @@ def load_obj(path: str | Path) -> dict:
         {"name": str,
          "positions": (N, 3) float32,
          "normals":   (N, 3) float32,   # present if file has normals
-         "uvs":       (N, 2) float32,   # present if file has UVs
+         "uvs":       (N, 2) float32,   # present if file has UVs; v flipped to top-left origin
          "indices":   (M,)   uint32}
     """
     p = Path(path)
@@ -155,7 +155,10 @@ def _build_geometry(name, raw_positions, raw_normals, raw_uvs,
         if has_normal and ni is not None:
             normals_out.append(raw_normals[ni])
         if has_uv and ti is not None:
-            uvs_out.append(raw_uvs[ti])
+            # OBJ puts v=0 at the bottom of the image; textures are uploaded
+            # top row first, so flip to the engine's top-left origin.
+            u, v = raw_uvs[ti]
+            uvs_out.append([u, 1.0 - v])
         indices_out.append(vi)
 
     geo = {

@@ -127,3 +127,38 @@ def test_two_same_class_materials_get_separate_uniform_buffers():
     # _material_buffers_by_mat_id.
     buffers = engine._render_pipeline._material_buffers_by_mat_id
     assert len(buffers) >= 2, f"expected ≥2 distinct material buffers, got {len(buffers)}"
+
+
+def test_obj_quad_samples_texture_upright(tmp_path):
+    """An OBJ quad with standard UVs shows the image the right way up: the
+    top half of the texture lands on the top half of the quad (issue #7)."""
+    from manifoldx.assets.obj import load_obj
+    from manifoldx.components import Transform, Mesh, Material
+    from manifoldx.resources import StandardMaterial, PointLight
+    from manifoldx.textures import load_texture
+
+    engine = _make_offscreen_engine("obj-upright", w=96, h=96)
+    obj_path = tmp_path / "quad.obj"
+    obj_path.write_text(
+        "v -1 -1 0\nv 1 -1 0\nv 1 1 0\nv -1 1 0\nvn 0 0 1\n"
+        "vt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nf 1/1/1 2/2/1 3/3/1 4/4/1\n"
+    )
+    img = np.zeros((8, 8, 4), dtype=np.uint8)
+    img[:4] = (230, 20, 20, 255)   # top half of the image: red
+    img[4:] = (20, 20, 230, 255)   # bottom half: blue
+    png_path = tmp_path / "updown.png"
+    Image.fromarray(img, mode="RGBA").save(png_path)
+
+    tex = load_texture(engine, png_path)
+    engine.spawn(Mesh(load_obj(obj_path)),
+                 Material(StandardMaterial(color="#ffffff", roughness=0.9, albedo_map=tex)),
+                 Transform(pos=(0, 0, 0)))
+    engine.add_light(PointLight(position=(0, 0, 3), color="#ffffff", intensity=30.0))
+    engine.camera.set_pose(position=(0, 0, 3), target=(0, 0, 0))
+    engine._draw_frame()
+    frame = engine._render_canvas.draw()[..., :3].astype(int)
+
+    h = frame.shape[0]
+    upper, lower = frame[h // 2 - 12:h // 2 - 4, 40:56], frame[h // 2 + 4:h // 2 + 12, 40:56]
+    assert (upper[..., 0] > upper[..., 2]).mean() > 0.9, "top of the quad should be red"
+    assert (lower[..., 2] > lower[..., 0]).mean() > 0.9, "bottom of the quad should be blue"
