@@ -97,5 +97,5 @@ def test_names_and_extras_can_be_functions(tmp_path):
     e.export_gltf(tmp_path / "s.glb", names=lambda i: "first" if i == a.index else None,
                   extras=lambda i: {"pick": f"p{i}"} if i == b.index else None)
     named = {n.name: n for n in load(tmp_path / "s.glb").nodes}
-    assert "first" in named and named["first"].extras is None
+    assert "first" in named and not named["first"].extras  # pygltflib reads absent extras as {}
     assert named[f"entity_{b.index}"].extras == {"pick": f"p{b.index}"}
