@@ -928,7 +928,8 @@ class Engine:
         written. Systems, event handlers, GUI, compute and materials without a
         glTF equivalent are listed in the returned report, which is also
         printed and saved next to the file. `names` and `extras` map entity
-        indices to node names and JSON extras. With strict=True an incomplete
+        indices to node names and JSON extras; each may be a dict or a function
+        of the index, called after startup so it sees startup-spawned entities. With strict=True an incomplete
         export raises ExportIncomplete and writes nothing.
         """
         from manifoldx.gltf.engine_export import export_engine

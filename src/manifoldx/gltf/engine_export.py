@@ -68,7 +68,15 @@ def scene_extras(engine):
     return extras
 
 
+def _lookup(table):
+    """A dict, or a function evaluated after startup (when startup-spawned entities exist)."""
+    if table is None:
+        return lambda _i: None
+    return table if callable(table) else table.get
+
+
 def nodes(engine, names, extras):
+    name_of, extras_of = _lookup(names), _lookup(extras)
     comps = engine.store._components
     out = []
     for i in np.where(engine.store._alive)[0]:
@@ -79,7 +87,7 @@ def nodes(engine, names, extras):
         t = comps["Transform"][i]
         out.append(Node(engine._geometry_registry.get(gid), engine._material_registry.get(mid),
                         pos=tuple(t[0:3]), rot=tuple(t[3:7]), scale=tuple(t[7:10]),
-                        name=names.get(i, f"entity_{i}"), extras=extras.get(i)))
+                        name=name_of(i) or f"entity_{i}", extras=extras_of(i)))
     return out
 
 
@@ -88,7 +96,7 @@ def export_engine(engine, path, *, names=None, extras=None, strict=False):
         engine._ensure_offscreen(1)  # startup handlers may need the device (load_texture)
     report = code_report(engine)
     lights = [light for light in (engine._sun, engine._spot) if light is not None] + list(engine._lights)
-    data, written = build_glb(nodes(engine, names or {}, extras or {}), camera=engine.camera, lights=lights,
+    data, written = build_glb(nodes(engine, names, extras), camera=engine.camera, lights=lights,
                               environment=engine._environment, scene_extras=scene_extras(engine))
     report.extend(written)
     report.print()

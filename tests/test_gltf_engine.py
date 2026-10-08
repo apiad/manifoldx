@@ -90,3 +90,12 @@ def test_startup_spawns_are_exported(tmp_path):
 
     report = e.export_gltf(tmp_path / "s.glb")
     assert len(load(tmp_path / "s.glb").meshes) == 1 and len(report) == 0
+
+
+def test_names_and_extras_can_be_functions(tmp_path):
+    e, a, b = scene()
+    e.export_gltf(tmp_path / "s.glb", names=lambda i: "first" if i == a.index else None,
+                  extras=lambda i: {"pick": f"p{i}"} if i == b.index else None)
+    named = {n.name: n for n in load(tmp_path / "s.glb").nodes}
+    assert "first" in named and named["first"].extras is None
+    assert named[f"entity_{b.index}"].extras == {"pick": f"p{b.index}"}
