@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+- **Mipmapped textures.** `load_texture` builds the full mip chain (box-filtered halvings
+  down to 1x1) and samples it trilinearly with 8x anisotropic filtering, so a texture
+  tiled across a large mesh no longer turns to crawling noise at a distance (#21).
+
 - **`manifoldx.humanoid`**: posable mannequins. A 15-joint skeleton with anatomical
   angles (`flex`, `abduct`, `twist`, `lean`), a pose library with `base` plus
   overrides, ANSUR II proportions with style presets (heroic, disney, anime,
