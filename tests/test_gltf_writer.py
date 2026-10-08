@@ -172,3 +172,42 @@ def test_modeling_mesh_is_accepted(tmp_path):
     out = tmp_path / "a.glb"
     export_gltf(out, [Node(GeoMesh.plane(width=2, depth=2, segments=4), StandardMaterial("#ffffff"))])
     assert len(load(out).meshes) == 1
+
+
+def test_one_geometry_shares_its_accessors_across_materials(tmp_path):
+    geo = cube(1, 1, 1)
+    out = tmp_path / "a.glb"
+    export_gltf(out, [Node(geo, StandardMaterial("#ffffff")) for _ in range(30)])
+    g = load(out)
+    assert len(g.accessors) == len(geo) and len({m.primitives[0].attributes.POSITION for m in g.meshes}) == 1
+
+
+def test_nan_is_refused_with_the_node_name(tmp_path):
+    with pytest.raises(ValueError, match="'wall'"):
+        export_gltf(tmp_path / "a.glb", [Node(tri(), StandardMaterial("#ffffff"), name="wall",
+                                               extras={"a": float("nan")})])
+
+
+def test_camera_on_its_target_is_reported_not_written_as_nan(tmp_path):
+    from manifoldx.camera import Camera
+
+    cam = Camera(position=(1, 2, 3), target=(0, 0, 0))
+    cam.target = cam.position.copy()
+    report = export_gltf(tmp_path / "a.glb", [], camera=cam)
+    assert b"NaN" not in (tmp_path / "a.glb").read_bytes()
+    assert [(e.kind, e.effect) for e in report] == [("camera", "dropped")]
+
+
+def test_texture_is_not_tinted_by_the_colour(tmp_path):
+    """manifoldx's textured shader ignores color= and vertex colours; glTF would multiply them in."""
+    from PIL import Image
+
+    src = tmp_path / "t.png"
+    Image.new("RGB", (2, 2)).save(src)
+    tex = TextureHandle(id=1, texture=None, view=None, sampler=None, size=(2, 2), source=src)
+    geo = tri() | {"colors": np.full((3, 3), 0.5, np.float32)}
+    out = tmp_path / "a.glb"
+    export_gltf(out, [Node(geo, StandardMaterial("#cc2222", albedo_map=tex, vertex_colors=True))])
+    g = load(out)
+    assert g.materials[0].pbrMetallicRoughness.baseColorFactor == [1, 1, 1, 1]
+    assert g.meshes[0].primitives[0].attributes.COLOR_0 is None

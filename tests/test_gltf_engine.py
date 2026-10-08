@@ -99,3 +99,27 @@ def test_names_and_extras_can_be_functions(tmp_path):
     named = {n.name: n for n in load(tmp_path / "s.glb").nodes}
     assert "first" in named and not named["first"].extras  # pygltflib reads absent extras as {}
     assert named[f"entity_{b.index}"].extras == {"pick": f"p{b.index}"}
+
+
+def test_entities_without_a_mesh_are_reported(tmp_path):
+    from manifoldx.viz import ColormapMaterial, PointCloud, VolumeMaterial
+    from manifoldx.viz.components import Volume
+
+    e = mx.Engine("t", width=64, height=48)
+    vol = e.register_volume(np.zeros((4, 4, 4), np.float32))
+    e.spawn(Volume(volume_id=vol), Material(VolumeMaterial()), Transform())
+    e.spawn(PointCloud(), Material(ColormapMaterial(cmap="inferno", vmin=0.0, vmax=1.0)), Transform(pos=np.zeros((5, 3), np.float32)), n=5)
+    report = e.export_gltf(tmp_path / "s.glb")
+    rows = {(r.kind, r.name, r.effect, r.count) for r in report}
+    assert ("entity", "VolumeMaterial", "dropped", 1) in rows
+    assert ("entity", "ColormapMaterial", "dropped", 5) in rows
+    with pytest.raises(ExportIncomplete):
+        e.export_gltf(tmp_path / "t.glb", strict=True)
+
+
+def test_mesh_without_material_is_written_like_the_renderer_draws_it(tmp_path):
+    e = mx.Engine("t", width=64, height=48)
+    e.spawn(Mesh(cube(1, 1, 1)), Transform())
+    report = e.export_gltf(tmp_path / "s.glb")
+    assert len(load(tmp_path / "s.glb").meshes) == 1
+    assert [(r.kind, r.name, r.effect) for r in report] == [("material", "BasicMaterial", "approximated")]

@@ -107,6 +107,7 @@ class _Writer:
         self.b = GlbBuilder()
         self.report = ExportReport()
         self._meshes = {}  # (id(geometry), material index, colours) -> mesh index
+        self._geometry = {}  # (id(geometry), colours) -> (attributes, indices accessor)
         self._materials = {}  # id(material) -> (index or None, note or None)
         self._textures = {}  # TextureHandle.id -> texture index or None
         self._sampler = None
@@ -116,19 +117,26 @@ class _Writer:
         name = node.name or f"node_{i}"
         if node.extras is not None:
             try:
-                json.dumps(node.extras)
-            except TypeError as e:
-                raise TypeError(f"extras of node {name!r} are not JSON-serialisable: {e}") from None
+                json.dumps(node.extras, allow_nan=False)
+            except (TypeError, ValueError) as e:
+                raise type(e)(f"extras of node {name!r} are not JSON-serialisable: {e}") from None
         mat, note = self.material(node.material)
         if note is not None:
             self.report.add("material", *note)
             if note[1] == "dropped" and note[0] != "StandardMaterial.ao":
                 return
-        colors = bool(getattr(node.material, "vertex_colors", False))
+        # The textured pipeline ignores vertex colours, so glTF must not multiply them in.
+        colors = bool(getattr(node.material, "vertex_colors", False)) and getattr(node.material, "albedo_map",
+                                                                                 None) is None
         key = (id(node.geometry), mat, colors)
         if key not in self._meshes:
-            geo = node.geometry.to_geometry() if hasattr(node.geometry, "to_geometry") else node.geometry
-            self._meshes[key] = self.b.add("meshes", {"primitives": [self.primitive(geo, mat, colors)]})
+            attrs, indices = self.geometry(node.geometry, colors)
+            prim = {"attributes": dict(attrs), "mode": 4}
+            if indices is not None:
+                prim["indices"] = indices
+            if mat is not None:
+                prim["material"] = mat
+            self._meshes[key] = self.b.add("meshes", {"primitives": [prim]})
         entry = {"name": name, "mesh": self._meshes[key]}
         for key_, value, default in (("translation", node.pos, (0, 0, 0)), ("rotation", node.rot, (0, 0, 0, 1)),
                                      ("scale", node.scale, (1, 1, 1))):
@@ -139,7 +147,15 @@ class _Writer:
             entry["extras"] = node.extras
         self._roots.append(self.b.add("nodes", entry))
 
-    def primitive(self, geo, mat, colors):
+    def geometry(self, geometry, colors):
+        """Accessors for a geometry, written once however many materials use it."""
+        key = (id(geometry), colors)
+        if key not in self._geometry:
+            geo = geometry.to_geometry() if hasattr(geometry, "to_geometry") else geometry
+            self._geometry[key] = self.accessors(geo, colors)
+        return self._geometry[key]
+
+    def accessors(self, geo, colors):
         pos = np.asarray(geo["positions"] if "positions" in geo else geo["vertices"], np.float32)
         attrs = {"POSITION": self.b.accessor(pos, target=ARRAY_BUFFER, bounds=True)}
         if "normals" in geo:
@@ -148,15 +164,13 @@ class _Writer:
             attrs["TEXCOORD_0"] = self.b.accessor(np.asarray(geo["uvs"], np.float32), target=ARRAY_BUFFER)
         if colors and "colors" in geo:
             attrs["COLOR_0"] = self.b.accessor(np.asarray(geo["colors"], np.float32), target=ARRAY_BUFFER)
-        prim = {"attributes": attrs, "mode": 4}
+        indices = None
         if "indices" in geo:
             # glTF forbids the component type's maximum value as an index.
             dtype = np.uint16 if len(pos) < 0xFFFF else np.uint32
             idx = np.asarray(geo["indices"]).reshape(-1).astype(dtype)
-            prim["indices"] = self.b.accessor(idx, target=ELEMENT_ARRAY_BUFFER)
-        if mat is not None:
-            prim["material"] = mat
-        return prim
+            indices = self.b.accessor(idx, target=ELEMENT_ARRAY_BUFFER)
+        return attrs, indices
 
     def material(self, mat):
         if mat is None:
@@ -176,8 +190,9 @@ class _Writer:
                    "roughnessFactor": float(mat.roughness)}
             if mat.albedo_map is not None:
                 tex = self.texture(mat.albedo_map)
-                if tex is not None:
+                if tex is not None:  # the textured shader ignores color=, so glTF must not tint
                     pbr["baseColorTexture"] = {"index": tex}
+                    pbr["baseColorFactor"] = [1.0, 1.0, 1.0, pbr["baseColorFactor"][3]]
             if mat.ao != 1.0:
                 note = ("StandardMaterial.ao", "dropped", "glTF has ambient occlusion only as a texture")
             out = {"pbrMetallicRoughness": pbr}
@@ -214,6 +229,10 @@ class _Writer:
         return self._textures[handle.id]
 
     def camera(self, cam):
+        forward = np.asarray(cam.target, float) - np.asarray(cam.position, float)
+        if not np.all(np.isfinite(forward)) or not np.linalg.norm(forward) > 0:
+            self.report.add("camera", "camera", "dropped", "its position equals its target, so it has no direction")
+            return
         index = self.b.add("cameras", {"type": "perspective", "perspective": {
             "yfov": float(np.radians(cam.fov)), "znear": float(cam.near), "zfar": float(cam.far)}})
         pos = [float(c) for c in cam.position]

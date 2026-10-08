@@ -75,17 +75,28 @@ def _lookup(table):
     return table if callable(table) else table.get
 
 
-def nodes(engine, names, extras):
+def nodes(engine, names, extras, report):
+    from manifoldx.resources import BasicMaterial
+
+    unlit = None  # the renderer draws a mesh without a Material as a white BasicMaterial
     name_of, extras_of = _lookup(names), _lookup(extras)
     comps = engine.store._components
     out = []
     for i in np.where(engine.store._alive)[0]:
         i = int(i)
-        gid, mid = int(comps["Mesh"][i, 0]), int(comps["Material"][i, 0])
-        if gid == 0 or mid == 0:
+        gid = int(comps["Mesh"][i, 0]) if "Mesh" in comps else 0
+        mid = int(comps["Material"][i, 0]) if "Material" in comps else 0
+        material = engine._material_registry.get(mid) if mid else None
+        if gid == 0:
+            if material is not None:
+                report.add("entity", type(material).__name__, "dropped",
+                           "drawn without a mesh (point cloud, label or volume); glTF has no equivalent")
             continue
+        if material is None:
+            unlit = unlit or BasicMaterial("#ffffff")
+            material = unlit
         t = comps["Transform"][i]
-        out.append(Node(engine._geometry_registry.get(gid), engine._material_registry.get(mid),
+        out.append(Node(engine._geometry_registry.get(gid), material,
                         pos=tuple(t[0:3]), rot=tuple(t[3:7]), scale=tuple(t[7:10]),
                         name=name_of(i) or f"entity_{i}", extras=extras_of(i)))
     return out
@@ -96,7 +107,7 @@ def export_engine(engine, path, *, names=None, extras=None, strict=False):
         engine._ensure_offscreen(1)  # startup handlers may need the device (load_texture)
     report = code_report(engine)
     lights = [light for light in (engine._sun, engine._spot) if light is not None] + list(engine._lights)
-    data, written = build_glb(nodes(engine, names, extras), camera=engine.camera, lights=lights,
+    data, written = build_glb(nodes(engine, names, extras, report), camera=engine.camera, lights=lights,
                               environment=engine._environment, scene_extras=scene_extras(engine))
     report.extend(written)
     report.print()

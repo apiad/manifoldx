@@ -5,6 +5,7 @@
 """
 
 import argparse
+import os
 import runpy
 import sys
 
@@ -36,9 +37,11 @@ def export(module, script, output, strict, app_args):
     def run(engine):
         exported.append(engine.export_gltf(output, strict=strict))
 
-    original, saved_argv = Engine.run, sys.argv
+    original, saved_argv, saved_path = Engine.run, sys.argv, list(sys.path)
     Engine.run = run
     sys.argv = [module or script, *app_args]
+    # What python itself puts first on sys.path: the script's folder, or the working directory for -m.
+    sys.path.insert(0, os.getcwd() if module else os.path.dirname(os.path.abspath(script)))
     try:
         if module:
             runpy.run_module(module, run_name="__main__", alter_sys=True)
@@ -48,6 +51,7 @@ def export(module, script, output, strict, app_args):
         return 1
     finally:
         Engine.run, sys.argv = original, saved_argv
+        sys.path[:] = saved_path
     if not exported:
         print(f"manifoldx export: {module or script} finished without calling engine.run(); nothing written",
               file=sys.stderr)

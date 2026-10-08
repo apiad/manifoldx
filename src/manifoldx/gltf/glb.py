@@ -52,7 +52,7 @@ class GlbBuilder:
         doc = dict(self.doc)
         if self.bin:
             doc["buffers"] = [{"byteLength": len(self.bin)}]
-        text = json.dumps(doc, separators=(",", ":")).encode()
+        text = json.dumps(doc, separators=(",", ":"), allow_nan=False).encode()
         text += b" " * (-len(text) % 4)
         chunks = struct.pack("<II", len(text), 0x4E4F534A) + text
         if self.bin:

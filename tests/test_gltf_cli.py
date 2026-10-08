@@ -25,7 +25,7 @@ def test_app_that_never_runs(tmp_path):
 
 
 def test_module_form(tmp_path, monkeypatch):
-    monkeypatch.syspath_prepend(str(Path(APP).parent))
+    monkeypatch.chdir(Path(APP).parent)  # python -m finds modules in the working directory
     out = tmp_path / "s.glb"
     assert main(["export", "-m", "export_app", str(out)]) == 0 and out.exists()
 
