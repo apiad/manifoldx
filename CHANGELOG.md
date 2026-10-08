@@ -13,6 +13,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+- **glTF export.** `manifoldx.gltf.export_gltf(path, nodes)`, `modeling.Mesh.to_gltf(path)`
+  and `Engine.export_gltf(path)` write `.glb` files that Blender, Godot, Unity and three.js
+  open: geometry, PBR materials, embedded textures, punctual lights, the camera, and fog,
+  shadow, background and environment settings in the scene's extras. Everything glTF cannot
+  carry (systems, event handlers, GUI, compute, volumes, point clouds, labels, materials
+  without an equivalent) is reported by name, printed, and saved as
+  `<name>.export-report.json`; `strict=True` raises `ExportIncomplete` and writes nothing.
+  `manifoldx export app.py out.glb` exports any app that ends in `engine.run()` without
+  changing it. The output passes the Khronos glTF validator with no errors. Example:
+  `examples/gltf_export.py` (#23).
+
+- **`TextureHandle.source`**: the image file `load_texture` read, so exporters can embed it.
+
 - **Mipmapped textures.** `load_texture` builds the full mip chain (box-filtered halvings
   down to 1x1) and samples it trilinearly with 8x anisotropic filtering, so a texture
   tiled across a large mesh no longer turns to crawling noise at a distance (#21).
