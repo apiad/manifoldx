@@ -26,6 +26,7 @@ class TextureHandle:
     view: Any               # wgpu.TextureView
     sampler: Any            # wgpu.Sampler
     size: tuple[int, int]   # (width, height) in pixels
+    source: Path | None = None  # the image file load_texture read; glTF export embeds it
 
 
 class TextureRegistry:
@@ -126,7 +127,7 @@ def load_texture(engine, path: str | Path) -> TextureHandle:
     registry = engine._texture_registry
     handle = TextureHandle(
         id=registry.alloc_id(), texture=texture, view=view, sampler=sampler,
-        size=(w, h),
+        size=(w, h), source=p,
     )
     registry.add(handle)
     return handle

@@ -85,6 +85,19 @@ class Mesh:
             geo["colors"] = np.ascontiguousarray(mesh.colors, dtype=np.float32)
         return geo
 
+    def to_gltf(self, path, material=None):
+        """Write this mesh to a .glb file at the origin; return the export report.
+
+        Without a material it gets a white rough StandardMaterial, which shows
+        the vertex colours when the mesh has them.
+        """
+        from manifoldx.gltf import Node, export_gltf
+        from manifoldx.resources import StandardMaterial
+
+        if material is None:
+            material = StandardMaterial("#ffffff", roughness=1.0, vertex_colors=self.colors is not None)
+        return export_gltf(path, [Node(self, material)])
+
     @staticmethod
     def from_geometry(geo: dict) -> "Mesh":
         """Build a Mesh from a geometry dict (inverse of to_geometry)."""

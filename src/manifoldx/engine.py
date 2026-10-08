@@ -920,6 +920,22 @@ class Engine:
         small = rgb.reshape(self.h, ss, self.w, ss, 3).mean(axis=(1, 3))
         return np.round(small).astype(np.uint8)
 
+    def export_gltf(self, path, *, names=None, extras=None, strict=False):
+        """Write the scene to a glTF binary (.glb) and report what it left out.
+
+        Meshes, materials, textures, the camera, the lights, and fog, shadow,
+        background and environment settings (in the scene's extras) are
+        written. Systems, event handlers, GUI, compute and materials without a
+        glTF equivalent are listed in the returned report, which is also
+        printed and saved next to the file. `names` and `extras` map entity
+        indices to node names and JSON extras; each may be a dict or a function
+        of the index, called after startup so it sees startup-spawned entities. With strict=True an incomplete
+        export raises ExportIncomplete and writes nothing.
+        """
+        from manifoldx.gltf.engine_export import export_engine
+
+        return export_engine(self, path, names=names, extras=extras, strict=strict)
+
     def _ensure_offscreen(self, supersample: int):
         size = (self.w * supersample, self.h * supersample)
         if self._still_size is None:
