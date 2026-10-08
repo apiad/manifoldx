@@ -66,6 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixes
 
+- **The wheel builds again.** `pyproject.toml` force-included `src/manifoldx/viz/assets`,
+  which `packages` already ships, so hatchling added `DejaVuSansMono.ttf` twice and
+  refused to build. That broke `uv add` / `pip install` of manifoldx from git.
+
 - Colours were gamma-encoded twice: `StandardMaterial` (and its textured and
   vertex-colour variants), the water and atmosphere-scattering materials and
   the skybox applied `pow(color, 1/2.2)` and then wrote to an sRGB target that
