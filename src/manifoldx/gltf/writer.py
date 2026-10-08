@@ -23,17 +23,61 @@ class Node:
     extras: dict | None = None
 
 
-def build_glb(nodes):
+def build_glb(nodes, *, camera=None, lights=(), environment=None, scene_extras=None):
     w = _Writer()
     for i, node in enumerate(nodes):
         w.node(node, i)
-    return w.finish(), w.report
+    if camera is not None:
+        w.camera(camera)
+    for light in lights:
+        w.light(light)
+    extras = dict(scene_extras or {})
+    if environment is not None:
+        extras["environment"] = w.environment(environment)
+    return w.finish(extras), w.report
 
 
-def export_gltf(path, nodes):
-    data, report = build_glb(nodes)
+def export_gltf(path, nodes, **scene):
+    data, report = build_glb(nodes, **scene)
     Path(path).write_bytes(data)
     return report
+
+
+def _look_rotation(forward, up=(0.0, 1.0, 0.0)):
+    """Quaternion (x, y, z, w) that turns local -Z to `forward` with local +Y towards `up`."""
+    f = np.asarray(forward, float)
+    f = f / np.linalg.norm(f)
+    u = np.asarray(up, float)
+    u = u / np.linalg.norm(u)
+    if abs(f @ u) > 0.999:  # looking straight along up: any perpendicular up will do
+        u = np.array([0.0, 0.0, 1.0]) if abs(f[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
+    z = -f
+    x = np.cross(u, z)
+    x /= np.linalg.norm(x)
+    y = np.cross(z, x)
+    m = np.column_stack([x, y, z])
+    t = m[0, 0] + m[1, 1] + m[2, 2]
+    if t > 0:
+        s = 2.0 * np.sqrt(t + 1.0)
+        q = ((m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s, s / 4)
+    elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2])
+        q = (s / 4, (m[0, 1] + m[1, 0]) / s, (m[0, 2] + m[2, 0]) / s, (m[2, 1] - m[1, 2]) / s)
+    elif m[1, 1] > m[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2])
+        q = ((m[0, 1] + m[1, 0]) / s, s / 4, (m[1, 2] + m[2, 1]) / s, (m[0, 2] - m[2, 0]) / s)
+    else:
+        s = 2.0 * np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1])
+        q = ((m[0, 2] + m[2, 0]) / s, (m[1, 2] + m[2, 1]) / s, s / 4, (m[1, 0] - m[0, 1]) / s)
+    return [float(c) for c in q]
+
+
+def _light_rgb(color):
+    """Light colours as the renderer uploads them: hex over 255, no sRGB decode."""
+    if isinstance(color, str):
+        h = color.lstrip("#")
+        return [int(h[k:k + 2], 16) / 255.0 for k in (0, 2, 4)]
+    return [float(c) for c in color[:3]]
 
 
 def _rgba(color):
@@ -169,8 +213,52 @@ class _Writer:
                 self._textures[handle.id] = self.b.add("textures", {"sampler": self._sampler, "source": image})
         return self._textures[handle.id]
 
-    def finish(self):
+    def camera(self, cam):
+        index = self.b.add("cameras", {"type": "perspective", "perspective": {
+            "yfov": float(np.radians(cam.fov)), "znear": float(cam.near), "zfar": float(cam.far)}})
+        pos = [float(c) for c in cam.position]
+        rot = _look_rotation(np.asarray(cam.target, float) - pos, cam.up)
+        self._roots.append(self.b.add("nodes", {"name": "camera", "camera": index, "translation": pos,
+                                                "rotation": rot}))
+
+    def light(self, light):
+        from manifoldx.resources import DirectionalLight, PointLight, SpotLight
+
+        entry = {"color": _light_rgb(light.color), "intensity": float(light.intensity),
+                 "extras": {"manifoldx_intensity": float(light.intensity)}}
+        node = {"name": type(light).__name__}
+        if isinstance(light, DirectionalLight):
+            entry["type"] = "directional"
+            node["rotation"] = _look_rotation(light.direction)
+        elif isinstance(light, SpotLight):
+            entry["type"] = "spot"
+            entry["spot"] = {"innerConeAngle": float(light.inner_angle), "outerConeAngle": float(light.outer_angle)}
+            node["translation"] = [float(c) for c in light.position]
+            node["rotation"] = _look_rotation(light.direction)
+        elif isinstance(light, PointLight):
+            entry["type"] = "point"
+            node["translation"] = [float(c) for c in light.position]
+        else:
+            self.report.add("light", type(light).__name__, "dropped", "no glTF light type")
+            return
+        if getattr(light, "distance", 0):
+            entry["range"] = float(light.distance)
+        self.b.use_extension("KHR_lights_punctual")
+        ext = self.b.doc.setdefault("extensions", {}).setdefault("KHR_lights_punctual", {"lights": []})
+        ext["lights"].append(entry)
+        node["extensions"] = {"KHR_lights_punctual": {"light": len(ext["lights"]) - 1}}
+        self._roots.append(self.b.add("nodes", node))
+
+    def environment(self, env):
+        data = np.ascontiguousarray(env.data, dtype=np.float32)
+        return {"bufferView": self.b.view(data.tobytes()), "width": int(data.shape[1]),
+                "height": int(data.shape[0]), "intensity": float(env.intensity),
+                "layout": "equirectangular, linear RGB float32, row 0 at the zenith"}
+
+    def finish(self, extras):
         scene = {"nodes": self._roots} if self._roots else {}
+        if extras:
+            scene["extras"] = {"manifoldx": extras}
         self.b.doc["scenes"] = [scene]
         self.b.doc["scene"] = 0
         return self.b.to_bytes()
