@@ -53,6 +53,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.15.9",
     "manifold-gfx[offline]",
+    "pygltflib>=1.16.5",
 ]
 
 [tool.pytest.ini_options]
