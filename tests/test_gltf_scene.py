@@ -40,7 +40,7 @@ def test_lights(tmp_path):
     g = load(tmp_path / "a.glb")
     assert "KHR_lights_punctual" in g.extensionsUsed
     lights = g.extensions["KHR_lights_punctual"]["lights"]
-    assert [l["type"] for l in lights] == ["directional", "spot", "point"]
+    assert [light["type"] for light in lights] == ["directional", "spot", "point"]
     assert lights[0]["color"] == pytest.approx([1.0, 128 / 255, 0.0])
     assert lights[0]["intensity"] == 2.4 and lights[0]["extras"]["manifoldx_intensity"] == 2.4
     assert lights[1]["spot"] == {"innerConeAngle": 0.2, "outerConeAngle": 0.4} and lights[1]["range"] == 20
