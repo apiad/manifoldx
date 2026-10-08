@@ -63,3 +63,50 @@ def test_color_and_albedo_map_of_the_same_value_render_the_same(tmp_path):
     img = e.render_frame(supersample=1).astype(int)
     left, right = img[16, 16], img[16, 48]
     assert np.abs(left - right).max() <= 3, (left, right)
+
+
+def _textured_vs_plain(tmp_path, light):
+    """Centre pixel of a color="#cc2222" plane and of a #cc2222 albedo_map plane, each
+    rendered alone at the same spot under `light` (the spot does not light the two
+    halves of a frame equally, so side-by-side planes cannot be compared)."""
+    try:
+        from manifoldx.backends import get_offscreen_canvas
+        get_offscreen_canvas(width=8, height=8)
+    except Exception as e:
+        pytest.skip(f"offscreen canvas unavailable: {e}")
+    from PIL import Image
+    from manifoldx.textures import load_texture
+    png = tmp_path / "red.png"
+    Image.new("RGB", (8, 8), (0xCC, 0x22, 0x22)).save(png)
+    out = []
+    for textured in (False, True):
+        e = mx.Engine("cs", width=32, height=32)
+        light(e)
+        e.camera.set_pose(position=(0, 0, 3), target=(0, 0, 0))
+        if textured:
+            e.render_frame(supersample=1)  # creates the device load_texture needs
+            mat = StandardMaterial(color="#ffffff", roughness=0.9, albedo_map=load_texture(e, png))
+        else:
+            mat = StandardMaterial(color="#cc2222", roughness=0.9)
+        e.spawn(Mesh(plane(1.6, 1.6)), Material(mat), Transform(pos=(0, 0, 0)))
+        out.append(e.render_frame(supersample=1).astype(int)[16, 16])
+    return out
+
+
+def test_albedo_map_is_used_under_the_sun(tmp_path):
+    # Issue #5: under the sun the textured plane rendered its white color=, grey.
+    from manifoldx.resources import DirectionalLight
+    left, right = _textured_vs_plain(
+        tmp_path, lambda e: e.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(0, 0, -1))))
+    assert left[0] > left[1] + 40, left  # the plain plane is visibly red
+    assert np.abs(left - right).max() <= 3, (left, right)
+
+
+def test_albedo_map_is_used_under_a_spotlight(tmp_path):
+    from manifoldx.resources import SpotLight
+    # The shadowed spot is the one the shader's calculateSpot lights; angles in radians.
+    left, right = _textured_vs_plain(tmp_path, lambda e: e.set_spot(
+        SpotLight(color="#ffffff", intensity=40.0, position=(0, 0, 2.5), direction=(0, 0, -1),
+                  inner_angle=0.6, outer_angle=0.9)))
+    assert left[0] > left[1] + 40, left
+    assert np.abs(left - right).max() <= 3, (left, right)

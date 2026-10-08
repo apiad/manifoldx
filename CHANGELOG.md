@@ -66,6 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixes
 
+- **Textured `StandardMaterial` under the sun and the spot.** The textured shader swapped
+  in the sampled albedo for point lights, IBL and ambient but not for the sun and spot
+  terms, so a textured mesh rendered its plain `color` (usually white, so grey) under
+  them (#5). Pixel tests now compare a `#cc2222` texture with `color="#cc2222"` under each.
+
 - **The wheel builds again.** `pyproject.toml` force-included `src/manifoldx/viz/assets`,
   which `packages` already ships, so hatchling added `DejaVuSansMono.ttf` twice and
   refused to build. That broke `uv add` / `pip install` of manifoldx from git.

@@ -944,6 +944,16 @@ _STANDARDMATERIAL_TEXTURED_SHADER = (
         "                                      material.roughness, light);",
     )
     .replace(
+        "Lo += calculateSun(N, V, F0, material.albedo, material.metallic, material.roughness) * s;",
+        "Lo += calculateSun(N, V, F0, sampled_albedo, material.metallic, material.roughness) * s;",
+    )
+    .replace(
+        "Lo += calculateSpot(N, V, in.world_pos, F0, material.albedo,\n"
+        "                            material.metallic, material.roughness) * s;",
+        "Lo += calculateSpot(N, V, in.world_pos, F0, sampled_albedo,\n"
+        "                            material.metallic, material.roughness) * s;",
+    )
+    .replace(
         "        let diffuse_ibl = kD * irradiance * material.albedo;",
         "        let diffuse_ibl = kD * irradiance * sampled_albedo;",
     )
