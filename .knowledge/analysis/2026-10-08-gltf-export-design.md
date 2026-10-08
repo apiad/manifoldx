@@ -58,8 +58,13 @@ export_gltf("part.glb", [
     Node(geometry, material=StandardMaterial("#c2b69c", roughness=0.9),
          pos=(0, 0, 0), rot=(0, 0, 0, 1), scale=(1, 1, 1),
          name="wall", extras={"pick": "b123"}),
-], camera=None, lights=(), scene_extras=None) -> None
+], camera=None, lights=(), environment=None, scene_extras=None) -> ExportReport
 ```
+
+The writer returns the report of what it approximated or dropped (section
+3 describes the report); `Engine.export_gltf` adds the engine-level entries
+to it. Light colours are written the way the engine uploads them (hex over
+255, no sRGB decode), and spot angles are already radians in manifoldx.
 
 `geometry` is a geometry dict (the form `load_obj`, `cube`, `sphere` and
 `Mesh.to_geometry` return) or a `modeling.Mesh`. Everything below is the
