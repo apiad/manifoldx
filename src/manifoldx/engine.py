@@ -264,6 +264,8 @@ class Engine:
 
         # IBL environment — set via set_environment()
         self._environment = None
+        self._env_task = None  # the environment's precompute, on the background worker
+        self._loading_panel = None  # the spinner shown while something is still loading
 
         # Still-frame rendering (render_frame): the offscreen canvas is created
         # once, at the first call's size.
@@ -564,6 +566,7 @@ class Engine:
         """
         from manifoldx.ibl import EnvironmentMap, PRESETS
 
+        self._env_task = None  # a pending precompute belongs to the environment it replaces
         if env is None:
             self._environment = None
         elif isinstance(env, str):
@@ -579,6 +582,54 @@ class Engine:
     def environment(self):
         """The active EnvironmentMap, or None if IBL is disabled."""
         return self._environment
+
+    # -- loading ---------------------------------------------------------------
+    # The environment's precompute takes seconds of CPU. It runs on the background
+    # worker, started by the first frame that needs it; until it is done the scene
+    # draws without the environment's light and a spinner says what is loading, so
+    # the window keeps answering. Offline renders wait for it instead (manifoldx#25).
+
+    def _ready_environment(self):
+        """The environment the renderer may use now: None until its precompute is done."""
+        env = self._environment
+        return env if env is not None and env._computed else None
+
+    def _start_environment(self):
+        env = self._environment
+        if env is not None and not env._computed and self._env_task is None:
+            self._env_task = self.background(env._precompute)()
+
+    def _settle_environment(self):
+        """Start the precompute if needed and wait for it: for frames nobody watches load."""
+        self._start_environment()
+        if self._env_task is not None and self._environment is not None and not self._environment._computed:
+            self._env_task.wait()
+
+    def _loading(self):
+        return ["lighting"] if self._environment is not None and not self._environment._computed else []
+
+    def _loading_line(self):
+        spin = "|/-\\"[int(perf_counter_ns() // 125_000_000) % 4]
+        return f"{spin}  loading {', '.join(self._loading())}..."
+
+    def _update_loading_overlay(self):
+        from manifoldx.gui import Panel, ValueDisplay
+
+        if self._loading():
+            if self._loading_panel is None:
+                self._loading_panel = Panel(
+                    children=[ValueDisplay(getter=self._loading_line, min_width=200)],
+                    anchor="top-left",
+                    style_overrides={"width": 230, "height": 40, "padding": 10, "bg": "#1a1a1ad0", "radius": 4},
+                )
+                self.gui.append(self._loading_panel)
+            # anchors other than top-left paint top-left (manifoldx#13): centre by offset
+            vw, vh = getattr(self.input, "_viewport_size", None) or (0, 0)
+            vw, vh = (vw, vh) if vw and vh else (self.w, self.h)
+            self._loading_panel.offset = (vw / 2 - 115, vh / 2 - 20)
+        elif self._loading_panel is not None:
+            self.gui.remove(self._loading_panel)
+            self._loading_panel = None
 
     def quit(self):
         self._running = False
@@ -799,6 +850,10 @@ class Engine:
         # True again if the cursor is over a widget this frame.
         self._gui_bridge.begin_frame()
 
+        # Background loading (the environment's precompute) and its spinner.
+        self._start_environment()
+        self._update_loading_overlay()
+
         # Clear command buffer ONCE at the head of the frame so events,
         # async handlers, and systems all contribute to the same buffer
         # that gets flushed at step 6.
@@ -912,6 +967,7 @@ class Engine:
             return _block_mode(self._render_ids(groups or []), supersample)
         if not self._use_fixed_dt:
             self.set_fixed_timestep(dt)
+        self._settle_environment()
         rgb = self._draw_still()
         self.elapsed += self._fixed_dt_value
         if supersample == 1:
@@ -1173,6 +1229,8 @@ class Engine:
                 pbar = tqdm(total=frame_count, desc="Rendering video", unit="frames")
             except ImportError:
                 pass
+
+        self._settle_environment()
 
         # === RENDER LOOP ===
         for frame_idx in range(frame_count):

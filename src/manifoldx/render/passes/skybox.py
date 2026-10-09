@@ -75,7 +75,7 @@ def render_skybox(rp, engine, render_pass):
     environment cubemap so all scene geometry appears in front.
     Only called when engine.environment is not None and show_skybox is True.
     """
-    env = engine.environment
+    env = engine._ready_environment()
     if env is None or not env.show_skybox:
         return
 

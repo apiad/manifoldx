@@ -146,7 +146,7 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
         render_pass.set_bind_group(0, bind_group)
 
         if needs_lights:
-            ibl_env = getattr(engine, "_environment", None)
+            ibl_env = engine._ready_environment()
             if ibl_env is not None and id(ibl_env) != rp._ibl_env_id:
                 rp._upload_ibl_env(rp._device, ibl_env)
             ibl_bg = (

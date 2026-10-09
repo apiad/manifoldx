@@ -1400,7 +1400,7 @@ class RenderPipeline:
         viewport_size = np.array([float(engine.w), float(engine.h)], dtype=np.float32)
         globals_data[208:216] = np.frombuffer(viewport_size.tobytes(), dtype=np.uint8)
         # bytes 216-223: padding
-        ibl_env = getattr(engine, "_environment", None)
+        ibl_env = engine._ready_environment()
         if ibl_env is not None:
             globals_data[224:228] = np.frombuffer(
                 np.float32(ibl_env.intensity).tobytes(), dtype=np.uint8
@@ -1496,7 +1496,7 @@ class RenderPipeline:
         # ---------------------------------------------------------------
         # Skybox (renders at far plane — before mesh geometry)
         # ---------------------------------------------------------------
-        env = getattr(engine, "_environment", None)
+        env = engine._ready_environment()
         if env is not None and env.show_skybox:
             _skybox_pass.render_skybox(self, engine, render_pass)
 
