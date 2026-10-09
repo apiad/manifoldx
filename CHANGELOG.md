@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- **IBL precompute: about 3.5x faster, and cached on disk.** The prefiltered chain's mip 0
+  is roughness 0, a mirror, so it is now the radiance cube itself instead of 50 M GGX
+  samples (about 70% of the work). The result is also cached in
+  `$MANIFOLDX_CACHE_DIR/ibl/` (default `~/.cache/manifoldx/ibl/`), keyed by a hash of the
+  radiance data and the precompute parameters, so a second run with the same environment
+  skips it. A gradient sky: about 23 s to 6.5 s cold; uh-twin's first frame 26.6 s to
+  11.7 s cold, 4.1 s warm. Tests point the cache at a temporary directory (#25).
+
 ### Known limitations
 
 - **IBL skybox: first-frame device lockup on NVIDIA Quadro M2000M / Vulkan** — enabling `env.show_skybox = True` on the *very first* presented frame deadlocks the device (the frame's submit never completes) on this GPU/driver (580.159.03). It is a driver first-frame-init lockup, not a code defect: depth format (`depth24plus` everywhere), depth config, bind group, and pipeline layout are all correct, and the pass renders perfectly once *any* prior frame has been presented — a constant-colour skybox renders, and the mesh IBL path samples the same cube fine. The skybox therefore stays **default-OFF**; `examples/ibl_demo.py` is unaffected because it only toggles the skybox via the `S` key after startup (post-first-frame). The only broken usage is scripting `show_skybox = True` before the first present. No warm-up-frame workaround was added (would mask an old-GPU driver quirk in the shared render loop). Investigation + evidence table: `.knowledge/analysis/2026-07-05-ibl-v1-design.md` (§ "Known limitation: first-frame device lockup").
