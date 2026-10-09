@@ -146,3 +146,61 @@ def test_engine_environment_intensity():
     env.intensity = 2.5
     eng.set_environment(env)
     assert eng.environment.intensity == 2.5
+
+
+def _sky():
+    from manifoldx.ibl import EnvironmentMap
+
+    return EnvironmentMap.from_sky(zenith=(0.4, 0.5, 0.75), horizon=(0.6, 0.7, 0.8), ground=(0.3, 0.3, 0.2))
+
+
+def test_prefiltered_mip0_is_the_cube():
+    """Roughness 0 is a mirror: its prefiltered map is the radiance cube itself."""
+    from manifoldx.ibl import _equirect_to_cubemap
+
+    env = _sky()
+    env._precompute()
+    cube = _equirect_to_cubemap(env.data, face_size=128)
+    np.testing.assert_array_equal(env._prefiltered[0][..., :3], cube.astype(np.float16))
+    assert (env._prefiltered[0][..., 3] == 1).all()
+
+
+def test_sampling_a_mirror_gives_the_cube_back():
+    """What mip 0 used to compute (GGX at roughness 0, sampled) is the cube, up to the
+    nearest-texel lookup landing one texel over: never off by more than neighbouring texels
+    differ. Checked at a size cheap to test."""
+    from manifoldx.ibl import _compute_prefiltered, _equirect_to_cubemap
+
+    cube = _equirect_to_cubemap(_sky().data, face_size=32)
+    sampled = _compute_prefiltered(cube, roughness=0.0, out_size=32, samples=64)[..., :3].astype(np.float32)
+    one_texel = max(np.abs(np.diff(cube, axis=1)).max(), np.abs(np.diff(cube, axis=2)).max())
+    assert np.abs(sampled - cube).max() <= one_texel + 1e-3
+
+
+def test_precompute_is_cached_on_disk(tmp_path, monkeypatch):
+    import manifoldx.ibl as ibl
+
+    monkeypatch.setenv("MANIFOLDX_CACHE_DIR", str(tmp_path))
+    first = _sky()
+    first._precompute()
+    assert len(list(tmp_path.rglob("*.npz"))) == 1
+
+    def boom(*a, **k):
+        raise AssertionError("recomputed despite the cache")
+
+    monkeypatch.setattr(ibl, "_compute_prefiltered", boom)
+    monkeypatch.setattr(ibl, "_compute_irradiance", boom)
+    again = _sky()
+    again._precompute()
+    np.testing.assert_array_equal(again._irradiance, first._irradiance)
+    for a, b in zip(again._prefiltered, first._prefiltered):
+        np.testing.assert_array_equal(a, b)
+
+
+def test_a_different_sky_misses_the_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("MANIFOLDX_CACHE_DIR", str(tmp_path))
+    from manifoldx.ibl import EnvironmentMap
+
+    _sky()._precompute()
+    EnvironmentMap.from_color((0.3, 0.3, 0.3))._precompute()
+    assert len(list(tmp_path.rglob("*.npz"))) == 2
