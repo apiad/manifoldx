@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`startup` fires on `run()`'s first frame, inside the running loop**, instead of before
+  the loop starts. Sync handlers still run before anything is drawn; async handlers now
+  run on the loop that `run()` drives, between frames. Before, they were scheduled on the
+  engine's private loop, which nothing pumps while the window is open, so they never ran
+  (#28).
 - **The environment's precompute no longer blocks the window.** It runs on the background
   worker, started by the first frame that needs it; until it is done the scene draws
   without the environment's light and a centred spinner reads "loading lighting...", so
@@ -31,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **IBL skybox: first-frame device lockup on NVIDIA Quadro M2000M / Vulkan** — enabling `env.show_skybox = True` on the *very first* presented frame deadlocks the device (the frame's submit never completes) on this GPU/driver (580.159.03). It is a driver first-frame-init lockup, not a code defect: depth format (`depth24plus` everywhere), depth config, bind group, and pipeline layout are all correct, and the pass renders perfectly once *any* prior frame has been presented — a constant-colour skybox renders, and the mesh IBL path samples the same cube fine. The skybox therefore stays **default-OFF**; `examples/ibl_demo.py` is unaffected because it only toggles the skybox via the `S` key after startup (post-first-frame). The only broken usage is scripting `show_skybox = True` before the first present. No warm-up-frame workaround was added (would mask an old-GPU driver quirk in the shared render loop). Investigation + evidence table: `.knowledge/analysis/2026-07-05-ibl-v1-design.md` (§ "Known limitation: first-frame device lockup").
 
 ### Features
+
+- **`engine.loading(label)`: load without freezing the window.** A context manager, `with`
+  or `async with`, marking work the scene is still waiting for. While a block is open,
+  `run()` shows the loading spinner with its label; `render_frame`, `render` and
+  `export_gltf` wait for every block to close. `run_blocking` now works under `run()`'s
+  loop. uh-twin, loading 24 OBJs and its textures this way: 866 frames drawn during
+  startup, the longest gap 1.7 s (#28).
 
 - **glTF export.** `manifoldx.gltf.export_gltf(path, nodes)`, `modeling.Mesh.to_gltf(path)`
   and `Engine.export_gltf(path)` write `.glb` files that Blender, Godot, Unity and three.js
