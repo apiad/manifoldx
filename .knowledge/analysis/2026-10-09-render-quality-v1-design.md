@@ -119,7 +119,9 @@ engine.set_tonemap("none", exposure=1.0)       # linear, clamped by the target
 engine.set_antialias("fxaa")   # or None (default: a straight copy)
 ```
 
-- FXAA 3.11, the "quality 12" preset. It runs in the final pass on `scene_color`.
+- FXAA, Lottes' console variant (FXAA_PC_CONSOLE): five luma taps for the edge test,
+  four along the edge. It runs in the final pass on `scene_color`. The higher-quality
+  3.11 presets cost more taps than this scene needs.
 - Luma is computed from the sampled (linear) colour as `sqrt(dot(rgb, (0.299, 0.587, 0.114)))`,
   a perceptual approximation, since there is no gamma-encoded copy to read.
 - When off, the final pass is a copy: sample `scene_color` with `textureLoad` (no
