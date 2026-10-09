@@ -22,6 +22,12 @@ def mock_rendercanvas(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def ibl_cache_in_tmp(monkeypatch, tmp_path_factory):
+    """The IBL precompute caches to disk; tests never write to the user's ~/.cache."""
+    monkeypatch.setenv("MANIFOLDX_CACHE_DIR", str(tmp_path_factory.getbasetemp() / "manifoldx-cache"))
+
+
 def _gpu_adapter_available() -> bool:
     try:
         import wgpu

@@ -2,9 +2,25 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
+from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
+
+# The precompute's shape. PRECOMPUTE_VERSION goes into the disk cache key with the rest,
+# so a change to the algorithm or to any of these numbers never reads a stale entry.
+PRECOMPUTE_VERSION = 2
+CUBE_SIZE = 128
+IRRADIANCE_SIZE, IRRADIANCE_SAMPLES = 64, 256
+PREFILTER_MIPS, PREFILTER_SAMPLES = 8, 512
+
+
+def _cache_dir() -> Path:
+    """Where precomputed environments are kept: $MANIFOLDX_CACHE_DIR, else ~/.cache/manifoldx."""
+    root = os.environ.get("MANIFOLDX_CACHE_DIR") or Path.home() / ".cache" / "manifoldx"
+    return Path(root) / "ibl"
 
 
 class EnvironmentMap:
@@ -75,20 +91,46 @@ class EnvironmentMap:
         data = _decode_rgbe(path)
         return cls(data=data)
 
+    def _cache_key(self) -> str:
+        h = hashlib.sha256()
+        h.update(repr((PRECOMPUTE_VERSION, CUBE_SIZE, IRRADIANCE_SIZE, IRRADIANCE_SAMPLES, PREFILTER_MIPS,
+                       PREFILTER_SAMPLES, self.data.shape)).encode())
+        h.update(np.ascontiguousarray(self.data).tobytes())
+        return h.hexdigest()
+
     def _precompute(self):
-        """Compute irradiance cubemap + prefiltered mip chain. Cached after first call."""
+        """Compute irradiance cubemap + prefiltered mip chain. Cached on the object after
+        the first call, and on disk (see _cache_dir) across runs."""
         if self._computed:
             return
-        cube = _equirect_to_cubemap(self.data, face_size=128)
-        self._irradiance = _compute_irradiance(cube, out_size=64, samples=256)
-        self._prefiltered = []
-        for mip in range(8):
-            roughness = mip / 7.0
-            size = max(1, 128 >> mip)
+        path = _cache_dir() / f"{self._cache_key()}.npz"
+        try:
+            with np.load(path) as f:
+                self._irradiance = f["irradiance"]
+                self._prefiltered = [f[f"mip{m}"] for m in range(PREFILTER_MIPS)]
+            self._computed = True
+            return
+        except (OSError, KeyError, ValueError):  # no entry, or an unreadable one: compute it
+            pass
+        cube = _equirect_to_cubemap(self.data, face_size=CUBE_SIZE)
+        self._irradiance = _compute_irradiance(cube, out_size=IRRADIANCE_SIZE, samples=IRRADIANCE_SAMPLES)
+        # Mip 0 is roughness 0, a mirror: its prefiltered map is the cube itself. Sampling it
+        # cost about 70% of the precompute (manifoldx#25).
+        self._prefiltered = [_with_alpha(cube).astype(np.float16)]
+        for mip in range(1, PREFILTER_MIPS):
+            roughness = mip / (PREFILTER_MIPS - 1)
+            size = max(1, CUBE_SIZE >> mip)
             self._prefiltered.append(
-                _compute_prefiltered(cube, roughness=roughness, out_size=size, samples=512)
+                _compute_prefiltered(cube, roughness=roughness, out_size=size, samples=PREFILTER_SAMPLES)
             )
         self._computed = True
+        try:  # write then rename, so a reader never sees half a file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp.npz")
+            np.savez(tmp, irradiance=self._irradiance, **{f"mip{m}": a for m, a in enumerate(self._prefiltered)})
+            tmp.replace(path)
+        except OSError:  # a read-only home only costs the next run the precompute
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +262,10 @@ def _equirect_to_cubemap(equirect: np.ndarray, face_size: int) -> np.ndarray:
             + equirect[ev1, eu1] * wu * wv
         )
     return cube
+
+
+def _with_alpha(rgb: np.ndarray) -> np.ndarray:
+    return np.concatenate([rgb, np.ones((*rgb.shape[:-1], 1), dtype=rgb.dtype)], axis=-1)
 
 
 def _sample_cube(cube: np.ndarray, dirs: np.ndarray) -> np.ndarray:
