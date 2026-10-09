@@ -283,7 +283,7 @@ def _ensure_gui_pipeline(rp, engine) -> None:
         # Depth format must match the render pass attachment even when
         # depth-test is logically off. We declare always-pass + no write.
         depth_stencil={
-            "format": wgpu.TextureFormat.depth24plus,
+            "format": wgpu.TextureFormat.depth32float,
             "depth_write_enabled": False,
             "depth_compare": wgpu.CompareFunction.always,
         },
@@ -463,7 +463,7 @@ def _ensure_glyph_pipeline(rp, engine) -> None:
         # Depth format must match the render pass attachment even when
         # depth-test is logically off. Same state as the rect pipeline.
         depth_stencil={
-            "format": wgpu.TextureFormat.depth24plus,
+            "format": wgpu.TextureFormat.depth32float,
             "depth_write_enabled": False,
             "depth_compare": wgpu.CompareFunction.always,
         },

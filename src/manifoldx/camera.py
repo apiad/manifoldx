@@ -80,7 +80,8 @@ class Camera:
         """Compute perspective projection matrix for WebGPU.
 
         WebGPU NDC: x,y in [-1,1], z in [0,1].
-        Uses the same formula as pylinalg mat_perspective with depth_range=(0,1).
+        Reversed Z: near maps to depth 1 and far to depth 0, the main pass clears
+        depth to 0 and compares `greater` (#30).
         """
         fov_rad = np.radians(self.fov)
         f = 1.0 / np.tan(fov_rad / 2.0)
@@ -88,11 +89,10 @@ class Camera:
         proj = np.zeros((4, 4), dtype=np.float32)
         proj[0, 0] = f / aspect
         proj[1, 1] = f
-        # WebGPU depth range [0, 1]:
-        # c = -(far*1 - near*0) / (far - near) = -far / (far - near)
-        # d = -(far * near * (1 - 0)) / (far - near) = -far*near / (far - near)
-        proj[2, 2] = -far / (far - near)
-        proj[2, 3] = -(far * near) / (far - near)
+        # Reversed Z (WebGPU depth range [0, 1]): near maps to 1, far to 0, so the
+        # float depth buffer's precision sits where perspective needs it (#30).
+        proj[2, 2] = near / (far - near)
+        proj[2, 3] = (far * near) / (far - near)
         proj[3, 2] = -1.0
 
         return proj

@@ -49,8 +49,8 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     );
 
     var out: VertexOutput;
-    // z = w → depth = 1.0 (far plane) so all scene geometry draws in front.
-    out.pos = vec4<f32>(p, 1.0, 1.0);
+    // z = 0 → depth 0, the far plane under reversed Z, so all scene geometry draws in front.
+    out.pos = vec4<f32>(p, 0.0, 1.0);
     out.dir = world_dir;
     return out;
 }
@@ -71,7 +71,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 def render_skybox(rp, engine, render_pass):
     """Render environment map as background before mesh geometry.
 
-    Draws a fullscreen triangle at depth=1.0 (far plane) using the prefiltered
+    Draws a fullscreen triangle at depth=0.0 (the far plane under reversed Z) using the prefiltered
     environment cubemap so all scene geometry appears in front.
     Only called when engine.environment is not None and show_skybox is True.
     """
@@ -99,9 +99,9 @@ def render_skybox(rp, engine, render_pass):
             vertex={"module": shader, "entry_point": "vs_main", "buffers": []},
             primitive={"topology": wgpu.PrimitiveTopology.triangle_list},
             depth_stencil={
-                "format": wgpu.TextureFormat.depth24plus,
+                "format": wgpu.TextureFormat.depth32float,
                 "depth_write_enabled": False,
-                "depth_compare": wgpu.CompareFunction.less_equal,
+                "depth_compare": wgpu.CompareFunction.greater_equal,
             },
             fragment={
                 "module": shader,

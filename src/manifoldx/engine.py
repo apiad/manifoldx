@@ -971,8 +971,8 @@ class Engine:
         if tex_size != self._depth_texture_size:
             self._depth_texture = self._device.create_texture(
                 size=(tex_size[0], tex_size[1], 1),
-                format=wgpu.TextureFormat.depth24plus,
-                usage=wgpu.TextureUsage.RENDER_ATTACHMENT,
+                format=wgpu.TextureFormat.depth32float,
+                usage=wgpu.TextureUsage.RENDER_ATTACHMENT | wgpu.TextureUsage.TEXTURE_BINDING,
             )
             self._depth_texture_view = self._depth_texture.create_view()
             self._depth_texture_size = tex_size
@@ -998,7 +998,7 @@ class Engine:
             ],
             depth_stencil_attachment={
                 "view": self._depth_texture_view,
-                "depth_clear_value": 1.0,
+                "depth_clear_value": 0.0,  # reversed Z: 0 is the far plane
                 "depth_load_op": wgpu.LoadOp.clear,
                 "depth_store_op": wgpu.StoreOp.store,
             },
