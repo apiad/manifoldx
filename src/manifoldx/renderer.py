@@ -1406,7 +1406,10 @@ class RenderPipeline:
                 np.float32(ibl_env.intensity).tobytes(), dtype=np.uint8
             )
             globals_data[228:232] = np.frombuffer(np.uint32(1).tobytes(), dtype=np.uint8)
-        # bytes 232-239: padding
+        from manifoldx.engine import TONEMAP_MODES
+        mode, exposure = getattr(engine, "_tonemap", ("reinhard", 1.0))
+        globals_data[232:236] = np.frombuffer(np.uint32(TONEMAP_MODES[mode]).tobytes(), dtype=np.uint8)
+        globals_data[236:240] = np.frombuffer(np.float32(exposure).tobytes(), dtype=np.uint8)
 
         # --- Shadow / lighting block (offset 240+) ---
         cfg = getattr(engine, "_shadow_config", None)

@@ -632,7 +632,54 @@ class AtmosphereMaterial(Material):
         return np.tile(np.array([*rgb, self.intensity], dtype=np.float32), (n, 1))
 
 
-_STANDARDMATERIAL_SHADER = """
+# The tonemap curve shared by the lit shaders (StandardMaterial, the skybox). Unlit
+# materials never call it. Mode 0 at exposure 1 is the old per-channel Reinhard (#30).
+TONEMAP_WGSL = """
+fn agx_contrast(x: vec3<f32>) -> vec3<f32> {
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
+}
+
+fn agx(c: vec3<f32>) -> vec3<f32> {
+    // AgX base (Troy Sobotka), in Benjamin Wrensch's minimal form.
+    let inset = mat3x3<f32>(
+        vec3<f32>(0.842479062253094, 0.0423282422610123, 0.0423756549057051),
+        vec3<f32>(0.0784335999999992, 0.878468636469772, 0.0784336),
+        vec3<f32>(0.0792237451477643, 0.0791661274605434, 0.879142973793104));
+    let outset = mat3x3<f32>(
+        vec3<f32>(1.19687900512017, -0.0528968517574562, -0.0529716355144438),
+        vec3<f32>(-0.0980208811401368, 1.15190312990417, -0.0980434501171241),
+        vec3<f32>(-0.0990297440797205, -0.0989611768448433, 1.15107367264116));
+    let min_ev = -12.47393;
+    let max_ev = 4.026069;
+    var v = inset * c;
+    v = clamp(log2(max(v, vec3<f32>(1e-10))), vec3<f32>(min_ev), vec3<f32>(max_ev));
+    v = agx_contrast((v - vec3<f32>(min_ev)) / (max_ev - min_ev));
+    v = outset * v;
+    // AgX outputs display-referred (gamma 2.2) values; the sRGB target encodes, so linearise.
+    return pow(max(v, vec3<f32>(0.0)), vec3<f32>(2.2));
+}
+
+fn aces(x: vec3<f32>) -> vec3<f32> {
+    // Krzysztof Narkowicz's fit.
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn tonemap(c_in: vec3<f32>, mode: u32, exposure_in: f32) -> vec3<f32> {
+    let exposure = select(exposure_in, 1.0, exposure_in == 0.0);
+    let c = c_in * exposure;
+    switch mode {
+        case 1u: { return c; }
+        case 2u: { return agx(c); }
+        case 3u: { return aces(c); }
+        default: { return c / (c + vec3<f32>(1.0)); }
+    }
+}
+"""
+
+
+_STANDARDMATERIAL_SHADER = TONEMAP_WGSL + """
 struct Globals {
     vp:              mat4x4<f32>,   // offset   0
     view:            mat4x4<f32>,   // offset  64
@@ -643,7 +690,8 @@ struct Globals {
     _pad1:           vec2<f32>,     // offset 216
     ibl_intensity:   f32,           // offset 224
     ibl_enabled:     u32,           // offset 228
-    _pad_ibl:        vec2<f32>,     // offset 232
+    tonemap_mode:    u32,           // offset 232: 0 reinhard, 1 none, 2 agx, 3 aces
+    exposure:        f32,           // offset 236: 0 reads as 1
     light_view_proj: mat4x4<f32>,   // offset 240
     sun_direction:   vec3<f32>,     // offset 304
     _pad_sun0:       f32,           // offset 316
@@ -894,7 +942,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     var color = ambient + Lo;
-    color = color / (color + vec3<f32>(1.0));
+    color = tonemap(color, globals.tonemap_mode, globals.exposure);
     // gamma: the sRGB render target encodes it
     if globals.fog_enabled != 0u {
         let fd = clamp((distance(globals.camera_pos, in.world_pos) - globals.fog_start)

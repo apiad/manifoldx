@@ -2,7 +2,9 @@
 
 import wgpu
 
-_SKYBOX_SHADER = """
+from manifoldx.resources import TONEMAP_WGSL
+
+_SKYBOX_SHADER = TONEMAP_WGSL + """
 struct Globals {
     vp:            mat4x4<f32>,
     view:          mat4x4<f32>,
@@ -13,7 +15,8 @@ struct Globals {
     _pad1:         vec2<f32>,
     ibl_intensity: f32,
     ibl_enabled:   u32,
-    _pad_ibl:      vec2<f32>,
+    tonemap_mode:  u32,
+    exposure:      f32,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -60,10 +63,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample the lowest-roughness mip (mip 0 = mirror reflection / raw environment).
     let color = textureSampleLevel(prefiltered_map, env_sampler, normalize(in.dir), 0.0).rgb
               * globals.ibl_intensity;
-    // Reinhard tone map + sRGB gamma
-    let mapped = color / (color + vec3<f32>(1.0));
-    let srgb   = mapped;  // the sRGB render target encodes gamma
-    return vec4<f32>(srgb, 1.0);
+    // The lit shaders' tonemap; the sRGB render target encodes gamma.
+    let mapped = tonemap(color, globals.tonemap_mode, globals.exposure);
+    return vec4<f32>(mapped, 1.0);
 }
 """
 

@@ -18,6 +18,8 @@ from manifoldx.components import Component, Transform, Mesh, Material
 from manifoldx.camera import Camera
 from manifoldx.input import InputState, _InputBridge
 
+TONEMAP_MODES = {"reinhard": 0, "none": 1, "agx": 2, "aces": 3}  # 0 is the default: zeroed globals keep today's look
+
 
 class _TransformProxy:
     """Read/write the Transform row of a single entity (pos 0:3, rot 3:7, scale 7:10)."""
@@ -274,6 +276,7 @@ class Engine:
         self.fog_start = 0.0
         self.fog_end = 1.0
         self.fog_color = (0.1, 0.1, 0.2)
+        self._tonemap = ("reinhard", 1.0)
 
         # Register built-in components
         Transform.register(self.store)
@@ -539,6 +542,22 @@ class Engine:
         self.fog_start = float(start)
         self.fog_end = float(end)
         self.fog_color = tuple(color) if color is not None else tuple(self.background_color)
+
+    def set_tonemap(self, mode: str = "reinhard", exposure: float = 1.0):
+        """The curve lit materials map light through, and the exposure applied first.
+
+        "reinhard" (default, c/(c+1) per channel), "agx", "aces" (Narkowicz's fit) or
+        "none" (linear, clamped by the target). Unlit materials are never tonemapped.
+        """
+        if mode not in TONEMAP_MODES:
+            raise ValueError(f"unknown tonemap {mode!r}; expected one of {sorted(TONEMAP_MODES)}")
+        if not exposure > 0:
+            raise ValueError(f"exposure must be positive, got {exposure!r}")
+        self._tonemap = (mode, float(exposure))
+
+    @property
+    def tonemap(self):
+        return self._tonemap
 
     def set_sun(self, light):
         """Set the single directional sun (a DirectionalLight).
