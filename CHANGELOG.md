@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- **IBL precompute: about 3.5x faster, and cached on disk.** The prefiltered chain's mip 0
+  is roughness 0, a mirror, so it is now the radiance cube itself instead of 50 M GGX
+  samples (about 70% of the work). The result is also cached in
+  `$MANIFOLDX_CACHE_DIR/ibl/` (default `~/.cache/manifoldx/ibl/`), keyed by a hash of the
+  radiance data and the precompute parameters, so a second run with the same environment
+  skips it. A gradient sky: about 23 s to 6.5 s cold; uh-twin's first frame 26.6 s to
+  11.7 s cold, 4.1 s warm. Tests point the cache at a temporary directory (#25).
+
 ### Features
 
 - **`engine.loading(label)`: load without freezing the window.** A context manager, `with`
