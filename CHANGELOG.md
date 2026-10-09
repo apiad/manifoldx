@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Features
+
+- **`engine.loading(label)`: load without freezing the window.** A context manager, `with`
+  or `async with`, marking work the scene is still waiting for. While a block is open,
+  `run()` shows the loading spinner with its label; `render_frame`, `render` and
+  `export_gltf` wait for every block to close. `run_blocking` now works under `run()`'s
+  loop. uh-twin, loading 24 OBJs and its textures this way: 866 frames drawn during
+  startup, the longest gap 1.7 s (#28).
+
 ### Changed
 
+- **`startup` fires on `run()`'s first frame, inside the running loop**, instead of before
+  the loop starts. Sync handlers still run before anything is drawn; async handlers now
+  run on the loop that `run()` drives, between frames. Before, they were scheduled on the
+  engine's private loop, which nothing pumps while the window is open, so they never ran
+  (#28).
 - **The environment's precompute no longer blocks the window.** It runs on the background
   worker, started by the first frame that needs it; until it is done the scene draws
   without the environment's light and a centred spinner reads "loading lighting...", so

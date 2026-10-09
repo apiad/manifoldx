@@ -119,6 +119,31 @@ class Task:
 
 
 
+class _Loading:
+    """engine.loading(label): counts its label open while the block runs (sync or async)."""
+
+    def __init__(self, engine, label):
+        self._engine, self._label = engine, label
+
+    def __enter__(self):
+        labels = self._engine._loading_labels
+        labels[self._label] = labels.get(self._label, 0) + 1
+        return self
+
+    def __exit__(self, *exc):
+        labels = self._engine._loading_labels
+        labels[self._label] -= 1
+        if labels[self._label] <= 0:
+            del labels[self._label]
+        return False
+
+    async def __aenter__(self):
+        return self.__enter__()
+
+    async def __aexit__(self, *exc):
+        return self.__exit__(*exc)
+
+
 def _block_mode(labels: np.ndarray, ss: int) -> np.ndarray:
     """Reduce (h*ss, w*ss) labels to (h, w), each pixel the most frequent label of its block.
 
@@ -266,6 +291,8 @@ class Engine:
         self._environment = None
         self._env_task = None  # the environment's precompute, on the background worker
         self._loading_panel = None  # the spinner shown while something is still loading
+        self._loading_labels: dict[str, int] = {}  # engine.loading(label) blocks now open
+        self._startup_pending = False  # run() fires startup on its first frame
 
         # Still-frame rendering (render_frame): the offscreen canvas is created
         # once, at the first call's size.
@@ -327,7 +354,8 @@ class Engine:
         """Run a blocking callable in the default executor and await its result."""
         import functools
 
-        return await self._aio_loop.run_in_executor(None, functools.partial(fn, *args, **kwargs))
+        # The loop this coroutine runs on: rendercanvas's in run(), the private one offline.
+        return await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, *args, **kwargs))
 
     def _get_active_loop(self) -> asyncio.AbstractEventLoop:
         """Return the asyncio loop async handlers should run on.
@@ -605,8 +633,48 @@ class Engine:
         if self._env_task is not None and self._environment is not None and not self._environment._computed:
             self._env_task.wait()
 
+    def loading(self, label: str):
+        """Mark work the scene is still waiting for, as `with` or `async with`:
+
+            @engine.on("startup")
+            async def load(payload):
+                async with engine.loading("model"):
+                    for path in paths:
+                        mesh = await engine.run_blocking(load_obj, path)
+                        engine.spawn(Mesh(mesh), ...)
+
+        While a block is open, run() shows the loading spinner with its label, and
+        offline frames (render_frame, render, export_gltf) wait for every block to
+        close. A startup handler should open its block before its first await.
+        """
+        return _Loading(self, label)
+
     def _loading(self):
-        return ["lighting"] if self._environment is not None and not self._environment._computed else []
+        env = ["lighting"] if self._environment is not None and not self._environment._computed else []
+        return env + [label for label, n in self._loading_labels.items() if n > 0]
+
+    def _fire_startup(self):
+        self._event_bus.dispatch_immediate(self, "startup", {})
+
+    def _settle(self, timeout: float = 600.0):
+        """Wait for everything still loading, for frames nobody watches load: the
+        environment's precompute and every engine.loading block. Advances the engine's
+        asyncio loop and frame waiters meanwhile, so loaders that await tick() progress."""
+        import time
+
+        self._settle_environment()
+        deadline = time.monotonic() + timeout
+        for _ in range(2):  # let fresh tasks reach their first `loading`
+            self._pump_aio_loop()
+        while any(n > 0 for n in self._loading_labels.values()):
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"still loading after {timeout:.0f} s: {self._loading()}")
+            self._frame_waiters.resolve(self.elapsed)
+            self._drain_tasks()
+            if self._aio_loop is not None and not self._aio_loop.is_closed():
+                self._aio_loop.run_until_complete(asyncio.sleep(0.001))
+            if self._task_errors:
+                raise self._task_errors.pop(0)
 
     def _loading_line(self):
         spin = "|/-\\"[int(perf_counter_ns() // 125_000_000) % 4]
@@ -967,7 +1035,7 @@ class Engine:
             return _block_mode(self._render_ids(groups or []), supersample)
         if not self._use_fixed_dt:
             self.set_fixed_timestep(dt)
-        self._settle_environment()
+        self._settle()
         rgb = self._draw_still()
         self.elapsed += self._fixed_dt_value
         if supersample == 1:
@@ -999,7 +1067,8 @@ class Engine:
 
             self._init_canvas(get_offscreen_canvas(width=size[0], height=size[1]))
             self._running = True
-            self._event_bus.dispatch_immediate(self, "startup", {})
+            self._fire_startup()
+            self._settle()
             self._still_size = size
         elif self._still_size != size:
             first = self._still_size[0] // self.w
@@ -1107,6 +1176,11 @@ class Engine:
 
     def _run_loop(self):
         """Called each frame by the event loop (run() mode)."""
+        if self._startup_pending:
+            # Inside the running loop, so async startup handlers live on it and load
+            # between frames instead of never running (manifoldx#28).
+            self._startup_pending = False
+            self._fire_startup()
         self._draw_frame()
         # Re-queue for next frame if still running
         if self._running:
@@ -1137,8 +1211,8 @@ class Engine:
 
         self._running = True
 
-        # Fire built-in 'startup' event before the first frame.
-        self._event_bus.dispatch_immediate(self, "startup", {})
+        # 'startup' fires on the first frame, inside the running loop (see _run_loop).
+        self._startup_pending = True
 
         # Register draw callback and run the canvas event loop
         from rendercanvas.glfw import loop as glfw_loop
@@ -1217,8 +1291,8 @@ class Engine:
         # Set up video writer with imageio-ffmpeg
         writer = self._get_video_writer(output, fps, self.w, self.h, codec, quality)
 
-        # Fire built-in 'startup' event before the first frame.
-        self._event_bus.dispatch_immediate(self, "startup", {})
+        # Fire built-in 'startup' event before the first frame, and wait for what it loads.
+        self._fire_startup()
 
         # Progress tracking
         pbar = None
@@ -1230,7 +1304,7 @@ class Engine:
             except ImportError:
                 pass
 
-        self._settle_environment()
+        self._settle()
 
         # === RENDER LOOP ===
         for frame_idx in range(frame_count):
