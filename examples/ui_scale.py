@@ -5,6 +5,7 @@ multiplies them on screen. Press `+` / `-` to change it live. Setting
 `engine.gui.design_height` instead scales the UI with the window height.
 
     uv run python examples/ui_scale.py --scale 2
+    uv run python examples/ui_scale.py --list-monitors   # names for MANIFOLDX_MONITOR
 """
 
 import argparse
@@ -15,7 +16,15 @@ from manifoldx.gui import Button, Panel, Text, ValueDisplay
 
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--scale", type=float, default=1.0)
+parser.add_argument("--list-monitors", action="store_true")
 args, sys.argv[1:] = parser.parse_known_args()  # leave the rest to engine.cli()
+
+if args.list_monitors:
+    from manifoldx.backends import list_monitors
+
+    for index, name, (w, h), hz, primary in list_monitors():
+        print(f"{index}: {name}  {w}x{h} @ {hz} Hz{'  (primary)' if primary else ''}")
+    sys.exit()
 
 engine = mx.Engine("GUI scale")
 engine.gui.scale = args.scale
