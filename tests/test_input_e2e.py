@@ -118,3 +118,52 @@ def test_synthetic_resize_updates_viewport_size():
     engine._render_canvas._process_events()
     engine._draw_frame()
     assert engine.input.viewport_size == (1024, 768)
+
+
+def test_offscreen_engine_has_no_gamepads():
+    engine = _make_offscreen_engine()
+    engine._draw_frame()
+    assert engine._input_bridge._gamepad_poller is None
+    assert engine.input.gamepads == ()
+    assert not engine.input.gamepad_pressed("a")
+
+
+def test_injected_gamepad_poller_drives_state_and_bus_same_frame():
+    from manifoldx.input import GamepadButtonEvent, GamepadInfo, GamepadSnapshot
+
+    engine = _make_offscreen_engine()
+    info = GamepadInfo(index=0, name="pad", guid="guid", mapped=True)
+    frames = [
+        (GamepadSnapshot(info, frozenset({"a"}), {"left_y": -1.0}),),
+        (GamepadSnapshot(info, frozenset(), {}),),
+    ]
+
+    class _Poller:
+        def poll(self):
+            return frames.pop(0)
+
+    engine._input_bridge._gamepad_poller = _Poller()
+    received: list = []
+    seen_in_handler: list[bool] = []
+
+    @engine.on("gamepad_connected")
+    def on_connected(ev):
+        received.append(ev)
+
+    @engine.on("gamepad_down")
+    def on_down(ev):
+        received.append(ev)
+        seen_in_handler.append(engine.input.gamepad_just_pressed(ev.button))
+
+    engine._draw_frame()
+    assert received == [
+        info,
+        GamepadButtonEvent(pad=0, button="a", is_down=True),
+        GamepadButtonEvent(pad=0, button="up", is_down=True),
+    ]
+    # Delivered on the frame of the poll, so polling state agrees.
+    assert seen_in_handler == [True, True]
+    assert engine.input.gamepad_pressed("up")
+    engine._draw_frame()
+    assert engine.input.gamepad_just_released("a")
+    assert not engine.input.gamepad_pressed("up")

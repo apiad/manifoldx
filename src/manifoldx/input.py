@@ -480,14 +480,27 @@ class _InputBridge:
     Threading: rendercanvas marshals callbacks to the main thread before
     invoking us, so `_on_event` always runs on the same thread that pumps
     `_draw_frame`. No locking.
+
+    Gamepads have no rendercanvas events, so `begin_frame` polls them
+    through `gamepad_poller` (anything with a `poll()` returning
+    `GamepadSnapshot`s) and emits the resulting `gamepad_*` events, which
+    the same frame's bus drain delivers. `attach` creates a
+    `_GlfwGamepadPoller` only for a GLFW canvas; offscreen and other
+    canvases get none, and read zero pads.
     """
 
-    def __init__(self, engine, state: InputState) -> None:
+    def __init__(self, engine, state: InputState, gamepad_poller=None) -> None:
         self._engine = engine
         self._state = state
         self._last_pointer_pos: tuple[float, float] | None = None
+        self._gamepad_poller = gamepad_poller
 
     def attach(self, canvas) -> None:
+        # Match the class by name (subclasses included) so this module never
+        # imports rendercanvas.glfw, and glfw stays an optional dependency.
+        is_glfw = any(c.__name__ == "GlfwRenderCanvas" for c in type(canvas).__mro__)
+        if self._gamepad_poller is None and is_glfw:
+            self._gamepad_poller = _GlfwGamepadPoller()
         canvas.add_event_handler(
             self._on_event,
             "key_down",
@@ -501,6 +514,9 @@ class _InputBridge:
 
     def begin_frame(self) -> None:
         self._state._begin_frame()
+        if self._gamepad_poller is not None:
+            for name, payload in self._state._record_gamepads(self._gamepad_poller.poll()):
+                self._engine.emit(name, payload)
 
     def _on_event(self, rc: dict) -> None:
         et = rc.get("event_type")

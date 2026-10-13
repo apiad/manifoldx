@@ -151,3 +151,94 @@ def test_begin_frame_triggers_state_swap(setup):
     assert not state.just_pressed("w")
     bridge.begin_frame()
     assert state.just_pressed("w")
+
+
+from manifoldx.input import GamepadButtonEvent, GamepadInfo, GamepadSnapshot
+
+
+class _FakePoller:
+    """Returns the queued snapshot tuples, one per poll; then repeats the last."""
+
+    def __init__(self, *frames) -> None:
+        self.frames = list(frames)
+        self.polls = 0
+
+    def poll(self):
+        self.polls += 1
+        return self.frames.pop(0) if len(self.frames) > 1 else self.frames[0]
+
+
+_INFO = GamepadInfo(index=0, name="pad", guid="guid", mapped=True)
+
+
+def _snap(*buttons, **axes) -> GamepadSnapshot:
+    return GamepadSnapshot(info=_INFO, buttons=frozenset(buttons), axes=axes)
+
+
+def test_begin_frame_polls_gamepads_and_emits_events():
+    engine, state = _StubEngine(), InputState()
+    poller = _FakePoller((_snap("a"),), (_snap(),), ())
+    bridge = _InputBridge(engine, state, gamepad_poller=poller)
+
+    bridge.begin_frame()
+    assert state.gamepad_just_pressed("a")
+    assert engine.emitted == [
+        ("gamepad_connected", _INFO),
+        ("gamepad_down", GamepadButtonEvent(pad=0, button="a", is_down=True)),
+    ]
+
+    engine.emitted.clear()
+    bridge.begin_frame()
+    assert state.gamepad_just_released("a")
+    assert engine.emitted == [
+        ("gamepad_up", GamepadButtonEvent(pad=0, button="a", is_down=False)),
+    ]
+
+    engine.emitted.clear()
+    bridge.begin_frame()
+    assert engine.emitted == [("gamepad_disconnected", _INFO)]
+    assert poller.polls == 3
+
+
+def test_virtual_direction_from_stick_emits_on_bus():
+    engine, state = _StubEngine(), InputState()
+    bridge = _InputBridge(engine, state, gamepad_poller=_FakePoller((_snap(left_x=-0.9),)))
+    bridge.begin_frame()
+    assert ("gamepad_down", GamepadButtonEvent(pad=0, button="left", is_down=True)) in engine.emitted
+
+
+def test_no_poller_means_zero_pads_and_no_errors(setup):
+    engine, state, bridge = setup
+    bridge.begin_frame()
+    bridge.begin_frame()
+    assert state.gamepads == ()
+    assert not state.gamepad_pressed("a")
+    assert engine.emitted == []
+
+
+class _StubCanvas:
+    def add_event_handler(self, *args) -> None:
+        pass
+
+
+def test_attach_to_non_glfw_canvas_creates_no_poller(setup):
+    engine, state, bridge = setup
+    bridge.attach(_StubCanvas())
+    assert bridge._gamepad_poller is None
+
+
+def test_attach_to_glfw_canvas_creates_glfw_poller(setup, monkeypatch):
+    import manifoldx.input as input_mod
+
+    class GlfwRenderCanvas(_StubCanvas):  # matched by class name
+        pass
+
+    class MyCanvas(GlfwRenderCanvas):
+        pass
+
+    created = []
+    monkeypatch.setattr(input_mod, "_GlfwGamepadPoller", lambda: created.append(1) or "poller")
+    engine, state, bridge = setup
+    bridge.attach(MyCanvas())
+    assert bridge._gamepad_poller == "poller"
+    assert created == [1]

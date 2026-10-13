@@ -8,7 +8,14 @@ from manifoldx.ecs import EntityStore, ComponentView
 from manifoldx.systems import Query
 from manifoldx.components import Transform, Mesh, Material, Colors
 from manifoldx.camera import Camera
-from manifoldx.input import KeyEvent, PointerEvent, WheelEvent, ResizeEvent
+from manifoldx.input import (
+    GamepadButtonEvent,
+    GamepadInfo,
+    KeyEvent,
+    PointerEvent,
+    ResizeEvent,
+    WheelEvent,
+)
 from manifoldx.resources import cube, sphere, plane, basic, phong, standard
 from manifoldx.assets import load_obj
 from manifoldx.textures import load_texture
@@ -125,4 +132,6 @@ __all__ = [
     "PointerEvent",
     "WheelEvent",
     "ResizeEvent",
+    "GamepadButtonEvent",
+    "GamepadInfo",
 ]
