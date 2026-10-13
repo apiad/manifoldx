@@ -184,6 +184,7 @@ class Engine:
         height: int = 600,
         width: int = 800,
         fullscreen: bool = False,
+        monitor: int | str | None = None,
         max_entities: int = 100_000,
         check_numerics: bool = True,
     ):
@@ -194,6 +195,9 @@ class Engine:
         # supersampled offscreen still, whose canvas is larger than (w, h).
         self._follow_resize = True
         self.fullscreen = fullscreen
+        # Fullscreen target: index or name substring; None reads MANIFOLDX_MONITOR,
+        # then uses the primary monitor (see backends.get_desktop_canvas).
+        self.monitor = monitor
         self.check = check_numerics  # Enable/disable validation warnings
         ecs.ENABLE_VALIDATION = check_numerics  # Set global flag for ECS validation
 
@@ -1215,6 +1219,7 @@ class Engine:
             height=self.h,
             fullscreen=self.fullscreen,
             title=self.title,
+            monitor=self.monitor,
         )
 
         # Initialize WebGPU context
