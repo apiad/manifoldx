@@ -190,6 +190,9 @@ class Engine:
         self.title = title
         self.h = height
         self.w = width
+        # Follow canvas resize events (interactive windows). Off for the
+        # supersampled offscreen still, whose canvas is larger than (w, h).
+        self._follow_resize = True
         self.fullscreen = fullscreen
         self.check = check_numerics  # Enable/disable validation warnings
         ecs.ENABLE_VALIDATION = check_numerics  # Set global flag for ECS validation
@@ -699,6 +702,13 @@ class Engine:
             self.gui.remove(self._loading_panel)
             self._loading_panel = None
 
+    def _on_canvas_resize(self, ev):
+        """Keep (w, h) at the canvas' logical size, so the camera aspect, GUI
+        layout and hit-tests match the window rather than the construction size."""
+        if self._follow_resize and ev.width > 0 and ev.height > 0:
+            self.w = int(round(ev.width))
+            self.h = int(round(ev.height))
+
     def quit(self):
         self._running = False
         self.shutdown_events()
@@ -1065,6 +1075,7 @@ class Engine:
         if self._still_size is None:
             from manifoldx.backends import get_offscreen_canvas
 
+            self._follow_resize = False
             self._init_canvas(get_offscreen_canvas(width=size[0], height=size[1]))
             self._running = True
             self._fire_startup()

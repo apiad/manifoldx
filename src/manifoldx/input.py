@@ -291,6 +291,9 @@ class _InputBridge:
                 pixel_ratio=rc["pixel_ratio"],
             )
             self._state._record_resize(ev)
+            on_resize = getattr(self._engine, "_on_canvas_resize", None)
+            if on_resize is not None:
+                on_resize(ev)
             self._engine.emit("resize", ev)
         # Other rendercanvas events (pointer_enter, pointer_leave,
         # double_click, char, before_draw, animate) are ignored in v1.

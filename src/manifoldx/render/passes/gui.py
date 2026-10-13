@@ -147,13 +147,7 @@ def render_gui_pass(rp, engine, render_pass) -> None:
     for panel in engine.gui:
         _refresh_value_displays(panel)
 
-    viewport = LayoutBox(0.0, 0.0, float(engine.w), float(engine.h))
-
-    painter = Painter()
-    for panel in engine.gui:
-        spec = panel.build_layout_spec()
-        boxes = compute_layout(spec, viewport=_anchored(panel, viewport))
-        paint(panel, spec, boxes, painter)
+    painter = layout_gui(engine)
 
     _ensure_gui_pipeline(rp, engine)
 
@@ -178,6 +172,21 @@ def render_gui_pass(rp, engine, render_pass) -> None:
             _ensure_glyph_pipeline(rp, engine)
             _upload_glyph_instances(rp, glyph_data)
             _draw_glyphs(rp, engine, render_pass, glyph_data.shape[0])
+
+
+def layout_gui(engine) -> Painter:
+    """Lay out and paint every root panel against the engine's viewport.
+
+    Pure Python (no GPU): returns the painter holding the frame's rect and
+    text ops in screen pixels.
+    """
+    viewport = LayoutBox(0.0, 0.0, float(engine.w), float(engine.h))
+    painter = Painter()
+    for panel in engine.gui:
+        spec = panel.build_layout_spec()
+        boxes = compute_layout(spec, viewport=_anchored(panel, viewport))
+        paint(panel, spec, boxes, painter)
+    return painter
 
 
 def _ensure_globals_viewport(rp, engine) -> None:
