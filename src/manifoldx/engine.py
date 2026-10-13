@@ -695,9 +695,9 @@ class Engine:
                 )
                 self.gui.append(self._loading_panel)
             # anchors other than top-left paint top-left (manifoldx#13): centre by offset
-            vw, vh = getattr(self.input, "_viewport_size", None) or (0, 0)
-            vw, vh = (vw, vh) if vw and vh else (self.w, self.h)
-            self._loading_panel.offset = (vw / 2 - 115, vh / 2 - 20)
+            # offsets are in UI pixels, so centre in the scaled viewport
+            s = self.gui.effective_scale(self.h)
+            self._loading_panel.offset = (self.w / s / 2 - 115, self.h / s / 2 - 20)
         elif self._loading_panel is not None:
             self.gui.remove(self._loading_panel)
             self._loading_panel = None

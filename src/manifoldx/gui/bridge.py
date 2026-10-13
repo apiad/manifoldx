@@ -8,6 +8,7 @@ Task 2. Task 1 ships only the constructor + the begin_frame hook that resets
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 
@@ -34,8 +35,15 @@ class _GuiBridge:
         self._engine.gui.pointer_over_gui = False
 
     def _on_pointer(self, ev: Any, phase: str) -> None:
-        """Route a pointer event through hit-test to widget handlers."""
+        """Route a pointer event through hit-test to widget handlers.
+
+        Widgets lay out in UI pixels, so the event is mapped from screen
+        pixels by the GUI scale before hit-testing and dispatch.
+        """
         gui = self._engine.gui
+        scale = gui.effective_scale(self._engine.h)
+        if scale != 1.0:
+            ev = replace(ev, x=ev.x / scale, y=ev.y / scale, dx=ev.dx / scale, dy=ev.dy / scale)
 
         # Captured drag has highest priority.
         if self._captured is not None:
@@ -51,7 +59,7 @@ class _GuiBridge:
 
         from manifoldx.gui.hit_test import hit_test
         from manifoldx.gui.layout import LayoutBox
-        viewport = LayoutBox(0.0, 0.0, float(self._engine.w), float(self._engine.h))
+        viewport = LayoutBox(0.0, 0.0, self._engine.w / scale, self._engine.h / scale)
         result = hit_test(list(gui), ev.x, ev.y, viewport=viewport)
         if result is None:
             return
