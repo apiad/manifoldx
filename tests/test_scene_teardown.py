@@ -114,3 +114,117 @@ def test_off_unknown_handler_raises():
     engine = _engine()
     with pytest.raises(ValueError):
         engine.off("ping", lambda payload: None)
+
+
+# --- clear_scene ----------------------------------------------------------------
+
+
+def _offscreen_engine():
+    try:
+        from manifoldx.backends import get_offscreen_canvas
+
+        canvas = get_offscreen_canvas(width=64, height=64)
+    except Exception as e:
+        pytest.skip(f"offscreen canvas unavailable: {e}")
+    engine = mx.Engine("teardown", width=64, height=64)
+    engine._init_canvas(canvas)
+    engine._running = True
+    return engine
+
+
+CUBE = mx.geometry.cube(1, 1, 1)
+RED = mx.material.phong(mx.colors.RED)
+
+
+def _spawn(engine, n=1):
+    return engine.spawn(mx.Mesh(CUBE), mx.Material(RED), mx.Transform(pos=(0, 0, 0)), n=n)
+
+
+def _alive(engine):
+    return int(np.count_nonzero(engine.store._alive))
+
+
+def test_clear_scene_from_a_system_destroys_entities_and_panels():
+    from manifoldx.gui import Panel, Text
+
+    engine = _offscreen_engine()
+    _spawn(engine, n=3)
+    engine.gui.append(Panel(children=[Text("hi")]))
+    kept = []
+
+    @engine.system
+    def leave(query: mx.Query[mx.Transform], dt: float):
+        engine.clear_scene()
+        engine.remove_system(leave)
+
+    @engine.system
+    def keep(query: mx.Query[mx.Transform], dt: float):
+        kept.append(dt)
+
+    engine._draw_frame()
+    assert _alive(engine) == 0
+    assert len(engine.gui) == 0
+    engine._draw_frame()
+    assert len(kept) == 2  # systems stay
+
+
+def test_entities_spawned_after_clear_scene_in_the_same_frame_survive():
+    engine = _offscreen_engine()
+    _spawn(engine, n=2)
+
+    @engine.system
+    def swap(query: mx.Query[mx.Transform], dt: float):
+        engine.clear_scene()
+        _spawn(engine, n=1)
+        engine.remove_system(swap)
+
+    engine._draw_frame()
+    assert _alive(engine) == 1
+
+
+def test_clear_scene_between_frames_is_applied_next_frame():
+    # In run() mode an async handler resumed after `await engine.tick()` runs
+    # between frames; its destroy commands must reach the next frame's flush.
+    engine = _offscreen_engine()
+    _spawn(engine, n=2)
+    engine._draw_frame()
+    engine.clear_scene()
+    _spawn(engine, n=1)
+    engine._draw_frame()
+    assert _alive(engine) == 1
+
+
+def test_clear_scene_with_a_pending_destroy_does_not_double_free():
+    engine = _offscreen_engine()
+    handle = _spawn(engine, n=2)
+    engine.destroy([handle.index])
+    engine.clear_scene()
+    engine._draw_frame()
+    a, b = _spawn(engine).index, _spawn(engine).index
+    assert a != b
+    assert _alive(engine) == 2
+
+
+def test_clear_scene_keeps_camera_lights_and_background():
+    engine = _offscreen_engine()
+    light = mx.PointLight(position=(1, 2, 3)) if hasattr(mx, "PointLight") else object()
+    engine.add_light(light)
+    engine.background_color = (0.3, 0.2, 0.1)
+    camera = engine.camera
+    engine.clear_scene()
+    engine._draw_frame()
+    assert engine._lights == [light]
+    assert engine.camera is camera
+    assert engine.background_color == (0.3, 0.2, 0.1)
+
+
+def test_clear_scene_keeps_the_loading_spinner():
+    engine = _offscreen_engine()
+    with engine.loading("level"):
+        engine._draw_frame()
+        assert len(engine.gui) == 1
+        engine.clear_scene()
+        engine._draw_frame()
+        assert list(engine.gui) == [engine._loading_panel]
+    engine._draw_frame()  # closing the block removes the spinner without error
+    assert len(engine.gui) == 0

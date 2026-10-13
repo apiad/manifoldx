@@ -882,6 +882,25 @@ class Engine:
         if hasattr(indices, "__len__") and len(indices) > 0:
             self.commands.append(Command(CommandType.DESTROY, {"indices": indices}))
 
+    def clear_scene(self) -> None:
+        """Destroy every live entity and remove every GUI panel: leave a screen.
+
+        For apps that show several screens in one window: keep one Engine and one
+        run(), and call clear_scene() between screens (quit() closes the window).
+        Systems, event handlers, the camera, lights, sun, spot, shadows, sky,
+        background, fog and environment stay; remove what the screen added with
+        remove_system() and off(). The loading spinner stays while loading.
+
+        Safe mid-frame, from a system, handler or async task: entities are
+        destroyed at the frame's command flush like destroy(), so entities spawned
+        after this call survive. GPU geometry and materials stay registered.
+        """
+        self.destroy(np.where(self.store._alive)[0])
+        self.gui.clear()
+        if self._loading_panel is not None:
+            self.gui.append(self._loading_panel)
+        self._gui_bridge._captured = None  # a drag on a removed widget ends here
+
     # === Canvas Initialization ===
 
     def _init_canvas(self, canvas):
@@ -954,11 +973,6 @@ class Engine:
         self._start_environment()
         self._update_loading_overlay()
 
-        # Clear command buffer ONCE at the head of the frame so events,
-        # async handlers, and systems all contribute to the same buffer
-        # that gets flushed at step 6.
-        self.commands.clear()
-
         # Step 3: drain pending events (frame N-1's emits + this frame's 'frame')
         frame_payload = {
             "dt": dt,
@@ -977,7 +991,10 @@ class Engine:
         self.systems.run_all(self, dt)
 
         # Step 6: flush command buffer (events + handlers + systems).
+        # Commands queued between frames (async tasks resumed by the running loop
+        # in run() mode) are still in the buffer here, so they are not lost.
         self.commands.execute(self.store)
+        self.commands.clear()
 
         # Step 7: GPU compute systems.
         self._compute_runner.run_all(dt)
