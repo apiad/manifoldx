@@ -60,6 +60,67 @@ class ResizeEvent:
     pixel_ratio: float
 
 
+# Gamepad button names, in GLFW's (SDL-mapped) button order.
+GAMEPAD_BUTTONS: tuple[str, ...] = (
+    "a", "b", "x", "y", "lb", "rb", "back", "start", "guide",
+    "lstick", "rstick", "dpad_up", "dpad_right", "dpad_down", "dpad_left",
+)
+# Gamepad axis names, in GLFW's axis order. Sticks are in [-1, 1] with
+# y positive = down (as GLFW reports it); triggers are in [0, 1].
+GAMEPAD_AXES: tuple[str, ...] = ("left_x", "left_y", "right_x", "right_y", "lt", "rt")
+# Virtual buttons: true when the d-pad OR the left stick points that way.
+GAMEPAD_DIRECTIONS: tuple[str, ...] = ("up", "down", "left", "right")
+
+
+@dataclass(frozen=True, slots=True)
+class GamepadInfo:
+    """A connected gamepad, delivered on `gamepad_connected` / `gamepad_disconnected`.
+
+    `index` is the GLFW joystick id (0..15). `mapped` is False for a joystick
+    with no SDL gamepad mapping, whose buttons come from a guessed raw layout
+    (see `_GlfwGamepadPoller`).
+    """
+
+    index: int
+    name: str
+    guid: str
+    mapped: bool
+
+
+@dataclass(frozen=True, slots=True)
+class GamepadButtonEvent:
+    """A gamepad button event delivered on `gamepad_down` or `gamepad_up`.
+
+    `button` is a name from `GAMEPAD_BUTTONS`, a virtual direction from
+    `GAMEPAD_DIRECTIONS`, or `"buttonN"` for an unmapped pad's raw button N.
+    """
+
+    pad: int
+    button: str
+    is_down: bool
+
+
+@dataclass(frozen=True, slots=True)
+class GamepadSnapshot:
+    """One pad's state from one poll: the pressed button names and the axes.
+
+    Plain data, so tests can build it without a device. Virtual directions
+    are not included; `InputState` derives them.
+    """
+
+    info: GamepadInfo
+    buttons: frozenset[str]
+    axes: dict[str, float]
+
+
+def _button_order(name: str) -> tuple[int, int, str]:
+    if name in GAMEPAD_BUTTONS:
+        return (0, GAMEPAD_BUTTONS.index(name), name)
+    if name in GAMEPAD_DIRECTIONS:
+        return (1, GAMEPAD_DIRECTIONS.index(name), name)
+    return (2, len(name), name)  # "button2" before "button10"
+
+
 class InputState:
     """Per-engine input polling state. Read-only public surface; only the
     bridge mutates via `_record_*` and `_begin_frame`.
@@ -77,7 +138,16 @@ class InputState:
     - "Accumulators" (`mouse_delta`, `wheel_delta`): summed across all
       bridge callbacks since the last `_begin_frame`; finalized into the
       public `_mouse_delta` / `_wheel_delta` snapshots on swap.
+
+    Gamepads are polled, not event-driven: the bridge calls
+    `_record_gamepads` once per frame, right after `_begin_frame`, and the
+    gamepad edges (`gamepad_just_pressed` / `gamepad_just_released`) are the
+    difference between that poll and the previous one.
     """
+
+    # Left-stick magnitude past which the stick counts as a virtual
+    # direction ("up"/"down"/"left"/"right"). Set per instance to change it.
+    gamepad_deadzone: float = 0.5
 
     def __init__(self) -> None:
         # Keyboard
@@ -104,6 +174,13 @@ class InputState:
 
         # Window
         self._viewport_size: tuple[int, int] = (0, 0)
+
+        # Gamepads, keyed by pad index. Buttons include virtual directions.
+        self._gamepads: dict[int, GamepadInfo] = {}
+        self._pad_buttons: dict[int, frozenset[str]] = {}
+        self._pad_axes: dict[int, dict[str, float]] = {}
+        self._pad_just_pressed: dict[int, frozenset[str]] = {}
+        self._pad_just_released: dict[int, frozenset[str]] = {}
 
     # ---- Keyboard public API ----
 
@@ -157,6 +234,37 @@ class InputState:
     def viewport_size(self) -> tuple[int, int]:
         return self._viewport_size
 
+    # ---- Gamepad public API ----
+    #
+    # `pad=None` means any connected pad: buttons OR over all pads, axes read
+    # the first pad (lowest index). An unknown pad reads False / 0.0.
+
+    def gamepad_pressed(self, button: str, pad: int | None = None) -> bool:
+        return self._any_pad(self._pad_buttons, button, pad)
+
+    def gamepad_just_pressed(self, button: str, pad: int | None = None) -> bool:
+        return self._any_pad(self._pad_just_pressed, button, pad)
+
+    def gamepad_just_released(self, button: str, pad: int | None = None) -> bool:
+        return self._any_pad(self._pad_just_released, button, pad)
+
+    def gamepad_axis(self, name: str, pad: int | None = None) -> float:
+        if pad is None:
+            if not self._pad_axes:
+                return 0.0
+            pad = min(self._pad_axes)
+        return self._pad_axes.get(pad, {}).get(name, 0.0)
+
+    @property
+    def gamepads(self) -> tuple[GamepadInfo, ...]:
+        return tuple(self._gamepads[i] for i in sorted(self._gamepads))
+
+    @staticmethod
+    def _any_pad(per_pad: dict[int, frozenset[str]], button: str, pad: int | None) -> bool:
+        if pad is None:
+            return any(button in b for b in per_pad.values())
+        return button in per_pad.get(pad, ())
+
     # ---- Bridge-only mutators ----
 
     def _record_key_down(self, key: str, modifiers: tuple[str, ...]) -> None:
@@ -199,6 +307,52 @@ class InputState:
     def _record_resize(self, ev: ResizeEvent) -> None:
         self._viewport_size = (ev.width, ev.height)
 
+    def _record_gamepads(self, snapshots) -> list[tuple[str, object]]:
+        """Replace the gamepad state with this frame's poll.
+
+        Returns the bus events the change implies, in order: per pad (by
+        index) `gamepad_connected`, then `gamepad_up`s, then `gamepad_down`s,
+        then `gamepad_disconnected`. A pad that disconnects releases every
+        button it held, so `gamepad_up` handlers never see a stuck button.
+        """
+        new_infos = {s.info.index: s.info for s in snapshots}
+        new_buttons = {s.info.index: self._with_directions(s) for s in snapshots}
+        events: list[tuple[str, object]] = []
+        just_pressed: dict[int, frozenset[str]] = {}
+        just_released: dict[int, frozenset[str]] = {}
+        for i in sorted(set(self._gamepads) | set(new_infos)):
+            old = self._pad_buttons.get(i, frozenset())
+            new = new_buttons.get(i, frozenset())
+            pressed, released = new - old, old - new
+            just_pressed[i], just_released[i] = pressed, released
+            if i not in self._gamepads:
+                events.append(("gamepad_connected", new_infos[i]))
+            for b in sorted(released, key=_button_order):
+                events.append(("gamepad_up", GamepadButtonEvent(pad=i, button=b, is_down=False)))
+            for b in sorted(pressed, key=_button_order):
+                events.append(("gamepad_down", GamepadButtonEvent(pad=i, button=b, is_down=True)))
+            if i not in new_infos:
+                events.append(("gamepad_disconnected", self._gamepads[i]))
+        self._gamepads = new_infos
+        self._pad_buttons = new_buttons
+        self._pad_axes = {s.info.index: dict(s.axes) for s in snapshots}
+        self._pad_just_pressed = just_pressed
+        self._pad_just_released = just_released
+        return events
+
+    def _with_directions(self, snap: GamepadSnapshot) -> frozenset[str]:
+        dz = self.gamepad_deadzone
+        x = snap.axes.get("left_x", 0.0)
+        y = snap.axes.get("left_y", 0.0)
+        b = snap.buttons
+        dirs = {
+            "up": "dpad_up" in b or y < -dz,
+            "down": "dpad_down" in b or y > dz,
+            "left": "dpad_left" in b or x < -dz,
+            "right": "dpad_right" in b or x > dz,
+        }
+        return b | {d for d, on in dirs.items() if on}
+
     def _begin_frame(self) -> None:
         # Swap keyboard pending → current.
         self._just_pressed_keys = frozenset(self._pending_just_pressed_keys)
@@ -219,6 +373,11 @@ class InputState:
         self._accum_mouse_dy = 0.0
         self._accum_wheel_dx = 0.0
         self._accum_wheel_dy = 0.0
+
+        # Gamepad edges live for one poll; the bridge's poll right after
+        # this call sets the new ones (none, if there is no poller).
+        self._pad_just_pressed = {}
+        self._pad_just_released = {}
 
 
 class _InputBridge:
