@@ -52,12 +52,17 @@ class Mesh:
         """Return a copy with area-weighted, unit-length vertex normals."""
         p = self.positions
         f = self.faces.astype(np.intp)
-        v0, v1, v2 = p[f[:, 0]], p[f[:, 1]], p[f[:, 2]]
+        # A mesh posed every frame pays for this, so it avoids np.add.at and np.cross:
+        # one gather per corner, the cross product by columns, one bincount per axis.
+        v0, v1, v2 = np.take(p, f.T, axis=0)
+        (a0, a1, a2), (b0, b1, b2) = (v1 - v0).T, (v2 - v0).T
         # Cross-product magnitude is proportional to triangle area -> area weighting.
-        face_n = np.cross(v1 - v0, v2 - v0)
-        normals = np.zeros_like(p)
-        for k in range(3):
-            np.add.at(normals, f[:, k], face_n)
+        face_n = (a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0)
+        corners = f.T.reshape(-1)  # every face's first corners, then seconds, then thirds
+        normals = np.stack(
+            [np.bincount(corners, weights=np.concatenate((c, c, c)), minlength=len(p)) for c in face_n],
+            axis=1,
+        )
         lengths = np.linalg.norm(normals, axis=1, keepdims=True)
         # Degenerate vertices (e.g. folds where opposing face normals cancel)
         # get a fallback direction so every output normal is unit-length.

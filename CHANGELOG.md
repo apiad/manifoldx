@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **`Mesh.recompute_normals` is 2-5x faster.** It scatters face normals with one
+  `np.bincount` per axis instead of `np.add.at`, gathers each corner once and takes the
+  cross product by columns. The normals match the old ones to 1e-6. A mesh posed on the
+  CPU every frame pays this cost once per frame.
 - **IBL precompute: about 3.5x faster, and cached on disk.** The prefiltered chain's mip 0
   is roughness 0, a mirror, so it is now the radiance cube itself instead of 50 M GGX
   samples (about 70% of the work). The result is also cached in
