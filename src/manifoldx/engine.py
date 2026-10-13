@@ -184,13 +184,20 @@ class Engine:
         height: int = 600,
         width: int = 800,
         fullscreen: bool = False,
+        monitor: int | str | None = None,
         max_entities: int = 100_000,
         check_numerics: bool = True,
     ):
         self.title = title
         self.h = height
         self.w = width
+        # Follow canvas resize events (interactive windows). Off for the
+        # supersampled offscreen still, whose canvas is larger than (w, h).
+        self._follow_resize = True
         self.fullscreen = fullscreen
+        # Fullscreen target: index or name substring; None reads MANIFOLDX_MONITOR,
+        # then uses the primary monitor (see backends.get_desktop_canvas).
+        self.monitor = monitor
         self.check = check_numerics  # Enable/disable validation warnings
         ecs.ENABLE_VALIDATION = check_numerics  # Set global flag for ECS validation
 
@@ -692,12 +699,19 @@ class Engine:
                 )
                 self.gui.append(self._loading_panel)
             # anchors other than top-left paint top-left (manifoldx#13): centre by offset
-            vw, vh = getattr(self.input, "_viewport_size", None) or (0, 0)
-            vw, vh = (vw, vh) if vw and vh else (self.w, self.h)
-            self._loading_panel.offset = (vw / 2 - 115, vh / 2 - 20)
+            # offsets are in UI pixels, so centre in the scaled viewport
+            s = self.gui.effective_scale(self.h)
+            self._loading_panel.offset = (self.w / s / 2 - 115, self.h / s / 2 - 20)
         elif self._loading_panel is not None:
             self.gui.remove(self._loading_panel)
             self._loading_panel = None
+
+    def _on_canvas_resize(self, ev):
+        """Keep (w, h) at the canvas' logical size, so the camera aspect, GUI
+        layout and hit-tests match the window rather than the construction size."""
+        if self._follow_resize and ev.width > 0 and ev.height > 0:
+            self.w = int(round(ev.width))
+            self.h = int(round(ev.height))
 
     def quit(self):
         self._running = False
@@ -1065,6 +1079,7 @@ class Engine:
         if self._still_size is None:
             from manifoldx.backends import get_offscreen_canvas
 
+            self._follow_resize = False
             self._init_canvas(get_offscreen_canvas(width=size[0], height=size[1]))
             self._running = True
             self._fire_startup()
@@ -1204,6 +1219,7 @@ class Engine:
             height=self.h,
             fullscreen=self.fullscreen,
             title=self.title,
+            monitor=self.monitor,
         )
 
         # Initialize WebGPU context

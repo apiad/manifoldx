@@ -37,6 +37,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+- **Fullscreen on a chosen monitor.** `Engine(fullscreen=True, monitor=...)` takes an index
+  into the monitor list or a case-insensitive substring of a monitor's name (`"HDMI"`, a
+  model name). With `monitor=None` the `MANIFOLDX_MONITOR` environment variable is read
+  with the same rules, then the primary monitor is used, as before. No match raises
+  `ValueError` listing the monitors. The window takes the monitor's current video mode.
+  `manifoldx.backends.list_monitors()` returns `(index, name, (w, h), refresh, is_primary)`;
+  `examples/ui_scale.py --list-monitors` prints it.
+  A fullscreen window no longer minimizes when focus moves to another monitor
+  (GLFW's `AUTO_ICONIFY` is turned off for it).
+- **`engine.gui.scale` and `engine.gui.design_height`: scale the whole GUI.** Widget
+  sizes, paddings, radii, borders, font sizes and offsets are UI pixels; on screen they
+  are multiplied by `engine.gui.effective_scale(engine.h)`, which is `scale` (default
+  1.0) or, when `design_height` is set, `engine.h / design_height`. Layout runs against
+  a viewport of `(w / scale, h / scale)`, so a panel placed at the UI viewport's edge
+  still touches the screen's edge. Text is rasterized at the scaled font size, so it
+  stays sharp; a string too wide for one label-atlas tile at that size is stretched
+  instead of cut off. Hit-tests map the pointer by the same scale, so clicks land on
+  what is drawn. Example:
+  `examples/ui_scale.py` (`--scale`, `+` / `-` live).
+
 - **`engine.loading(label)`: load without freezing the window.** A context manager, `with`
   or `async with`, marking work the scene is still waiting for. While a block is open,
   `run()` shows the loading spinner with its label; `render_frame`, `render` and
@@ -113,6 +133,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GUI v1** — in-engine retained-mode GUI for sim controls + HUD readouts. New `manifoldx.gui` package: `Panel`, `Text`, `ValueDisplay`, `Button`, `Slider`, `Toggle`; stack + flex layout; theme + named-class styling with per-widget overrides. Rendering via a new `gui` render pass at the end of the order, using `RectMaterial` (WGSL signed-distance rounded rect) for backgrounds and the existing `LabelTextureAtlas` for glyphs (no new font dependency). Interaction via `_GuiBridge` — subscribes to pointer events on the bus, hit-tests the widget tree top-down, dispatches per-widget state mutations, and exposes `engine.gui.pointer_over_gui` for cooperative consume by user systems. Slider supports drag capture and emits `:change` continuously plus `:commit` on pointer-up. Example at `examples/gui_demo.py`.
 
 ### Fixes
+
+- **`Engine.w` / `Engine.h` follow window resizes.** They were fixed at construction, so
+  a resized or fullscreen window drew the construction size stretched: the camera aspect,
+  the GUI layout and the GUI hit-tests all used the old size. They now track the canvas'
+  logical size. A resized window now keeps GUI panels at their pixel size instead of
+  stretching them with the window; set `engine.gui.design_height` to get proportional
+  scaling. `render_frame` keeps the requested size, since its supersampled canvas is
+  larger than the frame.
 
 - **Textured `StandardMaterial` under the sun and the spot.** The textured shader swapped
   in the sampled albedo for point lights, IBL and ambient but not for the sun and spot

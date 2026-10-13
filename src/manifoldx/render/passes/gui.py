@@ -15,13 +15,15 @@ Pass attributes (set at pipeline-creation time in `_ensure_gui_pipeline`):
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import wgpu
 
 from manifoldx.gui.layout import LayoutBox, compute_layout
 from manifoldx.gui.material import RectMaterial
 from manifoldx.gui.painter import Painter, paint
-from manifoldx.gui.widgets import Panel
+from manifoldx.gui.widgets import Panel, _measure_text
 
 
 # ---------------------------------------------------------------------------
@@ -147,13 +149,7 @@ def render_gui_pass(rp, engine, render_pass) -> None:
     for panel in engine.gui:
         _refresh_value_displays(panel)
 
-    viewport = LayoutBox(0.0, 0.0, float(engine.w), float(engine.h))
-
-    painter = Painter()
-    for panel in engine.gui:
-        spec = panel.build_layout_spec()
-        boxes = compute_layout(spec, viewport=_anchored(panel, viewport))
-        paint(panel, spec, boxes, painter)
+    painter = layout_gui(engine)
 
     _ensure_gui_pipeline(rp, engine)
 
@@ -178,6 +174,55 @@ def render_gui_pass(rp, engine, render_pass) -> None:
             _ensure_glyph_pipeline(rp, engine)
             _upload_glyph_instances(rp, glyph_data)
             _draw_glyphs(rp, engine, render_pass, glyph_data.shape[0])
+
+
+def layout_gui(engine) -> Painter:
+    """Lay out and paint every root panel against the engine's viewport.
+
+    Pure Python (no GPU): returns the painter holding the frame's rect and
+    text ops in screen pixels. Layout runs in UI pixels against a viewport
+    of (w / scale, h / scale); the ops are then scaled to the screen. The
+    scale is applied here rather than through the globals' viewport_size,
+    which the sprite and label passes share within the frame.
+    """
+    scale = engine.gui.effective_scale(engine.h)
+    viewport = LayoutBox(0.0, 0.0, engine.w / scale, engine.h / scale)
+    painter = Painter()
+    for panel in engine.gui:
+        spec = panel.build_layout_spec()
+        boxes = compute_layout(spec, viewport=_anchored(panel, viewport))
+        paint(panel, spec, boxes, painter)
+    if scale != 1.0:
+        _scale_ops(painter, scale)
+    return painter
+
+
+def _scale_box(box: LayoutBox, s: float) -> LayoutBox:
+    return LayoutBox(box.x * s, box.y * s, box.w * s, box.h * s)
+
+
+def _scale_ops(painter: Painter, s: float) -> None:
+    """Map UI-pixel ops to screen pixels. Text is re-measured at the scaled
+    font size, so glyphs rasterize at their on-screen size instead of being
+    stretched. A string that would not fit one atlas tile at that size keeps
+    its UI font size and is stretched instead, so it is not cut off."""
+    from manifoldx.viz.text import TILE_HEIGHT, TILE_WIDTH
+
+    painter.rect_ops[:] = [
+        replace(op, box=_scale_box(op.box, s), border=op.border * s, radius=op.radius * s)
+        for op in painter.rect_ops
+    ]
+    scaled_text = []
+    for op in painter.text_ops:
+        font_size = max(1, round(op.font_size * s))
+        w, h = _measure_text(op.text, font_size)
+        # the atlas rasterizes at x=4 inside a TILE_WIDTH x TILE_HEIGHT tile
+        if w + 4 <= TILE_WIDTH and h <= TILE_HEIGHT:
+            box = LayoutBox(op.box.x * s, op.box.y * s, w, h)
+            scaled_text.append(replace(op, box=box, font_size=font_size))
+        else:
+            scaled_text.append(replace(op, box=_scale_box(op.box, s)))
+    painter.text_ops[:] = scaled_text
 
 
 def _ensure_globals_viewport(rp, engine) -> None:

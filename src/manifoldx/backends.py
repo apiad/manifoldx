@@ -16,12 +16,16 @@ Usage:
 
 from __future__ import annotations
 
+import ctypes
+import os
+
 
 def get_desktop_canvas(
     width: int,
     height: int,
     fullscreen: bool,
     title: str,
+    monitor: int | str | None = None,
 ) -> "BaseRenderCanvas":
     """Create a desktop canvas using GLFW.
 
@@ -37,6 +41,10 @@ def get_desktop_canvas(
         Whether to create a fullscreen window.
     title : str
         Window title.
+    monitor : int | str | None
+        Fullscreen only: index into the monitor list, or a case-insensitive
+        substring of a monitor's name. None reads ``MANIFOLDX_MONITOR`` (same
+        rules), then falls back to the primary monitor.
 
     Returns
     -------
@@ -65,11 +73,16 @@ def get_desktop_canvas(
     if fullscreen:
         import glfw
 
-        monitor = glfw.get_primary_monitor()
-        mode = glfw.get_video_mode(monitor)
+        monitors = glfw.get_monitors()
+        names = [_monitor_name(glfw, m) for m in monitors]
+        primary = _primary_index(glfw, monitors)
+        target = monitors[_resolve_monitor(monitor, names, primary)]
+        mode = glfw.get_video_mode(target)  # its current mode: no mode switch
+        # Stay up when focus moves to another monitor; GLFW would minimize it.
+        glfw.set_window_attrib(canvas._window, glfw.AUTO_ICONIFY, False)
         glfw.set_window_monitor(
             canvas._window,
-            monitor,
+            target,
             0,
             0,
             mode.size[0],
@@ -78,6 +91,66 @@ def get_desktop_canvas(
         )
 
     return canvas
+
+
+def _monitor_name(glfw, m) -> str:
+    name = glfw.get_monitor_name(m)
+    return name.decode() if isinstance(name, bytes) else str(name)
+
+
+def _addr(m) -> int:
+    # GLFW monitors are ctypes pointers; two pointer objects to the same
+    # monitor compare unequal, so compare their addresses.
+    return ctypes.cast(m, ctypes.c_void_p).value
+
+
+def _primary_index(glfw, monitors) -> int:
+    primary = _addr(glfw.get_primary_monitor())
+    return next((i for i, m in enumerate(monitors) if _addr(m) == primary), 0)
+
+
+def _resolve_monitor(spec: int | str | None, names: list[str], primary: int) -> int:
+    """Index of the monitor `spec` selects among `names`.
+
+    `spec` is an index, or a case-insensitive substring of a name (a string of
+    digits counts as an index). None reads MANIFOLDX_MONITOR, then falls back
+    to `primary`. Raises ValueError listing the monitors when nothing matches.
+    """
+    if spec is None:
+        spec = os.environ.get("MANIFOLDX_MONITOR") or None
+        if spec is None:
+            return primary
+    if isinstance(spec, str) and spec.strip().isdigit():
+        spec = int(spec)
+    if isinstance(spec, int):
+        if 0 <= spec < len(names):
+            return spec
+    else:
+        for i, name in enumerate(names):
+            if spec.lower() in name.lower():
+                return i
+    available = ", ".join(f"{i}: {name}" for i, name in enumerate(names))
+    raise ValueError(f"no monitor matches {spec!r}; available monitors: {available}")
+
+
+def list_monitors() -> list[tuple[int, str, tuple[int, int], int, bool]]:
+    """Connected monitors as (index, name, (width, height), refresh_hz, is_primary).
+
+    The index and name are what `Engine(monitor=...)` and MANIFOLDX_MONITOR
+    accept. Requires: pip install manifold-gfx[desktop]
+    """
+    import glfw
+
+    if not glfw.init():
+        raise RuntimeError("GLFW could not initialize, so no monitors can be listed (no display?)")
+    monitors = glfw.get_monitors()
+    primary = _primary_index(glfw, monitors)
+    out = []
+    for i, m in enumerate(monitors):
+        mode = glfw.get_video_mode(m)
+        size = (int(mode.size[0]), int(mode.size[1]))
+        out.append((i, _monitor_name(glfw, m), size, int(mode.refresh_rate), i == primary))
+    return out
 
 
 def get_offscreen_canvas(width: int, height: int) -> "BaseRenderCanvas":

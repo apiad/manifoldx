@@ -161,11 +161,25 @@ def _measure_text(text: str, font_size: int) -> tuple[float, float]:
 
 class _GuiRoot:
     """Container exposed as `engine.gui`. List-like over root panels, plus
-    a `pointer_over_gui` flag the bridge will toggle (Plan 2)."""
+    a `pointer_over_gui` flag the bridge will toggle (Plan 2).
+
+    Widget sizes, paddings, radii, borders, font sizes and offsets are in UI
+    pixels; on screen they are multiplied by `effective_scale(engine.h)`.
+    Set `scale` for a fixed factor, or `design_height` to scale the UI with
+    the window height (`engine.h / design_height`, which wins over `scale`).
+    """
 
     def __init__(self) -> None:
         self._panels: list[Panel] = []
         self.pointer_over_gui: bool = False
+        self.scale: float = 1.0
+        self.design_height: float | None = None
+
+    def effective_scale(self, screen_height: float) -> float:
+        """Screen pixels per UI pixel for a screen `screen_height` pixels tall."""
+        if self.design_height:
+            return float(screen_height) / float(self.design_height)
+        return float(self.scale)
 
     def append(self, panel: Panel) -> None:
         self._panels.append(panel)

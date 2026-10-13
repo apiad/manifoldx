@@ -5,7 +5,7 @@ The lookup walks `panels` in REVERSE order (last appended = topmost), then
 recurses into each panel's children depth-first, returning the deepest
 interactive widget whose layout box contains `(x, y)`, or None.
 
-`viewport` is the screen rect (LayoutBox(0, 0, engine.w, engine.h)). Root
+`viewport` is the UI-pixel screen rect (LayoutBox(0, 0, w / scale, h / scale)). Root
 panels' slots come from anchor + offset + explicit width/height; nested
 widgets get their boxes from compute_layout.
 """
