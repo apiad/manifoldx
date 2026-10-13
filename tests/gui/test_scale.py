@@ -116,3 +116,15 @@ def test_loading_panel_stays_centred_under_scale():
         engine._update_loading_overlay()
         box = layout_gui(engine).rect_ops[0].box
     assert (box.x + box.w / 2, box.y + box.h / 2) == (400.0, 300.0)
+
+
+def test_text_too_wide_for_an_atlas_tile_is_stretched_not_cut():
+    label = "Press + / - to scale the UI"  # ~195 px at 12 pt, ~390 px at 24 pt
+    eng1 = _engine()
+    eng1.gui.append(Panel(children=[Text(label)], style_overrides={"font_size": 12}))
+    t1 = layout_gui(eng1).text_ops[0]
+    eng2 = _engine(scale=2.0)
+    eng2.gui.append(Panel(children=[Text(label)], style_overrides={"font_size": 12}))
+    t2 = layout_gui(eng2).text_ops[0]
+    assert t2.font_size == t1.font_size
+    assert t2.box == LayoutBox(2 * t1.box.x, 2 * t1.box.y, 2 * t1.box.w, 2 * t1.box.h)

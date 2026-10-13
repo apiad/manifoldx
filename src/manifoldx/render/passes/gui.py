@@ -204,7 +204,10 @@ def _scale_box(box: LayoutBox, s: float) -> LayoutBox:
 def _scale_ops(painter: Painter, s: float) -> None:
     """Map UI-pixel ops to screen pixels. Text is re-measured at the scaled
     font size, so glyphs rasterize at their on-screen size instead of being
-    stretched."""
+    stretched. A string that would not fit one atlas tile at that size keeps
+    its UI font size and is stretched instead, so it is not cut off."""
+    from manifoldx.viz.text import TILE_HEIGHT, TILE_WIDTH
+
     painter.rect_ops[:] = [
         replace(op, box=_scale_box(op.box, s), border=op.border * s, radius=op.radius * s)
         for op in painter.rect_ops
@@ -213,8 +216,12 @@ def _scale_ops(painter: Painter, s: float) -> None:
     for op in painter.text_ops:
         font_size = max(1, round(op.font_size * s))
         w, h = _measure_text(op.text, font_size)
-        box = LayoutBox(op.box.x * s, op.box.y * s, w, h)
-        scaled_text.append(replace(op, box=box, font_size=font_size))
+        # the atlas rasterizes at x=4 inside a TILE_WIDTH x TILE_HEIGHT tile
+        if w + 4 <= TILE_WIDTH and h <= TILE_HEIGHT:
+            box = LayoutBox(op.box.x * s, op.box.y * s, w, h)
+            scaled_text.append(replace(op, box=box, font_size=font_size))
+        else:
+            scaled_text.append(replace(op, box=_scale_box(op.box, s)))
     painter.text_ops[:] = scaled_text
 
 
