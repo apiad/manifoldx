@@ -207,7 +207,9 @@ def test_clear_scene_with_a_pending_destroy_does_not_double_free():
 
 def test_clear_scene_keeps_camera_lights_and_background():
     engine = _offscreen_engine()
-    light = mx.PointLight(position=(1, 2, 3)) if hasattr(mx, "PointLight") else object()
+    from manifoldx.resources import PointLight
+
+    light = PointLight("#ffffff", 1.0, (1, 2, 3))
     engine.add_light(light)
     engine.background_color = (0.3, 0.2, 0.1)
     camera = engine.camera
