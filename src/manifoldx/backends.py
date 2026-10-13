@@ -139,7 +139,8 @@ def list_monitors() -> list[tuple[int, str, tuple[int, int], int, bool]]:
     """
     import glfw
 
-    glfw.init()
+    if not glfw.init():
+        raise RuntimeError("GLFW could not initialize, so no monitors can be listed (no display?)")
     monitors = glfw.get_monitors()
     primary = _primary_index(glfw, monitors)
     out = []
