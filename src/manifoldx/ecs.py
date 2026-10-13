@@ -99,6 +99,10 @@ class EntityStore:
         """
         if len(indices) == 0:
             return
+        # Each index once and only if alive, so a twice-destroyed entity does not
+        # enter the free list twice (two spawns would then share its slot).
+        indices = np.unique(np.asarray(indices))
+        indices = indices[self._alive[indices]]
         self._alive[indices] = False
         # Add to free list for reuse
         self._free_list.extend(indices.tolist())

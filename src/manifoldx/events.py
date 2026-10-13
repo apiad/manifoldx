@@ -62,6 +62,7 @@ class Handler:
     func: Callable
     is_async: bool
     query_components: list[str] | None = None
+    removed: bool = False
 
 
 def _parse_query_components(func) -> list[str] | None:
@@ -112,6 +113,20 @@ class EventBus:
 
         return decorator
 
+    def off(self, event: str, func) -> None:
+        """Unregister every registration of `func` for `event`; ValueError if none.
+
+        Takes effect at once, also mid-dispatch: a removed handler is not called
+        again, not even for the event being delivered.
+        """
+        handlers = self._handlers.get(event, [])
+        matches = [h for h in handlers if h.func is func]
+        if not matches:
+            raise ValueError(f"{func!r} is not a handler for {event!r}")
+        for handler in matches:
+            handler.removed = True
+        self._handlers[event] = [h for h in handlers if h.func is not func]
+
     def emit(self, event: str, payload: Any = None) -> None:
         self._pending.append((event, payload))
 
@@ -125,7 +140,10 @@ class EventBus:
         self._deliver(engine, event, payload)
 
     def _deliver(self, engine, event: str, payload: Any) -> None:
-        for handler in self._handlers.get(event, ()):
+        # A snapshot, so handlers may call on() / off() while it runs.
+        for handler in list(self._handlers.get(event, ())):
+            if handler.removed:
+                continue
             if handler.is_async:
                 _invoke_async(handler, payload, engine)
             else:

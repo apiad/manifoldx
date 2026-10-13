@@ -15,6 +15,7 @@ class System:
     def __init__(self, func: Callable, component_names: list):
         self.func = func
         self.component_names = component_names
+        self.removed = False
 
     def run(self, engine, dt: float):
         """Execute the system with component view."""
@@ -55,10 +56,28 @@ class SystemRegistry:
         self._systems.append(system)
         return func
 
+    def remove(self, func: Callable) -> None:
+        """Unregister every registration of `func`; ValueError if it has none.
+
+        Takes effect at once: a system removed mid-frame (even by itself, or by
+        an earlier system) does not run again, this frame included.
+        """
+        matches = [s for s in self._systems if s.func is func]
+        if not matches:
+            raise ValueError(f"{func!r} is not a registered system")
+        for system in matches:
+            system.removed = True
+        self._systems = [s for s in self._systems if s.func is not func]
+
     def run_all(self, engine, dt: float):
-        """Execute all systems in order."""
-        for system in self._systems:
-            system.run(engine, dt)
+        """Execute all systems in order.
+
+        Iterates a snapshot, so systems may be added or removed while it runs;
+        systems added mid-frame start on the next frame.
+        """
+        for system in list(self._systems):
+            if not system.removed:
+                system.run(engine, dt)
 
 
 __all__ = [

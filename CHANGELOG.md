@@ -56,6 +56,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of cut off. Hit-tests map the pointer by the same scale, so clicks land on
   what is drawn. Example:
   `examples/ui_scale.py` (`--scale`, `+` / `-` live).
+- **One engine, many screens: `Engine.remove_system`, `Engine.off`, `Engine.clear_scene`.**
+  An app that shows several screens in sequence keeps one `Engine` and one `run()` and
+  swaps screens inside it, instead of `quit()` and a new engine per screen, which closes
+  and reopens the window. `remove_system(func)` and `off(event, func)` unregister what
+  `@engine.system` and `@engine.on(event)` registered; `clear_scene()` destroys every
+  entity and GUI panel and keeps systems, handlers, camera, lights, sky, fog and
+  environment. All three are safe mid-frame, from a system, handler or async task, and
+  raise `ValueError` for something never registered. `examples/screens.py` shows two
+  screens as coroutines that wait for Space and tear down.
 
 - **`engine.loading(label)`: load without freezing the window.** A context manager, `with`
   or `async with`, marking work the scene is still waiting for. While a block is open,
@@ -141,6 +150,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stretching them with the window; set `engine.gui.design_height` to get proportional
   scaling. `render_frame` keeps the requested size, since its supersampled canvas is
   larger than the frame.
+- **Commands queued between frames are no longer dropped.** The command buffer was
+  cleared at the head of each frame, so a `destroy()` or component write from an async
+  task resumed by `run()`'s loop between frames never applied. It is now cleared after
+  the flush.
+- **An entity destroyed twice no longer shares its slot.** `EntityStore.destroy` skips
+  dead and repeated indices; before, the slot entered the free list twice and two later
+  spawns got the same index.
 
 - **Textured `StandardMaterial` under the sun and the spot.** The textured shader swapped
   in the sampled albedo for point lights, IBL and ambient but not for the sun and spot
