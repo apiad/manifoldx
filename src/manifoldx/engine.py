@@ -417,6 +417,15 @@ class Engine:
         self.systems.register(func, component_names)
         return func
 
+    def remove_system(self, func) -> None:
+        """Unregister a system added with `@engine.system`.
+
+        Safe to call from inside any system, the one being removed included; a
+        removed system does not run again, the current frame included. Raises
+        ValueError if `func` is not a registered system.
+        """
+        self.systems.remove(func)
+
     def component(self, cls):
         """Decorator to register a component class with this engine."""
         from manifoldx.ecs import _make_component_class
