@@ -341,6 +341,15 @@ class Engine:
         """
         return self._event_bus.on(event)
 
+    def off(self, event: str, func) -> None:
+        """Unregister a handler added with `@engine.on(event)`.
+
+        Safe during dispatch, from the handler itself included; a removed handler
+        is not called again. Async tasks it already started keep running. Raises
+        ValueError if `func` is not a handler for `event`.
+        """
+        self._event_bus.off(event, func)
+
     def emit(self, event: str, payload=None) -> None:
         """Queue an event for delivery at the start of the next frame."""
         self._event_bus.emit(event, payload)
