@@ -732,6 +732,11 @@ class Engine:
             self.h = int(round(ev.height))
 
     def quit(self):
+        """Stop run() and close the window.
+
+        quit closes the window; to change screens keep the engine and use
+        clear_scene().
+        """
         self._running = False
         self.shutdown_events()
         # Stop the rendercanvas event loop
