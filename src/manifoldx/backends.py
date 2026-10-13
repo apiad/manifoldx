@@ -78,6 +78,8 @@ def get_desktop_canvas(
         primary = _primary_index(glfw, monitors)
         target = monitors[_resolve_monitor(monitor, names, primary)]
         mode = glfw.get_video_mode(target)  # its current mode: no mode switch
+        # Stay up when focus moves to another monitor; GLFW would minimize it.
+        glfw.set_window_attrib(canvas._window, glfw.AUTO_ICONIFY, False)
         glfw.set_window_monitor(
             canvas._window,
             target,

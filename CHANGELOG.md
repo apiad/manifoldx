@@ -44,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ValueError` listing the monitors. The window takes the monitor's current video mode.
   `manifoldx.backends.list_monitors()` returns `(index, name, (w, h), refresh, is_primary)`;
   `examples/ui_scale.py --list-monitors` prints it.
+  A fullscreen window no longer minimizes when focus moves to another monitor
+  (GLFW's `AUTO_ICONIFY` is turned off for it).
 - **`engine.gui.scale` and `engine.gui.design_height`: scale the whole GUI.** Widget
   sizes, paddings, radii, borders, font sizes and offsets are UI pixels; on screen they
   are multiplied by `engine.gui.effective_scale(engine.h)`, which is `scale` (default

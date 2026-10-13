@@ -104,6 +104,8 @@ def test_fullscreen_canvas_goes_to_the_chosen_monitor_at_its_mode(monkeypatch):
         get_monitor_name=lambda m: names[addr(m)],
         get_video_mode=lambda m: modes[addr(m)],
         set_window_monitor=lambda win, m, x, y, w, h, hz: calls.append((addr(m), w, h, hz)),
+        AUTO_ICONIFY=0x00020006,
+        set_window_attrib=lambda *a: None,
     )
 
     class FakeCanvas:
@@ -133,3 +135,35 @@ def test_run_passes_monitor_to_the_desktop_canvas(monkeypatch):
     with pytest.raises(RuntimeError, match="stop"):
         engine.run()
     assert seen["monitor"] == "HDMI" and seen["fullscreen"] is True
+
+
+def test_fullscreen_window_does_not_iconify_on_focus_loss(monkeypatch):
+    # GLFW minimizes a fullscreen window when it loses focus (AUTO_ICONIFY), so
+    # clicking another monitor would drop the app off its screen.
+    from manifoldx.backends import get_desktop_canvas
+
+    ptr = ctypes.POINTER(ctypes.c_int)
+    mon = ctypes.cast(0x1000, ptr)
+    attribs = []
+    fake_glfw = SimpleNamespace(
+        AUTO_ICONIFY=0x00020006,
+        get_monitors=lambda: [mon],
+        get_primary_monitor=lambda: mon,
+        get_monitor_name=lambda m: b"Built-in",
+        get_video_mode=lambda m: SimpleNamespace(size=(1920, 1080), refresh_rate=60),
+        set_window_monitor=lambda *a: None,
+        set_window_attrib=lambda win, attrib, value: attribs.append((win, attrib, value)),
+    )
+
+    class FakeCanvas:
+        def __init__(self, size, title):
+            self._window = object()
+
+    monkeypatch.setitem(sys.modules, "glfw", fake_glfw)
+    monkeypatch.setitem(sys.modules, "rendercanvas.glfw", SimpleNamespace(GlfwRenderCanvas=FakeCanvas))
+
+    canvas = get_desktop_canvas(width=800, height=600, fullscreen=True, title="t")
+    assert attribs == [(canvas._window, fake_glfw.AUTO_ICONIFY, False)]
+    attribs.clear()
+    get_desktop_canvas(width=800, height=600, fullscreen=False, title="t")
+    assert attribs == []
