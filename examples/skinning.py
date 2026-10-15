@@ -2,7 +2,7 @@
 
 The figure is a single mesh whose vertices carry a joint index (Mesh(joints=)).
 Every frame, set_joints uploads one 4x4 matrix per joint and the vertex shader
-moves each part; the vertex buffer is never rewritten.
+moves each part, in its shadow too; the vertex buffer is never rewritten.
 
     uv run python examples/skinning.py
     uv run python examples/skinning.py --render --duration 2 --fps 30 --output /tmp/skinning.mp4
@@ -48,7 +48,8 @@ def about(pivot, axis, angle):
 
 
 engine = mx.Engine("Skinning")
-engine.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(-0.4, -0.6, -1.0)))
+engine.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(-0.9, -1.0, -0.6)))
+engine.enable_shadows()
 engine.camera.set_pose(position=(1.5, 1.0, 3.5), target=(0, 0.2, 0))
 figure_entity = None
 
@@ -56,6 +57,8 @@ figure_entity = None
 @engine.on("startup")
 def spawn(_payload):
     global figure_entity
+    engine.spawn(Mesh(Shape.plane(6.0, 6.0).translate((0, -0.5, 0)).to_geometry()),
+                 Material(StandardMaterial(color="#d8d8d8", roughness=0.9)), Transform())
     figure_entity = engine.spawn(
         Mesh(figure().to_geometry()),
         Material(StandardMaterial(color="#e07a3a", roughness=0.5)),
