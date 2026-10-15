@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **Interactive windows are no longer held to 30 fps.** rendercanvas caps a canvas at
+  `max_fps=30` unless told otherwise, and the desktop canvas never told it. `Engine` and
+  `backends.get_desktop_canvas` take `max_fps` (default 240), so vsync sets the pace: a
+  light scene went from 29 fps to the display's 60 (#75).
+- **GUI text is measured once per string and size.** The painter and the gui pass measure
+  every `Text` widget every frame, and `LabelTextureAtlas.measure_string` opened the font
+  file each time. The measurement and the font are now cached. A scene with ~70 labels
+  spent ~19 ms a frame there and went from ~25 fps to ~56 fps (#75).
 - **`Mesh.recompute_normals` is 2-5x faster.** It scatters face normals with one
   `np.bincount` per axis instead of `np.add.at`, gathers each corner once and takes the
   cross product by columns. The normals match the old ones to 1e-6. A mesh posed on the
