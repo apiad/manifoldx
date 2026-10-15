@@ -1194,20 +1194,21 @@ class RenderPipeline:
                 pos = np.asarray(geom["positions"], dtype=np.float32).reshape(-1, 3)
                 if "joints" in geom:
                     joints = np.asarray(geom["joints"])
-                    boxes = [(int(j), _box_corners(pos[joints == j])) for j in np.unique(joints)]
+                    js = np.unique(joints)
+                    boxes = (js, np.stack([_box_corners(pos[joints == j]) for j in js]))
                 else:
-                    boxes = [(None, _box_corners(pos))]
+                    boxes = (None, _box_corners(pos)[None])
                 cache[geom_id] = boxes
-            for m, entity in zip(mats, entities):
-                m = m.reshape(4, 4)
-                block = self._joints.block_of[entity]
-                for j, corners in boxes:
-                    # The mirror holds joint matrices transposed (column-major).
-                    full = m if j is None else m @ self._joints.mirror[block, j].T
-                    world = corners @ full.T  # row-major model: point @ M.T
-                    w = world[:, :3] / world[:, 3:4]
-                    gmin = np.minimum(gmin, w.min(axis=0))
-                    gmax = np.maximum(gmax, w.max(axis=0))
+            js, corners = boxes  # corners: (K, 8, 4), one box per joint (K = 1 unskinned)
+            full = mats.reshape(-1, 1, 4, 4)  # (N, 1, 4, 4) row-major model matrices
+            if js is not None:
+                # The mirror holds joint matrices transposed (column-major).
+                joint_mats = self._joints.mirror[self._joints.block_of[entities]][:, js]
+                full = full @ joint_mats.transpose(0, 1, 3, 2)  # (N, K, 4, 4)
+            world = corners @ full.transpose(0, 1, 3, 2)  # (N, K, 8, 4): point @ M.T per box
+            w = (world[..., :3] / world[..., 3:4]).reshape(-1, 3)
+            gmin = np.minimum(gmin, w.min(axis=0))
+            gmax = np.maximum(gmax, w.max(axis=0))
         if not np.all(np.isfinite(gmin)):
             return None
         center = (gmin + gmax) * 0.5
