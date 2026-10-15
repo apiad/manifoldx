@@ -5,6 +5,7 @@ LabelTextureAtlas owns a 2D texture array of rasterized strings. Each unique
 holds the pixel data; upload_dirty pushes new slices to the GPU.
 """
 
+import functools
 from importlib.resources import files
 from typing import Dict, Tuple
 
@@ -16,6 +17,14 @@ TILE_HEIGHT = 64
 MAX_LABELS = 256
 
 _FONT_PATH = files("manifoldx.viz.assets").joinpath("DejaVuSansMono.ttf")
+
+
+@functools.lru_cache(maxsize=None)
+def _font(font_size: int):
+    """The label font at `font_size`, read from disk once per size."""
+    from PIL import ImageFont
+
+    return ImageFont.truetype(str(_FONT_PATH), size=font_size)
 
 
 class AtlasOverflowError(RuntimeError):
@@ -36,6 +45,7 @@ class LabelTextureAtlas:
         self._gpu_sampler = None
 
     @staticmethod
+    @functools.lru_cache(maxsize=4096)
     def measure_string(
         text: str, font_size: int = 14
     ) -> tuple[int, int, float, float, float, float]:
@@ -46,11 +56,12 @@ class LabelTextureAtlas:
         shader sampling to the live glyph region).
 
         Mirrors the placement logic in `rasterize_string` so callers can compute
-        the glyph's location in the tile without re-rasterizing.
+        the glyph's location in the tile without re-rasterizing. Cached: the GUI
+        measures every Text widget every frame.
         """
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
 
-        font = ImageFont.truetype(str(_FONT_PATH), size=font_size)
+        font = _font(font_size)
         img = Image.new("RGBA", (TILE_WIDTH, TILE_HEIGHT), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
         bbox = draw.textbbox((0, 0), text, font=font)
@@ -79,9 +90,9 @@ class LabelTextureAtlas:
         White glyphs on transparent background. Text is left-aligned with a
         small left margin and vertically centered.
         """
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
 
-        font = ImageFont.truetype(str(_FONT_PATH), size=font_size)
+        font = _font(font_size)
         img = Image.new("RGBA", (TILE_WIDTH, TILE_HEIGHT), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
         bbox = draw.textbbox((0, 0), text, font=font)
