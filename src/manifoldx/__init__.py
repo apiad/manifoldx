@@ -12,6 +12,7 @@ from manifoldx.input import KeyEvent, PointerEvent, WheelEvent, ResizeEvent
 from manifoldx.resources import cube, sphere, plane, basic, phong, standard
 from manifoldx.assets import load_obj
 from manifoldx.textures import load_texture
+from manifoldx.skinning import MAX_JOINTS
 from manifoldx import compute  # noqa: E402, F401
 from manifoldx import physics  # noqa: E402, F401
 from manifoldx import random  # noqa: E402, F401
@@ -111,6 +112,7 @@ __all__ = [
     "standard",
     "load_obj",
     "load_texture",
+    "MAX_JOINTS",
     "component",
     "types",
     "components",

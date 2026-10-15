@@ -34,6 +34,9 @@ class EntityStore:
         self._alive = np.zeros(max_entities, dtype=bool)
         self._components: dict[str, np.ndarray] = {}
         self._free_list: list[int] = []  # Reusable dead entity indices
+        # Called with the indices of every spawn and destroy, so per-entity
+        # state kept outside the store (joint blocks) never outlives its entity.
+        self._release_hooks: list = []
 
     def register_component(self, name: str, dtype: np.dtype, shape: tuple):
         """
@@ -72,6 +75,8 @@ class EntityStore:
                 idx = dead[0]
             indices[i] = idx
             self._alive[idx] = True
+        for hook in self._release_hooks:
+            hook(indices)
 
         # Write component data to storage
         for comp_name, data in component_data.items():
@@ -104,6 +109,8 @@ class EntityStore:
         indices = np.unique(np.asarray(indices))
         indices = indices[self._alive[indices]]
         self._alive[indices] = False
+        for hook in self._release_hooks:
+            hook(indices)
         # Add to free list for reuse
         self._free_list.extend(indices.tolist())
 

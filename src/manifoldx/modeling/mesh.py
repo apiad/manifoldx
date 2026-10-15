@@ -39,6 +39,12 @@ class Mesh:
     normals: np.ndarray | None = None  # (N, 3) float32, lazily computed
     uvs: np.ndarray | None = None      # (N, 2) float32, optional
     colors: np.ndarray | None = None   # (N, 3) float32, optional per-vertex RGB
+    joints: np.ndarray | None = None   # (N,) uint32, optional joint per vertex (skinning)
+
+    def __post_init__(self):
+        if self.joints is not None:
+            from manifoldx.skinning import validate_joints
+            object.__setattr__(self, "joints", validate_joints(self.joints, len(self.positions)))
 
     def with_positions(self, positions: np.ndarray) -> "Mesh":
         """Return a copy with new positions; normals are invalidated."""
@@ -88,6 +94,8 @@ class Mesh:
             geo["uvs"] = np.ascontiguousarray(mesh.uvs, dtype=np.float32)
         if mesh.colors is not None:
             geo["colors"] = np.ascontiguousarray(mesh.colors, dtype=np.float32)
+        if mesh.joints is not None:
+            geo["joints"] = mesh.joints
         return geo
 
     def to_gltf(self, path, material=None):
@@ -111,12 +119,14 @@ class Mesh:
         normals = geo.get("normals")
         uvs = geo.get("uvs")
         colors = geo.get("colors")
+        joints = geo.get("joints")
         return Mesh(
             positions=positions,
             faces=faces,
             normals=None if normals is None else np.ascontiguousarray(normals, dtype=np.float32),
             uvs=None if uvs is None else np.ascontiguousarray(uvs, dtype=np.float32),
             colors=None if colors is None else np.ascontiguousarray(colors, dtype=np.float32),
+            joints=joints,
         )
 
     def with_colors(self, colors: np.ndarray) -> "Mesh":
