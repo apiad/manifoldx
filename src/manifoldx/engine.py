@@ -64,6 +64,8 @@ class EntityHandle:
 
         `mesh` is a modeling.Mesh or an already-baked geometry dict (so results
         shipped back from `submit_process` can be applied without reconstruction).
+        A skinned entity given a mesh without joints keeps its joints; a mesh with
+        joints on an entity spawned without them raises ValueError.
         """
         geo = mesh.to_geometry() if hasattr(mesh, "to_geometry") else mesh
         n_new = geo["positions"].shape[0]
@@ -74,6 +76,11 @@ class EntityHandle:
             raise ValueError(
                 f"set_geometry requires equal vertex count (have {n_old}, got {n_new}); "
                 "the in-place update cannot resize the buffer."
+            )
+        if "joints" in geo and orig is not None and "joints" not in orig:
+            raise ValueError(
+                "set_geometry got a mesh with joints for an entity spawned without them; "
+                "spawn it from a geometry with joints (Mesh(joints=...)) to skin it."
             )
         bufs = reg.get_gpu_buffers(self._geometry_id)
         if bufs is None:

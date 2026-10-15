@@ -112,6 +112,15 @@ class MaterialGeometryMismatchError(ValueError):
     """A material requires geometry attributes (e.g. UVs) the geometry doesn't have."""
 
 
+def _box_corners(points):
+    """(8, 4) homogeneous corners of the points' axis-aligned box."""
+    lo, hi = points.min(axis=0), points.max(axis=0)
+    return np.array(
+        [[x, y, z, 1.0] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])],
+        dtype=np.float32,
+    )
+
+
 class _BatchBuffers:
     """Per-batch GPU buffers managed by RenderPipeline.
 
@@ -437,6 +446,9 @@ class RenderPipeline:
         self._shadow_pipeline = None
         self._shadow_pipeline_layout = None
         self._shadow_bind_layout_vs = None
+        self._shadow_bind_layout_skinned = None
+        self._shadow_pipeline_layout_skinned = None
+        self._shadow_shader_sources = {}  # (stride, skinned) -> WGSL of the shadow pipeline
         # 1x1 placeholder depth texture so the StandardMaterial pipeline's
         # group(2) always has something to bind when shadows are off.
         _placeholder = device.create_texture(
@@ -1161,9 +1173,10 @@ class RenderPipeline:
 
         Transforms each geometry's local AABB corners by every instance's model
         matrix and accumulates a global AABB, then returns its bounding sphere.
-        Local AABBs are cached per geometry id. Returns None for an empty scene.
+        Local AABBs are cached per geometry id; skinned geometry keeps one per
+        joint, moved by the entity's joint matrix. Returns None for an empty scene.
         """
-        instances = self._collect_mesh_instances(engine)
+        instances = self._collect_mesh_instances(engine, with_entities=True)
         if not instances:
             return None
         cache = getattr(self, "_geom_local_bounds", None)
@@ -1172,30 +1185,29 @@ class RenderPipeline:
             self._geom_local_bounds = cache
         gmin = np.full(3, np.inf, dtype=np.float32)
         gmax = np.full(3, -np.inf, dtype=np.float32)
-        for geom_id, mats in instances.items():
-            lb = cache.get(geom_id)
-            if lb is None:
+        for geom_id, (mats, entities) in instances.items():
+            boxes = cache.get(geom_id)
+            if boxes is None:
                 geom = engine._geometry_registry.get(geom_id)
                 if geom is None or "positions" not in geom:
                     continue
                 pos = np.asarray(geom["positions"], dtype=np.float32).reshape(-1, 3)
-                lb = (pos.min(axis=0), pos.max(axis=0))
-                cache[geom_id] = lb
-            lo, hi = lb
-            corners = np.array(
-                [
-                    [x, y, z, 1.0]
-                    for x in (lo[0], hi[0])
-                    for y in (lo[1], hi[1])
-                    for z in (lo[2], hi[2])
-                ],
-                dtype=np.float32,
-            )  # (8, 4)
-            for m in mats:
-                world = corners @ m.reshape(4, 4).T  # row-major model: point @ M.T
-                w = world[:, :3] / world[:, 3:4]
-                gmin = np.minimum(gmin, w.min(axis=0))
-                gmax = np.maximum(gmax, w.max(axis=0))
+                if "joints" in geom:
+                    joints = np.asarray(geom["joints"])
+                    boxes = [(int(j), _box_corners(pos[joints == j])) for j in np.unique(joints)]
+                else:
+                    boxes = [(None, _box_corners(pos))]
+                cache[geom_id] = boxes
+            for m, entity in zip(mats, entities):
+                m = m.reshape(4, 4)
+                block = self._joints.block_of[entity]
+                for j, corners in boxes:
+                    # The mirror holds joint matrices transposed (column-major).
+                    full = m if j is None else m @ self._joints.mirror[block, j].T
+                    world = corners @ full.T  # row-major model: point @ M.T
+                    w = world[:, :3] / world[:, 3:4]
+                    gmin = np.minimum(gmin, w.min(axis=0))
+                    gmax = np.maximum(gmax, w.max(axis=0))
         if not np.all(np.isfinite(gmin)):
             return None
         center = (gmin + gmax) * 0.5
@@ -1257,8 +1269,12 @@ class RenderPipeline:
             far=cfg["far"],
         )
 
-    def _collect_mesh_instances(self, engine):
+    def _collect_mesh_instances(self, engine, with_entities=False):
         """geom_id -> (N,16) row-major model matrices, mesh entities only.
+
+        With with_entities, geom_id -> (matrices, entity indices), the entity
+        behind each matrix (the shadow pass reads skinned entities' joint blocks
+        through it).
 
         The shadow caster only needs geometry + transforms (material-agnostic).
         Sprites/labels/axis/volume have geom_id 0 or are non-mesh and are
@@ -1280,8 +1296,10 @@ class RenderPipeline:
             geom_id = int(mesh_data[i, 0])
             if geom_id == 0:
                 continue
-            out.setdefault(geom_id, []).append(models[i])
-        return {g: np.asarray(v, dtype=np.float32) for g, v in out.items()}
+            out.setdefault(geom_id, []).append(i)
+        if with_entities:
+            return {g: (models[v].astype(np.float32), alive[v]) for g, v in out.items()}
+        return {g: models[v].astype(np.float32) for g, v in out.items()}
 
     def render_shadow_map(self, engine, command_encoder):
         """Depth-only shadow pass (no-op unless a sun + enable_shadows() are set)."""

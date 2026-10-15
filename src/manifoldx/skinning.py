@@ -108,6 +108,17 @@ class JointStore:
         return self.buffer
 
 
+# The joint storage and the one place that fetches an instance's joint matrix;
+# every skinned shader (mesh materials, the shadow pass) appends it.
+_SKIN_WGSL = f"""
+@group(0) @binding({JOINTS_BINDING}) var<storage, read> skin_joints: array<mat4x4<f32>>;
+@group(0) @binding({BLOCKS_BINDING}) var<storage, read> skin_blocks: array<u32>;
+
+fn skin_matrix(instance: u32, joint: u32) -> mat4x4<f32> {{
+    return skin_joints[skin_blocks[instance] * {MAX_JOINTS}u + joint];
+}}
+"""
+
 _STRUCT = re.compile(r"struct VertexInput\s*\{(?P<body>.*?)\};", re.S)
 _ENTRY = re.compile(r"fn vs_main\(in: VertexInput\)(?P<ret>[^{]*)\{")
 
@@ -144,10 +155,7 @@ def skin_shader(source: str) -> str:
         count=1,
     )
     normal = "    o.normal = normalize(skin_normal_matrix(m) * v.normal);\n" if has_normal else ""
-    return out + f"""
-@group(0) @binding({JOINTS_BINDING}) var<storage, read> skin_joints: array<mat4x4<f32>>;
-@group(0) @binding({BLOCKS_BINDING}) var<storage, read> skin_blocks: array<u32>;
-
+    return out + _SKIN_WGSL + f"""
 // Inverse transpose of m's 3x3 up to a positive scale: the cofactor matrix times
 // sign(det). A singular 3x3 keeps the normal as it is, so nothing divides by zero.
 // Singular is relative to the columns' lengths, so a small uniform scale is not.
@@ -164,8 +172,33 @@ fn skin_normal_matrix(m: mat4x4<f32>) -> mat3x3<f32> {{
 
 fn skin_vertex(v: VertexInput) -> VertexInput {{
     var o = v;
-    let m = skin_joints[skin_blocks[v.{instance.group(1)}] * {MAX_JOINTS}u + v.joint];
+    let m = skin_matrix(v.{instance.group(1)}, v.joint);
     o.position = (m * vec4<f32>(v.position, 1.0)).xyz;
 {normal}    return o;
 }}
 """
+
+
+_SHADOW_ENTRY = re.compile(r"fn vs_main\((?P<args>.*?)\)(?P<ret>\s*->[^{]*)\{", re.S)
+
+
+def skin_shadow_shader(source: str) -> str:
+    """Rewrite the depth-only shadow WGSL so vs_main sees the joint-posed position.
+
+    Expects one `fn vs_main(@location(0) position: vec3<f32>, ...)` entry point
+    with an instance_index builtin; adds the joint attribute and the bindings.
+    """
+    entries = list(_SHADOW_ENTRY.finditer(source))
+    if len(entries) != 1:
+        raise ValueError("skinning needs one `fn vs_main(...)` entry point in the shadow WGSL")
+    args = entries[0].group("args")
+    instance = re.search(r"@builtin\(instance_index\)\s*(\w+)\s*:", args)
+    if instance is None or not re.search(r"@location\(0\)\s*position\s*:\s*vec3<f32>", args):
+        raise ValueError("skinning needs @location(0) position: vec3<f32> and an instance_index builtin")
+    args = re.sub(r"\bposition\s*:", "position_raw:", args, count=1)
+    args = args.rstrip() + f",\n           @location({JOINT_LOCATION}) joint: u32"
+    body = (
+        f"fn vs_main({args}){entries[0].group('ret')}{{\n"
+        f"    let position = (skin_matrix({instance.group(1)}, joint) * vec4<f32>(position_raw, 1.0)).xyz;"
+    )
+    return source[: entries[0].start()] + body + source[entries[0].end():] + _SKIN_WGSL
