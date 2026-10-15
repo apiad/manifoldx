@@ -150,12 +150,13 @@ def skin_shader(source: str) -> str:
 
 // Inverse transpose of m's 3x3 up to a positive scale: the cofactor matrix times
 // sign(det). A singular 3x3 keeps the normal as it is, so nothing divides by zero.
+// Singular is relative to the columns' lengths, so a small uniform scale is not.
 fn skin_normal_matrix(m: mat4x4<f32>) -> mat3x3<f32> {{
     let a = m[0].xyz;
     let b = m[1].xyz;
     let c = m[2].xyz;
     let det = dot(a, cross(b, c));
-    if abs(det) < 1e-8 {{
+    if abs(det) <= 1e-6 * length(a) * length(b) * length(c) {{
         return mat3x3<f32>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));
     }}
     return mat3x3<f32>(cross(b, c), cross(c, a), cross(a, b)) * sign(det);

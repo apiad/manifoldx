@@ -72,7 +72,7 @@ def _normal_matrix(m):
     """Numpy twin of the shader rule: cofactor of the 3x3 times sign(det), or identity."""
     a, b, c = m[:3, 0], m[:3, 1], m[:3, 2]
     det = float(np.dot(a, np.cross(b, c)))
-    if abs(det) < 1e-8:
+    if abs(det) <= 1e-6 * np.linalg.norm(a) * np.linalg.norm(b) * np.linalg.norm(c):
         return np.eye(3)
     return np.stack([np.cross(b, c), np.cross(c, a), np.cross(a, b)], axis=1) * np.sign(det)
 
@@ -241,8 +241,17 @@ def test_normal_matrix_rule_is_identity_on_singular():
     m = np.eye(4)
     m[:3, :3] = 0.0
     assert np.array_equal(_normal_matrix(m), np.eye(3))
-    m[:3, :3] = np.diag([1.0, 1.0, 1e-12])
+    m[:3, :3] = [[1.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.0, 0.0, 1e-9]]  # columns nearly coplanar
     assert np.array_equal(_normal_matrix(m), np.eye(3))
+
+
+def test_normal_matrix_rule_keeps_small_uniform_scale():
+    m = np.eye(4)
+    m[:3, :3] = np.diag([0.002, 0.002, 0.002])  # det 8e-9, not singular
+    assert not np.array_equal(_normal_matrix(m), np.eye(3))
+    n = np.array([0.0, 0.6, 0.8])
+    got = _normal_matrix(m) @ n
+    assert np.allclose(got / np.linalg.norm(got), n)
 
 
 # --- shader transform --------------------------------------------------------------
