@@ -49,6 +49,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+- **Rigid GPU skinning in the mesh pass.** `modeling.Mesh(joints=)` gives each vertex a
+  joint index (`(N,)` non-negative ints below `manifoldx.MAX_JOINTS = 32`), and
+  `to_geometry()["joints"]` carries it as uint32. On an entity spawned from such a
+  geometry, `handle.set_joints(matrices)` takes `(J, 4, 4)` model-space matrices
+  (column vectors, before the entity's Transform) and uploads only those J*64 bytes; the
+  vertex shader moves each vertex by its joint's matrix and its normal by the inverse
+  transpose (identity when the 3x3 is singular). Joints not given keep their previous
+  matrix, identity until first set, so an unposed entity draws its rest pose. Two
+  entities spawned from one geometry pose independently, `set_geometry` keeps the
+  joints, and unskinned geometry draws through the same pipelines and buffers as
+  before. Every StandardMaterial variant (plain, vertex colours, textured) skins, as do
+  BasicMaterial, FlatMaterial and PhongMaterial. The shadow pass still draws a skinned
+  mesh in its rest pose. Modeling ops that keep vertex count and order keep the joints.
+  Example: `examples/skinning.py` (#79).
 - **Fullscreen on a chosen monitor.** `Engine(fullscreen=True, monitor=...)` takes an index
   into the monitor list or a case-insensitive substring of a monitor's name (`"HDMI"`, a
   model name). With `monitor=None` the `MANIFOLDX_MONITOR` environment variable is read
