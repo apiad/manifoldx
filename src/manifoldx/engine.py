@@ -185,6 +185,7 @@ class Engine:
         width: int = 800,
         fullscreen: bool = False,
         monitor: int | str | None = None,
+        max_fps: float = 240.0,
         max_entities: int = 100_000,
         check_numerics: bool = True,
     ):
@@ -198,6 +199,8 @@ class Engine:
         # Fullscreen target: index or name substring; None reads MANIFOLDX_MONITOR,
         # then uses the primary monitor (see backends.get_desktop_canvas).
         self.monitor = monitor
+        # Interactive frame-rate cap (see backends.get_desktop_canvas); vsync still applies.
+        self.max_fps = max_fps
         self.check = check_numerics  # Enable/disable validation warnings
         ecs.ENABLE_VALIDATION = check_numerics  # Set global flag for ECS validation
 
@@ -1260,6 +1263,7 @@ class Engine:
             fullscreen=self.fullscreen,
             title=self.title,
             monitor=self.monitor,
+            max_fps=self.max_fps,
         )
 
         # Initialize WebGPU context

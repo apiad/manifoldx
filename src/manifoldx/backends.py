@@ -26,6 +26,7 @@ def get_desktop_canvas(
     fullscreen: bool,
     title: str,
     monitor: int | str | None = None,
+    max_fps: float = 240.0,
 ) -> "BaseRenderCanvas":
     """Create a desktop canvas using GLFW.
 
@@ -45,6 +46,9 @@ def get_desktop_canvas(
         Fullscreen only: index into the monitor list, or a case-insensitive
         substring of a monitor's name. None reads ``MANIFOLDX_MONITOR`` (same
         rules), then falls back to the primary monitor.
+    max_fps : float
+        Frame-rate cap. rendercanvas defaults to 30; the default here sits
+        above common refresh rates, so vsync sets the pace.
 
     Returns
     -------
@@ -67,7 +71,7 @@ def get_desktop_canvas(
         )
 
     # Create the canvas
-    canvas = GlfwRenderCanvas(size=(width, height), title=title)
+    canvas = GlfwRenderCanvas(size=(width, height), title=title, max_fps=max_fps)
 
     # Handle fullscreen via GLFW
     if fullscreen:

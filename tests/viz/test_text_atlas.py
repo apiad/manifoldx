@@ -158,3 +158,16 @@ def test_upload_dirty_appends_new_slices_without_recreating_texture():
     atlas.upload_dirty(device, device.queue)
     assert atlas.gpu_texture is tex_before
     assert atlas.dirty_slices == set()
+
+
+def test_measure_string_reads_the_font_once_per_text_and_size(monkeypatch):
+    """The GUI measures every Text every frame; the font file must not be opened each time."""
+    from PIL import ImageFont
+
+    opened = []
+    real = ImageFont.truetype
+    monkeypatch.setattr(ImageFont, "truetype", lambda *a, **kw: opened.append(kw.get("size")) or real(*a, **kw))
+    first = LabelTextureAtlas.measure_string("measure me once", font_size=17)
+    for _ in range(5):
+        assert LabelTextureAtlas.measure_string("measure me once", font_size=17) == first
+    assert opened.count(17) <= 1
