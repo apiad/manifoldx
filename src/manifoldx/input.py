@@ -166,9 +166,12 @@ class InputState:
         self._modifiers = modifiers
 
     def _record_key_up(self, key: str, modifiers: tuple[str, ...]) -> None:
-        if key in self._pressed_keys:
-            self._pending_just_released_keys.add(key)
-        self._pressed_keys.discard(key)
+        # A letter can go down as "s" and come up as "S" when Shift changed in
+        # between (glfw names letters by the Shift state), so release both cases.
+        for k in {key, key.swapcase()} if len(key) == 1 else {key}:
+            if k in self._pressed_keys:
+                self._pending_just_released_keys.add(k)
+            self._pressed_keys.discard(k)
         self._modifiers = modifiers
 
     def _record_pointer_down(self, ev: PointerEvent) -> None:

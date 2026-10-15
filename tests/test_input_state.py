@@ -197,3 +197,14 @@ def test_resize_updates_viewport_size_immediately():
     assert state.viewport_size == (0, 0)
     state._record_resize(ResizeEvent(width=800, height=600, pixel_ratio=1.0))
     assert state.viewport_size == (800, 600)
+
+
+def test_releasing_a_letter_after_shift_changed_its_case_releases_it():
+    # rendercanvas's glfw backend names a letter upper case while Shift is held,
+    # so "s" goes down and "S" comes up.
+    state = InputState()
+    state._record_key_down("s", modifiers=())
+    state._record_key_up("S", modifiers=("Shift",))
+    assert not state.is_pressed("s") and not state.is_pressed("S")
+    state._begin_frame()
+    assert state.just_released("s")
