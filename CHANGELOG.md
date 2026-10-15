@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limitations
 
+- **glTF export writes a skinned entity in its rest pose.** `Engine.export_gltf` writes the
+  geometry's rest positions and no joints or skin, and its report does not mention it (#79).
 - **IBL skybox: first-frame device lockup on NVIDIA Quadro M2000M / Vulkan** — enabling `env.show_skybox = True` on the *very first* presented frame deadlocks the device (the frame's submit never completes) on this GPU/driver (580.159.03). It is a driver first-frame-init lockup, not a code defect: depth format (`depth24plus` everywhere), depth config, bind group, and pipeline layout are all correct, and the pass renders perfectly once *any* prior frame has been presented — a constant-colour skybox renders, and the mesh IBL path samples the same cube fine. The skybox therefore stays **default-OFF**; `examples/ibl_demo.py` is unaffected because it only toggles the skybox via the `S` key after startup (post-first-frame). The only broken usage is scripting `show_skybox = True` before the first present. No warm-up-frame workaround was added (would mask an old-GPU driver quirk in the shared render loop). Investigation + evidence table: `.knowledge/analysis/2026-07-05-ibl-v1-design.md` (§ "Known limitation: first-frame device lockup").
 
 ### Features
@@ -60,9 +62,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entities spawned from one geometry pose independently, `set_geometry` keeps the
   joints, and unskinned geometry draws through the same pipelines and buffers as
   before. Every StandardMaterial variant (plain, vertex colours, textured) skins, as do
-  BasicMaterial, FlatMaterial and PhongMaterial. The shadow pass still draws a skinned
-  mesh in its rest pose. Modeling ops that keep vertex count and order keep the joints.
-  Example: `examples/skinning.py` (#79).
+  BasicMaterial, FlatMaterial and PhongMaterial. Modeling ops that keep vertex count and
+  order keep the joints. Example: `examples/skinning.py`, now over a ground plane with a
+  sun shadow (#79).
+- **Skinned shadows and picking.** The shadow pass poses skinned entities with the same
+  joint matrices, so a turned part casts its turned shadow, and the shadow auto-fit
+  bounds follow the posed parts. `render_frame(pass_="ids")` labels a posed part where it
+  is drawn. Unskinned shadows draw through the same shader and pipelines as before (#79).
+- **`set_geometry` refuses joints the entity cannot use.** Giving a mesh with joints to an
+  entity spawned from a geometry without them raises `ValueError` instead of dropping the
+  joints. A skinned entity given a mesh without joints keeps its joints, as before (#79).
 - **Fullscreen on a chosen monitor.** `Engine(fullscreen=True, monitor=...)` takes an index
   into the monitor list or a case-insensitive substring of a monitor's name (`"HDMI"`, a
   model name). With `monitor=None` the `MANIFOLDX_MONITOR` environment variable is read
