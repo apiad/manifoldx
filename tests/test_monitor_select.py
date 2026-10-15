@@ -109,7 +109,7 @@ def test_fullscreen_canvas_goes_to_the_chosen_monitor_at_its_mode(monkeypatch):
     )
 
     class FakeCanvas:
-        def __init__(self, size, title):
+        def __init__(self, size, title, **kw):
             self._window = object()
 
     monkeypatch.setitem(sys.modules, "glfw", fake_glfw)
@@ -156,7 +156,7 @@ def test_fullscreen_window_does_not_iconify_on_focus_loss(monkeypatch):
     )
 
     class FakeCanvas:
-        def __init__(self, size, title):
+        def __init__(self, size, title, **kw):
             self._window = object()
 
     monkeypatch.setitem(sys.modules, "glfw", fake_glfw)
