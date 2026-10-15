@@ -87,7 +87,28 @@ class EntityHandle:
             inter[:, 6:9] = geo["colors"]
         elif bufs.get("has_uvs"):
             inter[:, 6:8] = geo["uvs"]
+        if bufs.get("has_joints"):
+            joints = geo["joints"] if "joints" in geo else orig["joints"]
+            inter[:, bufs["joints_offset"] // 4] = np.asarray(joints, dtype=np.uint32).view(np.float32)
         self._engine._device.queue.write_buffer(bufs["vertex_buffer"], 0, inter.tobytes())
+
+    def set_joints(self, matrices):
+        """Pose this entity's joints: (J, 4, 4) matrices, 1 <= J <= MAX_JOINTS.
+
+        Column-vector convention in model space, before the entity's Transform:
+        a vertex of joint j moves to matrices[j] @ (x, y, z, 1); its normal by the
+        inverse transpose of the 3x3 (identity when singular). Joints >= J keep
+        their previous matrix (identity until first set). Uploads J*64 bytes.
+        """
+        from manifoldx.skinning import MAX_JOINTS
+
+        geo = self._engine._geometry_registry.get(self._geometry_id)
+        if geo is None or "joints" not in geo:
+            raise ValueError("set_joints needs an entity whose geometry has joints (Mesh(joints=...))")
+        m = np.asarray(matrices, dtype=np.float32)
+        if m.ndim != 3 or m.shape[1:] != (4, 4) or not 1 <= len(m) <= MAX_JOINTS:
+            raise ValueError(f"set_joints expects shape (J, 4, 4) with 1 <= J <= {MAX_JOINTS}, got {m.shape}")
+        self._engine._render_pipeline._joints.set(self.index, m)
 
 
 class Task:

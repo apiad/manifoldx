@@ -3,9 +3,16 @@
 import numpy as np
 import wgpu
 
+from manifoldx.skinning import BLOCKS_BINDING, JOINTS_BINDING
 
-def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, material_data):
-    """Render all mesh batches using instanced draw with shared transform buffer."""
+
+def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, material_data,
+                        entity_indices):
+    """Render all mesh batches using instanced draw with shared transform buffer.
+
+    `entity_indices[i]` is the entity behind local index i; skinned batches read
+    each instance's joint block through it.
+    """
     # ---------------------------------------------------------------
     # Upload ALL transforms at once (queue.write_buffer happens
     # before GPU processes the command buffer, so per-batch writes
@@ -30,6 +37,7 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
     all_matrices = model_matrices[all_local_indices]  # (total_instances, 16)
     all_matrices_t = all_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
     rp._batch_buffers.upload_transforms(all_matrices_t.astype(np.float32))
+    joint_blocks_uploaded = False
 
     # ---------------------------------------------------------------
     # Draw each batch using first_instance to index into the
@@ -107,6 +115,31 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
                 },
             },
         ]
+
+        if gpu_buffers.get("has_joints"):
+            # Block index per instance, in the same order as the transforms,
+            # uploaded once per frame on the first skinned batch.
+            if not joint_blocks_uploaded:
+                blocks = rp._joints.block_of[np.asarray(entity_indices)[all_local_indices]]
+                rp._batch_buffers.upload_joint_blocks(blocks)
+                joint_blocks_uploaded = True
+            joints_buf = rp._joints.ensure_buffer(rp._device)
+            bind_group_entries.append(
+                {
+                    "binding": JOINTS_BINDING,
+                    "resource": {"buffer": joints_buf, "offset": 0, "size": joints_buf.size},
+                }
+            )
+            bind_group_entries.append(
+                {
+                    "binding": BLOCKS_BINDING,
+                    "resource": {
+                        "buffer": rp._batch_buffers.joint_blocks_buf,
+                        "offset": 0,
+                        "size": rp._batch_buffers.joint_blocks_capacity,
+                    },
+                }
+            )
 
         if needs_lights:
             bind_group_entries.append(

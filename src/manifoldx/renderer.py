@@ -10,6 +10,13 @@ from manifoldx.render.passes import skybox as _skybox_pass
 from manifoldx.render.passes import sprite as _sprite_pass
 from manifoldx.render.passes import volume as _volume_pass
 from manifoldx.render.passes.volume import VOLUME_SHADER_SOURCE
+from manifoldx.skinning import (
+    BLOCKS_BINDING,
+    JOINT_LOCATION,
+    JOINTS_BINDING,
+    JointStore,
+    skin_shader,
+)
 from manifoldx.viz.materials import ColormapMaterial
 
 
@@ -122,6 +129,8 @@ class _BatchBuffers:
         self.radii_capacity = 0
         self.label_indices_buf = None
         self.label_indices_capacity = 0
+        self.joint_blocks_buf = None
+        self.joint_blocks_capacity = 0
 
     def upload_transforms(self, data: "np.ndarray"):
         n_bytes = data.nbytes
@@ -152,6 +161,16 @@ class _BatchBuffers:
             )
             self.radii_capacity = n_bytes
         self._device.queue.write_buffer(self.radii_buf, 0, data.tobytes())
+
+    def upload_joint_blocks(self, data: "np.ndarray"):
+        n_bytes = data.nbytes
+        if self.joint_blocks_buf is None or self.joint_blocks_capacity < n_bytes:
+            self.joint_blocks_buf = self._device.create_buffer(
+                size=n_bytes,
+                usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
+            )
+            self.joint_blocks_capacity = n_bytes
+        self._device.queue.write_buffer(self.joint_blocks_buf, 0, data.tobytes())
 
     def upload_label_indices(self, data: "np.ndarray"):
         n_bytes = data.nbytes
@@ -355,6 +374,9 @@ class RenderPipeline:
         self._axis_batch_buffers = None  # _BatchBuffers instance for axis per-batch storage
         self._lights_buffer = None  # External lights uniform buffer
         self._lut_textures = {}  # cmap_name -> (texture, sampler) for LUT caching
+        self._shader_sources = {}  # pipeline key -> WGSL the mesh pipeline was built from
+        self._joints = JointStore(store.max_entities)
+        store._release_hooks.append(self._joints.release)
         self._initialized = False
 
     def _ensure_pipeline(self, device, texture_format):
@@ -839,6 +861,13 @@ class RenderPipeline:
             shader_source = material._compile(vertex_colors=True)
         else:
             shader_source = material._compile()
+        # Skinned geometry gets its own pipeline (the key holds geometry_id) whose
+        # vertex shader poses position and normal by the entity's joint block.
+        skinned = not sprite and (geometry_buffers or {}).get("has_joints", False)
+        if skinned:
+            shader_source = skin_shader(shader_source)
+        if not sprite:
+            self._shader_sources[key] = shader_source
         shader_module = device.create_shader_module(code=shader_source)
 
         if sprite:
@@ -1007,6 +1036,15 @@ class RenderPipeline:
                             },
                         ]
                     )
+            if skinned:
+                bind_group_entries.extend(
+                    {
+                        "binding": binding,
+                        "visibility": wgpu.ShaderStage.VERTEX,
+                        "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+                    }
+                    for binding in (JOINTS_BINDING, BLOCKS_BINDING)
+                )
 
             bind_group_layout = device.create_bind_group_layout(entries=bind_group_entries)
             self._bind_group_layouts[key] = bind_group_layout
@@ -1056,6 +1094,14 @@ class RenderPipeline:
                         "format": wgpu.VertexFormat.float32x3,
                         "offset": 6 * 4,
                         "shader_location": 2,
+                    }
+                )
+            if skinned:
+                vertex_attributes.append(
+                    {
+                        "format": wgpu.VertexFormat.uint32,
+                        "offset": geometry_buffers["joints_offset"],
+                        "shader_location": JOINT_LOCATION,
                     }
                 )
             pipeline = device.create_render_pipeline(
@@ -1505,7 +1551,7 @@ class RenderPipeline:
         # ---------------------------------------------------------------
         if mesh_batches:
             _mesh_pass.render_mesh_batches(
-                self, engine, render_pass, mesh_batches, model_matrices, material_data
+                self, engine, render_pass, mesh_batches, model_matrices, material_data, alive_indices
             )
 
         # ---------------------------------------------------------------
