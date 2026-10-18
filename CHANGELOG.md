@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`manifoldx.streaming`: a cell streamer.** `Streamer(engine, cell, build)` keeps the
+  cells around a focus point built in a worker (a thread, or a process with
+  `workers="process"`) and draws the ring under it, uploading at most
+  `uploads_per_frame` cells a frame and dropping and freeing cells that leave
+  `ready_radius`. `build(i, j)` returns a `MeshData` relative to the cell's corner (#85).
+- **A floating origin.** `Engine.origin` and `Engine.set_origin(x, z)`: every entity draws
+  at `pos - origin`. `EntityHandle.transform.pos` reads and writes world positions in
+  float64 and stores them relative to the origin in float32, so an entity 50 km out
+  draws as precisely as one at the start. `set_origin` shifts the raw Transform rows,
+  the camera, the spot light and the manual shadow target, so nothing moves on screen (#85).
+- **`EntityHandle.destroy()` frees GPU memory.** It destroys the entity and, at the
+  frame's command flush, frees its geometry's vertex and index buffers unless another
+  live entity draws the same geometry (#85).
+- **`examples/stream_walk.py`** walks a camera across 50 km of streamed noise terrain and
+  fails if any frame takes more than twice the median (#85).
+
+### Performance
+
+- **Mesh pipelines are keyed by vertex layout, not by geometry.** Every new geometry
+  compiled its own pipeline, about 50 ms and 2.9 MB each on a software renderer. Meshes
+  with the same layout and material now share one, so 1,000 new meshes went from about
+  50 s to 0.7 s, with flat memory (#85).
+
 ## [0.10.0] - 2026-10-15
 
 ### Performance

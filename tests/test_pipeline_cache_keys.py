@@ -46,7 +46,7 @@ def test_mesh_cache_key_includes_subtype():
     )
 
     keys = list(rp._pipelines.keys())
-    matching = [k for k in keys if k[0] == geom_id and "StandardMaterial" in str(k)]
+    matching = [k for k in keys if k[0][0] == "layout" and "StandardMaterial" in str(k)]
     # Two distinct cache entries for the same (geom_id, StandardMaterial) pair
     # with different subtypes.
     assert len(matching) >= 2, f"expected 2+ cache entries, got {len(matching)}: {keys}"

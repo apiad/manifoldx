@@ -20,18 +20,29 @@ from manifoldx.input import InputState, _InputBridge
 
 
 class _TransformProxy:
-    """Read/write the Transform row of a single entity (pos 0:3, rot 3:7, scale 7:10)."""
+    """Read/write the Transform row of a single entity (pos 0:3, rot 3:7, scale 7:10).
 
-    def __init__(self, store, index):
-        self._store, self._i = store, index
+    `pos` is in world coordinates, float64: the row stores pos - engine.origin in
+    float32, so it stays precise however far the entity is from (0, 0).
+    """
+
+    def __init__(self, store, index, engine=None):
+        self._store, self._i, self._engine = store, index, engine
+
+    def _offset(self):
+        if self._engine is None:
+            return np.zeros(3)
+        ox, oz = self._engine._origin
+        return np.array([ox, 0.0, oz])
 
     @property
     def pos(self):
-        return self._store._components["Transform"][self._i, 0:3].copy()
+        return self._store._components["Transform"][self._i, 0:3].astype(np.float64) + self._offset()
 
     @pos.setter
     def pos(self, v):
-        self._store._components["Transform"][self._i, 0:3] = np.asarray(v, np.float32)
+        rel = np.asarray(v, np.float64) - self._offset()
+        self._store._components["Transform"][self._i, 0:3] = rel.astype(np.float32)
 
     @property
     def rot(self):
@@ -57,7 +68,18 @@ class EntityHandle:
         self._engine = engine
         self.index = index
         self._geometry_id = geometry_id
-        self.transform = _TransformProxy(engine.store, index)
+        self.transform = _TransformProxy(engine.store, index, engine)
+
+    def destroy(self):
+        """Destroy this entity and free its geometry's GPU buffers.
+
+        The entity goes at the frame's command flush, like Engine.destroy. Its
+        geometry's buffers are freed then too, unless another live entity still
+        draws the same geometry.
+        """
+        self._engine.destroy(np.array([self.index]))
+        if self._geometry_id is not None:
+            self._engine._geometries_to_free.add(self._geometry_id)
 
     def set_geometry(self, mesh):
         """Overwrite this entity's vertex buffer (requires equal vertex count).
@@ -342,6 +364,12 @@ class Engine:
         self._sun = None
         # Spot light (flashlight): cone + distance falloff, and a shadow caster.
         self._spot = None
+        # Floating origin (x, z), float64: entities, camera and lights are stored
+        # relative to it, so the GPU's float32 stays precise far from (0, 0).
+        self._origin = (0.0, 0.0)
+        # Geometry ids whose entities EntityHandle.destroy() removed; freed at the
+        # next command flush if no live entity still draws them.
+        self._geometries_to_free = set()
         # Shadow-map config — set via enable_shadows().
         self._shadow_config = None
 
@@ -588,6 +616,51 @@ class Engine:
             else:
                 still.append(t)
         self._pending_tasks = still
+
+    # === Floating origin ===
+
+    @property
+    def origin(self) -> tuple[float, float]:
+        """The floating origin (x, z) in world coordinates, float64."""
+        return self._origin
+
+    def set_origin(self, x: float, z: float) -> None:
+        """Move the floating origin: every entity then draws at pos - origin.
+
+        EntityHandle.transform.pos and a spawned Transform's pos stay in world
+        coordinates. What lives in the render frame is shifted here, so nothing
+        moves on screen: the raw Transform rows, the camera, the spot light and
+        the manual shadow target. Call it when the focus has wandered far from
+        the origin, not every frame.
+        """
+        new = (float(x), float(z))
+        dx, dz = self._origin[0] - new[0], self._origin[1] - new[1]
+        self._origin = new
+        if dx == 0.0 and dz == 0.0:
+            return
+        d = np.array([dx, 0.0, dz])
+        if "Transform" in self.store._components:
+            alive = self.store._alive
+            rows = self.store._components["Transform"]
+            rows[alive, 0:3] = (rows[alive, 0:3].astype(np.float64) + d).astype(np.float32)
+        cam = self.camera
+        cam.position = (cam.position.astype(np.float64) + d).astype(np.float32)
+        cam.target = (cam.target.astype(np.float64) + d).astype(np.float32)
+        if self._spot is not None and getattr(self._spot, "position", None) is not None:
+            self._spot.position = tuple(np.asarray(self._spot.position, np.float64) + d)
+        if self._shadow_config is not None:
+            self._shadow_config["target"] = tuple(np.asarray(self._shadow_config["target"], np.float64) + d)
+
+    def _free_geometries(self):
+        """Free the GPU buffers of geometries EntityHandle.destroy() let go of,
+        unless a live entity still draws them."""
+        if not self._geometries_to_free:
+            return
+        pending, self._geometries_to_free = self._geometries_to_free, set()
+        mesh = self.store._components.get("Mesh")
+        used = set(np.unique(mesh[self.store._alive, 0]).tolist()) if mesh is not None else set()
+        for gid in pending - used:
+            self._geometry_registry.release(gid)
 
     def enable_fog(self, start, end, color=None):
         """Linear distance fog for StandardMaterial; color defaults to background_color."""
@@ -899,6 +972,13 @@ class Engine:
         if "Transform" not in self.store._components:
             Transform.register(self.store)
 
+        # A Transform's pos is world coordinates: store it relative to the origin,
+        # subtracted in float64 so a far position keeps its precision.
+        t = kwargs.get("Transform")
+        if isinstance(t, Transform) and t._pos is not None and self._origin != (0.0, 0.0):
+            rel = np.asarray(t._pos, np.float64) - np.array([self._origin[0], 0.0, self._origin[1]])
+            processed_kwargs["Transform"][:, 0:3] = rel.astype(np.float32)
+
         # NOW spawn the entities immediately (not deferred)
         if n > 0:
             indices = self.store.spawn(n, **processed_kwargs)
@@ -1031,6 +1111,7 @@ class Engine:
         # in run() mode) are still in the buffer here, so they are not lost.
         self.commands.execute(self.store)
         self.commands.clear()
+        self._free_geometries()
 
         # Step 7: GPU compute systems.
         self._compute_runner.run_all(dt)
