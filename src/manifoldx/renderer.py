@@ -649,7 +649,7 @@ class RenderPipeline:
         """Get or create a material-type specific pipeline.
 
         Pipeline cache key:
-            mesh:   (geometry_id, material_type)
+            mesh:   (vertex layout, material_type, material_subtype)
             sprite: (geometry_id, material_type, material_subtype, sprite)
             label:  (geometry_id, material_type, material_subtype, "label")
             line:   (geometry_id, material_type, material_subtype, "line")
@@ -665,7 +665,13 @@ class RenderPipeline:
         elif sprite:
             key = (geometry_id, material_type, material_subtype, True)
         else:
-            key = (geometry_id, material_type, material_subtype)
+            # A mesh pipeline depends on the geometry only through its vertex
+            # layout, so geometries that share one share the pipeline: a stream
+            # of new meshes compiles nothing new.
+            gb = geometry_buffers or {}
+            layout = ("layout", gb.get("stride", 6 * 4), gb.get("has_uvs", False),
+                      gb.get("has_colors", False), gb.get("joints_offset"))
+            key = (layout, material_type, material_subtype)
 
         if key in self._pipelines:
             return self._pipelines[key], self._bind_group_layouts.get(key)

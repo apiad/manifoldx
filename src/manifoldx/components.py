@@ -312,8 +312,8 @@ class Mesh:
 
     def get_data(self, n: int, registry) -> np.ndarray:
         """Get component data array for n entities."""
-        # Register geometry if not already
-        if self._geometry_id is None:
+        # Register geometry if not already, or again after release() freed it
+        if self._geometry_id is None or registry.get(self._geometry_id) is None:
             self._geometry_id = registry.register(self._geometry)
 
         # Create array with geometry_id repeated n times

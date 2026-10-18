@@ -1219,6 +1219,19 @@ class GeometryRegistry:
         """Get GPU buffers for geometry."""
         return self._gpu_buffers.get(geometry_id)
 
+    def release(self, geometry_id: int) -> None:
+        """Forget a geometry and destroy its GPU buffers. Named built-ins stay."""
+        if geometry_id in self._name_to_id.values():
+            return
+        for key in ("vertex_buffer", "index_buffer"):
+            buf = self._gpu_buffers.get(geometry_id, {}).get(key)
+            if buf is not None:
+                buf.destroy()
+        self._gpu_buffers.pop(geometry_id, None)
+        geo = self._geometries.pop(geometry_id, None)
+        if geo is not None:
+            self._object_to_id.pop(id(geo), None)
+
     def register(self, geometry_obj) -> int:
         """Register a geometry, return ID. Same object returns same ID."""
         obj_id = id(geometry_obj)
