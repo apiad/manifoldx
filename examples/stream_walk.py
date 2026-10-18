@@ -21,10 +21,10 @@ import manifoldx as mx
 from manifoldx.resources import DirectionalLight
 from manifoldx.streaming import MeshData, Streamer
 
-CELL, SEGMENTS, HEIGHT = 32.0, 32, 14.0
-STEP, CAM_UP, LOOK_AHEAD = 4.0, 9.0, 30.0       # metres a frame, above the ground, ahead
+CELL, SEGMENTS, HEIGHT = 32.0, 32, 26.0
+STEP, CAM_UP, LOOK_AHEAD = 4.0, 40.0, 24.0      # metres a frame, above the ground, ahead
 WARMUP = 30                                      # frames before timing starts
-LOW, HIGH = np.array([0.20, 0.32, 0.10]), np.array([0.55, 0.50, 0.40])
+LOW, HIGH = np.array([0.06, 0.22, 0.04]), np.array([0.62, 0.52, 0.38])
 
 
 def _hash(ix, iz):
@@ -36,7 +36,7 @@ def _hash(ix, iz):
 def height(x, z):
     """Value-noise fbm in world metres (float64), in [0, HEIGHT]."""
     x, z = np.asarray(x, np.float64), np.asarray(z, np.float64)
-    total, amp, freq = 0.0, 0.5, 1 / 90
+    total, amp, freq = 0.0, 0.5, 1 / 70
     for _ in range(4):
         fx, fz = x * freq, z * freq
         ix, iz = np.floor(fx).astype(np.int64), np.floor(fz).astype(np.int64)
@@ -93,7 +93,8 @@ def main():
     streamer = Streamer(engine, CELL, build_cell, workers=args.workers)
     ms_text, km_text = mx.gui.Text(""), mx.gui.Text("")  # the atlas keeps each string: round them
     if not args.headless:
-        engine.gui.append(mx.gui.Panel(children=[ms_text, km_text], anchor="top-left"))
+        engine.gui.append(mx.gui.Panel(children=[ms_text, km_text], anchor="top-left", offset=(12, 12),
+                                       style_overrides={"width": 150, "height": 44, "padding": 6, "gap": 2}))
     st = {"frame": 0, "last": None, "wall": [], "cpu": []}
 
     @engine.system
@@ -113,9 +114,10 @@ def main():
         if abs(z - oz) > CELL * 1.5:                     # rebase with half a cell of slack
             engine.set_origin(0.0, np.floor(z / CELL) * CELL)
             ox, oz = engine.origin
-        streamer.focus(0.0, z)
-        eye = np.array([0.0, float(height(0.0, z)) + CAM_UP, z - oz])
-        look = np.array([0.0, float(height(0.0, z - LOOK_AHEAD)), z - oz - LOOK_AHEAD])
+        x = CELL / 2                                     # down the middle of a column of cells
+        streamer.focus(x, z)
+        eye = np.array([x - ox, float(height(x, z)) + CAM_UP, z - oz])
+        look = np.array([x - ox, float(height(x, z - LOOK_AHEAD)), z - oz - LOOK_AHEAD])
         engine.camera.set_pose(tuple(eye), tuple(look))
 
     frames = WARMUP + int(args.km * 1000 / STEP)
