@@ -8,7 +8,7 @@ takes more than twice the median (CPU time by default, --clock wall for wall tim
 
     uv run python examples/stream_walk.py --km 50 --headless
     uv run python examples/stream_walk.py --km 50 --headless --workers thread
-    uv run python examples/stream_walk.py --render out.mp4 --duration 30
+    uv run python examples/stream_walk.py --render --duration 30 --output /tmp/stream_walk.mp4
 """
 
 import argparse
@@ -81,7 +81,8 @@ def main():
     ap.add_argument("--clock", choices=["wall", "cpu"], default="cpu",
                     help="what the twice-the-median check reads (default: this process's CPU time)")
     ap.add_argument("--log", help="write one line per frame: frame, wall ms, cpu ms, drawn cells")
-    ap.add_argument("--render", metavar="MP4", help="record a clip with the frame time in a corner")
+    ap.add_argument("--render", action="store_true", help="record a clip with the frame time in a corner")
+    ap.add_argument("--output", default="/tmp/stream_walk.mp4")
     ap.add_argument("--duration", type=float, default=30.0)
     ap.add_argument("--fps", type=int, default=24)
     args = ap.parse_args()
@@ -119,7 +120,7 @@ def main():
 
     frames = WARMUP + int(args.km * 1000 / STEP)
     if args.render:
-        engine.render(args.render, fps=args.fps, duration=args.duration)
+        engine.render(args.output, fps=args.fps, duration=args.duration)
         streamer.close()
         return 0
     if not args.headless:
