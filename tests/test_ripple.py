@@ -63,4 +63,4 @@ def test_moving_the_origin_does_not_jump_the_ripples():
 
 def test_ripple_reaches_the_material_uniforms():
     data = StandardMaterial("#ffffff", ripple=0.7).get_data(1, None)
-    assert data.shape == (1, 12) and data[0, 8] == pytest.approx(0.7)
+    assert data.shape == (1, 16) and data[0, 8] == pytest.approx(0.7)

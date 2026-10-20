@@ -86,4 +86,15 @@ def test_mirrored_and_translucent_meshes_cast_no_shadow():
 def test_mirror_and_opacity_reach_the_material_uniforms():
     data = StandardMaterial("#ffffff", mirror=0.03, opacity=0.6).get_data(1, None)
     assert data[0, 9] == 1.0 and data[0, 10] == pytest.approx(0.03) and data[0, 11] == pytest.approx(0.6)
-    assert StandardMaterial("#ffffff").get_data(1, None)[0, 9:].tolist() == [0.0, 0.0, 1.0]
+    assert StandardMaterial("#ffffff").get_data(1, None)[0, 9:12].tolist() == [0.0, 0.0, 1.0]
+
+
+def test_a_cut_drops_what_lies_inside_its_rectangle():
+    e = _engine()
+    mat = StandardMaterial("#3355ff")
+    e.spawn(Mesh(_quad(0.0)), Material(mat), Transform())
+    whole = e.render_frame(supersample=1).astype(np.int16)[..., 2] > 30
+    mat.cut = (-1.0, -1.0, 1.0, 1.0)
+    holed = e.render_frame(supersample=1).astype(np.int16)[..., 2] > 30
+    assert 0 < whole.sum() - holed.sum() < whole.sum() / 2
+    assert StandardMaterial("#ffffff", cut=(1, 2, 3, 4)).get_data(1, None)[0, 12:].tolist() == [1, 2, 3, 4]

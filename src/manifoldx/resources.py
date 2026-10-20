@@ -690,6 +690,7 @@ struct PBRMaterialUniforms {
     mirror:    f32,     // 1.0: drawn reflected in the plane y = mirror_y
     mirror_y:  f32,
     opacity:   f32,
+    cut:       vec4<f32>,   // x0, z0, x1, z1: an xz rectangle where nothing draws (empty when x1 <= x0)
 };
 
 struct PointLightData {
@@ -883,6 +884,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (material.mirror > 0.0 && in.world_pos.y < material.mirror_y) {
         discard;   // below the mirror: its reflection would stand above it
+    }
+    if (all(in.world_pos.xz > material.cut.xy) && all(in.world_pos.xz < material.cut.zw)) {
+        discard;
     }
     let N = normalize(in.world_normal);
     let V = normalize(globals.camera_pos - in.world_pos);
@@ -1088,6 +1092,7 @@ class StandardMaterial(Material):
         ripple=0.0,
         mirror=None,
         opacity=1.0,
+        cut=None,
     ):
         from manifoldx.textures import TextureHandle
 
@@ -1115,6 +1120,9 @@ class StandardMaterial(Material):
         # Neither kind casts a shadow.
         self.mirror = None if mirror is None else float(mirror)
         self.opacity = float(opacity)
+        # cut=(x0, z0, x1, z1): an xz rectangle, in render space, where nothing of the mesh
+        # draws, such as far land under near water. Set it again any frame to move it.
+        self.cut = cut
 
     @property
     def pipeline_subtype(self):
@@ -1157,7 +1165,7 @@ class StandardMaterial(Material):
         """Return material data as numpy array (albedo, roughness, metallic, ao + padding)."""
         albedo = material_rgb(self.color)
 
-        data = np.zeros((n, 12), dtype=np.float32)
+        data = np.zeros((n, 16), dtype=np.float32)
         data[:, 0:3] = albedo
         data[:, 3] = self.roughness
         data[:, 4] = self.metallic
@@ -1168,6 +1176,8 @@ class StandardMaterial(Material):
         data[:, 9] = 0.0 if self.mirror is None else 1.0
         data[:, 10] = 0.0 if self.mirror is None else self.mirror
         data[:, 11] = self.opacity
+        if self.cut is not None:
+            data[:, 12:16] = self.cut
 
         return data
 

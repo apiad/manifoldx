@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind it; the renderer draws translucent meshes after every opaque one, whatever the
   spawn order. Scenery mirrored under translucent water reflects in it, with no second
   camera and no render target. Neither kind casts a shadow.
+  `cut=(x0, z0, x1, z1)` drops whatever of a mesh lies inside an xz rectangle, such as
+  far land under near water, so it hides no reflection.
 - **`StandardMaterial(ripple=...)`: water in the fragment shader.** Dashed bands of light
   drift across the surface, one wave train bent by a second and broken by a third. Like
   the sway, every wave repeats over 64 s and 256 world units, so the clock and
