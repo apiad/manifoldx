@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`examples/stream_walk.py`** walks a camera across 50 km of streamed noise terrain and
   fails if any frame takes more than twice the median (#85).
 
+### Changed
+
+- **Shadows fade out over the outer 15% of the shadow map** instead of stopping at its edge,
+  so the edge of what the map covers never shows on screen as a line.
+
 ### Performance
 
 - **The Streamer uploads the ready ring hidden, a few MB a frame.** Its worker also packs

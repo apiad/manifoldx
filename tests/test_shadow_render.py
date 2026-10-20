@@ -333,3 +333,24 @@ def test_spot_casts_shadow():
     lit = scene(shadows=False)
     shadowed = scene(shadows=True)
     assert (lit - shadowed).max() > 20  # the spot casts a visible shadow
+
+
+def test_shadows_fade_out_before_the_edge_of_the_map():
+    """A roof shadows the whole floor; inside the map's outer 15% the shadow thins out,
+    so the map's edge never shows as a line on screen."""
+    from manifoldx.resources import cube
+
+    eng = _make_offscreen_engine(w=160, h=160)
+    eng.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(0, -1, 0)))
+    eng.enable_shadows(target=(0, 0, 0), extent=4.0, resolution=1024, pcf_radius=0, auto_fit=False, far=30.0)
+    eng.spawn(Mesh(plane(30, 30)), Material(StandardMaterial(color="#ffffff", roughness=1.0)),
+              Transform(pos=(0, 0, 0), rot=Transform.rotation(x=-np.pi / 2, y=0, z=0)))
+    eng.spawn(Mesh(cube(30, 0.1, 30)), Material(StandardMaterial(color="#ffffff")), Transform(pos=(0, 3, 0)))
+    eng.camera.set_pose(position=(0, 2.5, 0.001), target=(0, 0, 0))   # under the roof, looking down
+    eng.camera.fov = 140
+    lum = _render_array(eng)[..., :3].mean(axis=2)
+    pts = np.array([[0.0, 0.0, 0.0], [3.8, 0.0, 0.0], [6.0, 0.0, 0.0]])
+    px, _ = eng.camera.project(pts, eng.w, eng.h)
+    centre, rim, out = (lum[int(round(y)), int(round(x))] for x, y in px)
+    assert out > centre + 30           # outside the map: unshadowed
+    assert rim > centre + 0.5 * (out - centre)   # 95% of the way out: mostly faded

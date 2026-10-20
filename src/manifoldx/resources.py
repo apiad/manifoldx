@@ -825,7 +825,10 @@ fn shadowFactor(world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
             count += 1.0;
         }
     }
-    return sum / count;
+    // Fade to unshadowed over the outer 15% of the map, so the edge of what it
+    // covers never shows on screen as a line where the shadows stop.
+    let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    return mix(1.0, sum / count, smoothstep(0.0, 0.15, edge));
 }
 
 struct VertexInput {
