@@ -1591,12 +1591,13 @@ class RenderPipeline:
         # Draw mesh batches (if any)
         # ---------------------------------------------------------------
         if mesh_batches:
-            # Translucent meshes draw last, over everything opaque.
-            def _translucent(key):
+            # Opaque meshes first, then mirrored ones, which the depth test then rejects cheaply
+            # wherever the ground hides them, then translucent ones over everything.
+            def _order(key):
                 state = getattr(engine._material_registry.get(key[3]), "pipeline_state", None)
-                return bool(state and state[0])
+                return (bool(state and state[0]), bool(state and state[1]))
 
-            mesh_batches = dict(sorted(mesh_batches.items(), key=lambda kv: _translucent(kv[0])))
+            mesh_batches = dict(sorted(mesh_batches.items(), key=lambda kv: _order(kv[0])))
             _mesh_pass.render_mesh_batches(
                 self, engine, render_pass, mesh_batches, model_matrices, material_data, alive_indices
             )
