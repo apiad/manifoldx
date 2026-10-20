@@ -685,7 +685,7 @@ struct PBRMaterialUniforms {
     metallic:  f32,
     ao:        f32,
     sway:      f32,
-    _pad1:     f32,
+    sway_reach: f32,
 };
 
 struct PointLightData {
@@ -849,8 +849,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let model = transforms.models[in.instance];
     out.world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
     if (material.sway > 0.0) {
-        // Wind: a vertex moves in proportion to its height above the model's origin,
-        // with a phase from where it stands in the world, so neighbours sway apart.
+        // Wind: a vertex moves with its height above the model's origin, in proportion
+        // near the ground and levelling off past sway_reach (reach * tanh(height / reach)),
+        // so grass bends as much as a tree; the phase comes from where it stands in the
+        // world, so neighbours sway apart.
         // Every wave repeats over 64 s and 256 world units, which time and origin_mod
         // wrap by, so neither the clock nor a moved origin ever makes it jump.
         let TAU = 6.28318530718;
@@ -858,7 +860,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
         let t = globals.time;
         let a = TAU * (27.0 * t / 64.0 - (23.0 * p.x + 13.0 * p.y) / 256.0);
         let b = TAU * (61.0 * t / 64.0 - (-31.0 * p.x + 41.0 * p.y) / 256.0);
-        let h = clamp(in.position.y, 0.0, 4.0) * material.sway;
+        let reach = material.sway_reach;
+        let h = reach * tanh(max(in.position.y, 0.0) / reach) * material.sway;
         out.world_pos.x += h * (sin(a) + 0.35 * sin(b));
         out.world_pos.z += h * 0.5 * (cos(a) + 0.35 * sin(b + 1.3));
     }
@@ -1055,6 +1058,7 @@ class StandardMaterial(Material):
         albedo_map=None,
         vertex_colors=False,
         sway=0.0,
+        sway_reach=4.0,
     ):
         from manifoldx.textures import TextureHandle
 
@@ -1070,9 +1074,10 @@ class StandardMaterial(Material):
         self.ao = ao
         self.albedo_map = albedo_map
         self.vertex_colors = vertex_colors
-        # Wind: how far a vertex sways per unit of height above its model's origin.
-        # Only the drawn mesh sways; its shadow stays put.
+        # Wind: how far a vertex sways per unit of height above its model's origin, up to
+        # about sway_reach, where the sway levels off. Only the drawn mesh sways; its shadow stays put.
         self.sway = float(sway)
+        self.sway_reach = float(sway_reach)
 
     @property
     def pipeline_subtype(self):
@@ -1112,6 +1117,7 @@ class StandardMaterial(Material):
         data[:, 4] = self.metallic
         data[:, 5] = self.ao
         data[:, 6] = self.sway
+        data[:, 7] = self.sway_reach
 
         return data
 
