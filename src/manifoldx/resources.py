@@ -686,6 +686,10 @@ struct PBRMaterialUniforms {
     ao:        f32,
     sway:      f32,
     sway_reach: f32,
+    ripple:    f32,
+    _pad_r0:   f32,
+    _pad_r1:   f32,
+    _pad_r2:   f32,
 };
 
 struct PointLightData {
@@ -922,6 +926,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     var color = ambient + Lo;
+    if (material.ripple > 0.0) {
+        // Water: thin bands of light drift across the surface, one wave train bent by a
+        // second so the crests wobble. As with the wind, every wave repeats over 64 s and
+        // 256 world units, so neither the clock nor a moved origin makes them jump.
+        let TAU = 6.28318530718;
+        let p = in.world_pos.xz + globals.origin_mod;
+        let t = globals.time;
+        let bend = 1.5 * sin(TAU * ((96.0 * p.x - 24.0 * p.y) / 256.0 + 9.0 * t / 64.0));
+        let w = sin(TAU * ((40.0 * p.x + 160.0 * p.y) / 256.0 - 16.0 * t / 64.0) + bend);
+        // A third wave, running along the crests, breaks them into dashes.
+        let gap = sin(TAU * ((112.0 * p.x + 8.0 * p.y) / 256.0 + 5.0 * t / 64.0));
+        let band = smoothstep(0.86, 0.93, w) * smoothstep(-0.35, 0.05, gap);
+        color += material.ripple * band * (0.25 * color + vec3<f32>(0.12, 0.16, 0.18));
+    }
     color = color / (color + vec3<f32>(1.0));
     // gamma: the sRGB render target encodes it
     if globals.fog_enabled != 0u {
@@ -1059,6 +1077,7 @@ class StandardMaterial(Material):
         vertex_colors=False,
         sway=0.0,
         sway_reach=4.0,
+        ripple=0.0,
     ):
         from manifoldx.textures import TextureHandle
 
@@ -1078,6 +1097,8 @@ class StandardMaterial(Material):
         # about sway_reach, where the sway levels off. Only the drawn mesh sways; its shadow stays put.
         self.sway = float(sway)
         self.sway_reach = float(sway_reach)
+        # Water: how strongly bands of light drift across the surface; 0 leaves it still.
+        self.ripple = float(ripple)
 
     @property
     def pipeline_subtype(self):
@@ -1111,13 +1132,14 @@ class StandardMaterial(Material):
         """Return material data as numpy array (albedo, roughness, metallic, ao + padding)."""
         albedo = material_rgb(self.color)
 
-        data = np.zeros((n, 8), dtype=np.float32)
+        data = np.zeros((n, 12), dtype=np.float32)
         data[:, 0:3] = albedo
         data[:, 3] = self.roughness
         data[:, 4] = self.metallic
         data[:, 5] = self.ao
         data[:, 6] = self.sway
         data[:, 7] = self.sway_reach
+        data[:, 8] = self.ripple
 
         return data
 

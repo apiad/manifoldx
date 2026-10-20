@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`StandardMaterial(ripple=...)`: water in the fragment shader.** Dashed bands of light
+  drift across the surface, one wave train bent by a second and broken by a third. Like
+  the sway, every wave repeats over 64 s and 256 world units, so the clock and
+  `set_origin` never make it jump. A material's uniform buffer now grows to its data.
 - **`StandardMaterial(sway=...)`: wind in the vertex shader.** A vertex moves in proportion
   to its height above its model's origin, with a phase from its world position, so a field
   of grass or a wood sways as waves cross it and no two trees move alike. It costs a few

@@ -74,9 +74,12 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
 
         # Per-mat_id uniform buffer: one per material instance, allocated
         # lazily on first sight. Sizing follows the existing convention
-        # (32B for materials that bind lights, 16B otherwise).
+        # (32B for materials that bind lights, 16B otherwise), or the
+        # material's own data when it holds more.
+        mat_data = mat_obj.get_data(instance_count, engine._material_registry)
+        first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
         needs_lights = "@binding(3)" in type(mat_obj)._compile()
-        mat_buffer_size = 32 if needs_lights else 16
+        mat_buffer_size = max(32 if needs_lights else 16, -(-first_row.size * 4 // 16) * 16)
         mat_buffer = rp._material_buffers_by_mat_id.get(mat_id)
         if mat_buffer is None:
             mat_buffer = rp._device.create_buffer(
@@ -86,8 +89,6 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
             rp._material_buffers_by_mat_id[mat_id] = mat_buffer
 
         # Upload material uniforms for this batch.
-        mat_data = mat_obj.get_data(instance_count, engine._material_registry)
-        first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
         rp._device.queue.write_buffer(mat_buffer, 0, first_row.astype(np.float32).tobytes())
         bind_group_entries = [
             {
