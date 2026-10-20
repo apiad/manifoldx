@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **The Streamer uploads the ready ring hidden, a few MB a frame.** Its worker also packs
+  each cell's vertices (`resources.pack_vertices`, shared with `create_buffers`), and the
+  frame copies at most `upload_bytes_per_frame` (2 MB by default) of them to the GPU,
+  nearest cell first, so a cell that comes into view is already on the GPU and drawing it
+  builds nothing on the frame. Cells keep their buffers until they leave `ready_radius`
+  (`EntityHandle.destroy(free_geometry=False)`). Cells drawn before the engine has a device
+  still get their buffers from the render pass. A 24 MB cell no longer stalls the frame
+  where it first draws.
 - **Mesh pipelines are keyed by vertex layout, not by geometry.** Every new geometry
   compiled its own pipeline, about 50 ms and 2.9 MB each on a software renderer. Meshes
   with the same layout and material now share one, so 1,000 new meshes went from about

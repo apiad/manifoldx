@@ -137,7 +137,6 @@ class BasicMaterial(Material):
         return np.tile(color, (n, 1))
 
 
-
 _FLATMATERIAL_SHADER = _BASICMATERIAL_SHADER.replace(
     """    let normal = normalize(in.world_normal);
     let light_dir = normalize(vec3<f32>(0.5773, 0.5773, 0.5773));
@@ -455,7 +454,9 @@ class AtmosphereScatteringMaterial(Material):
 
     binding_slot = 0
 
-    def __init__(self, ground_radius, atmosphere_radius, intensity: float = 22.0, exposure: float = 1.0):
+    def __init__(
+        self, ground_radius, atmosphere_radius, intensity: float = 22.0, exposure: float = 1.0
+    ):
         self.ground_radius = ground_radius
         self.atmosphere_radius = atmosphere_radius
         self.intensity = intensity
@@ -475,8 +476,10 @@ class AtmosphereScatteringMaterial(Material):
 
     def get_data(self, n: int, registry) -> np.ndarray:
         return np.tile(
-            np.array([self.ground_radius, self.atmosphere_radius, self.intensity, self.exposure],
-                     dtype=np.float32),
+            np.array(
+                [self.ground_radius, self.atmosphere_radius, self.intensity, self.exposure],
+                dtype=np.float32,
+            ),
             (n, 1),
         )
 
@@ -580,8 +583,13 @@ class CloudMaterial(Material):
 
     binding_slot = 0
 
-    def __init__(self, coverage: float = 0.55, softness: float = 0.12,
-                 freq: float = 3.0, opacity: float = 0.9):
+    def __init__(
+        self,
+        coverage: float = 0.55,
+        softness: float = 0.12,
+        freq: float = 3.0,
+        opacity: float = 0.9,
+    ):
         self.coverage = coverage
         self.softness = softness
         self.freq = freq
@@ -1021,8 +1029,9 @@ class StandardMaterial(Material):
 
     binding_slot = 1
 
-    def __init__(self, color, roughness=0.5, metallic=0.0, ao=1.0, albedo_map=None,
-                 vertex_colors=False):
+    def __init__(
+        self, color, roughness=0.5, metallic=0.0, ao=1.0, albedo_map=None, vertex_colors=False
+    ):
         from manifoldx.textures import TextureHandle
 
         if albedo_map is not None and not isinstance(albedo_map, TextureHandle):
@@ -1084,6 +1093,85 @@ class StandardMaterial(Material):
 # =============================================================================
 
 
+def pack_vertices(geometry_obj: dict):
+    """A geometry's vertices as the interleaved bytes its vertex buffer holds,
+    and the layout: (data, info), with data None when it has no positions.
+    Pure numpy, so it can run off the frame (a Streamer worker)."""
+    buffers = {}
+    data = None
+
+    if "positions" in geometry_obj:
+        positions = geometry_obj["positions"].astype(np.float32)
+    elif "vertices" in geometry_obj:
+        positions = geometry_obj["vertices"].astype(np.float32)
+    else:
+        positions = None
+
+    if positions is not None:
+        has_normals = "normals" in geometry_obj
+        has_uvs = "uvs" in geometry_obj
+        has_colors = "colors" in geometry_obj
+
+        if has_normals and has_uvs:
+            normals = geometry_obj["normals"].astype(np.float32)
+            uvs = geometry_obj["uvs"].astype(np.float32)
+            n_verts = len(positions)
+            interleaved = np.zeros((n_verts, 8), dtype=np.float32)
+            interleaved[:, 0:3] = positions
+            interleaved[:, 3:6] = normals
+            interleaved[:, 6:8] = uvs
+            data = interleaved.tobytes()
+            buffers["stride"] = 8 * 4  # pos(3) + normal(3) + uv(2)
+            buffers["has_normals"] = True
+            buffers["has_uvs"] = True
+            buffers["has_colors"] = False
+        elif has_normals and has_colors:
+            normals = geometry_obj["normals"].astype(np.float32)
+            colors = geometry_obj["colors"].astype(np.float32)
+            n_verts = len(positions)
+            interleaved = np.zeros((n_verts, 9), dtype=np.float32)
+            interleaved[:, 0:3] = positions
+            interleaved[:, 3:6] = normals
+            interleaved[:, 6:9] = colors
+            data = interleaved.tobytes()
+            buffers["stride"] = 9 * 4  # pos(3) + normal(3) + color(3)
+            buffers["has_normals"] = True
+            buffers["has_uvs"] = False
+            buffers["has_colors"] = True
+        elif has_normals:
+            normals = geometry_obj["normals"].astype(np.float32)
+            n_verts = len(positions)
+            interleaved = np.zeros((n_verts, 6), dtype=np.float32)
+            interleaved[:, 0:3] = positions
+            interleaved[:, 3:6] = normals
+            data = interleaved.tobytes()
+            buffers["stride"] = 6 * 4
+            buffers["has_normals"] = True
+            buffers["has_uvs"] = False
+            buffers["has_colors"] = False
+        else:
+            data = positions.tobytes()
+            buffers["stride"] = 3 * 4
+            buffers["has_normals"] = False
+            buffers["has_uvs"] = False
+            buffers["has_colors"] = False
+
+        # Skinned geometry: one uint32 joint index after the floats above,
+        # so every other attribute keeps its offset.
+        buffers["has_joints"] = "joints" in geometry_obj
+        if buffers["has_joints"]:
+            from manifoldx.skinning import append_joint_column, validate_joints
+
+            joints = validate_joints(geometry_obj["joints"], len(positions))
+            rows = np.frombuffer(data, dtype=np.float32).reshape(len(positions), -1)
+            data = append_joint_column(rows, joints).tobytes()
+            buffers["joints_offset"] = buffers["stride"]
+            buffers["stride"] += 4
+
+        buffers["vertex_count"] = len(positions)
+    return data, buffers
+
+
 class GeometryRegistry:
     """
     Cache of GPU geometry resources.
@@ -1121,83 +1209,14 @@ class GeometryRegistry:
         if self._device is None or queue is None:
             return None
 
-        buffers = {}
-
-        if "positions" in geometry_obj:
-            positions = geometry_obj["positions"].astype(np.float32)
-        elif "vertices" in geometry_obj:
-            positions = geometry_obj["vertices"].astype(np.float32)
-        else:
-            positions = None
-
-        if positions is not None:
-            has_normals = "normals" in geometry_obj
-            has_uvs = "uvs" in geometry_obj
-            has_colors = "colors" in geometry_obj
-
-            if has_normals and has_uvs:
-                normals = geometry_obj["normals"].astype(np.float32)
-                uvs = geometry_obj["uvs"].astype(np.float32)
-                n_verts = len(positions)
-                interleaved = np.zeros((n_verts, 8), dtype=np.float32)
-                interleaved[:, 0:3] = positions
-                interleaved[:, 3:6] = normals
-                interleaved[:, 6:8] = uvs
-                data = interleaved.tobytes()
-                buffers["stride"] = 8 * 4  # pos(3) + normal(3) + uv(2)
-                buffers["has_normals"] = True
-                buffers["has_uvs"] = True
-                buffers["has_colors"] = False
-            elif has_normals and has_colors:
-                normals = geometry_obj["normals"].astype(np.float32)
-                colors = geometry_obj["colors"].astype(np.float32)
-                n_verts = len(positions)
-                interleaved = np.zeros((n_verts, 9), dtype=np.float32)
-                interleaved[:, 0:3] = positions
-                interleaved[:, 3:6] = normals
-                interleaved[:, 6:9] = colors
-                data = interleaved.tobytes()
-                buffers["stride"] = 9 * 4  # pos(3) + normal(3) + color(3)
-                buffers["has_normals"] = True
-                buffers["has_uvs"] = False
-                buffers["has_colors"] = True
-            elif has_normals:
-                normals = geometry_obj["normals"].astype(np.float32)
-                n_verts = len(positions)
-                interleaved = np.zeros((n_verts, 6), dtype=np.float32)
-                interleaved[:, 0:3] = positions
-                interleaved[:, 3:6] = normals
-                data = interleaved.tobytes()
-                buffers["stride"] = 6 * 4
-                buffers["has_normals"] = True
-                buffers["has_uvs"] = False
-                buffers["has_colors"] = False
-            else:
-                data = positions.tobytes()
-                buffers["stride"] = 3 * 4
-                buffers["has_normals"] = False
-                buffers["has_uvs"] = False
-                buffers["has_colors"] = False
-
-            # Skinned geometry: one uint32 joint index after the floats above,
-            # so every other attribute keeps its offset.
-            buffers["has_joints"] = "joints" in geometry_obj
-            if buffers["has_joints"]:
-                from manifoldx.skinning import append_joint_column, validate_joints
-
-                joints = validate_joints(geometry_obj["joints"], len(positions))
-                rows = np.frombuffer(data, dtype=np.float32).reshape(len(positions), -1)
-                data = append_joint_column(rows, joints).tobytes()
-                buffers["joints_offset"] = buffers["stride"]
-                buffers["stride"] += 4
-
+        data, buffers = pack_vertices(geometry_obj)
+        if data is not None:
             vertex_buffer = self._device.create_buffer(
                 size=len(data),
                 usage=wgpu.BufferUsage.VERTEX | wgpu.BufferUsage.COPY_DST,
             )
             queue.write_buffer(vertex_buffer, 0, data)
             buffers["vertex_buffer"] = vertex_buffer
-            buffers["vertex_count"] = len(positions)
 
         # Create index buffer
         if "indices" in geometry_obj:
@@ -1214,6 +1233,12 @@ class GeometryRegistry:
 
         self._gpu_buffers[geometry_id] = buffers
         return buffers
+
+    def adopt_buffers(self, geometry_id: int, buffers: dict) -> None:
+        """Take GPU buffers built elsewhere for a registered geometry: the dict
+        create_buffers would have made (pack_vertices' info plus vertex_buffer,
+        and index_buffer and index_count when indexed)."""
+        self._gpu_buffers[geometry_id] = buffers
 
     def get_gpu_buffers(self, geometry_id: int) -> dict:
         """Get GPU buffers for geometry."""

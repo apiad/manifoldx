@@ -37,7 +37,9 @@ class _TransformProxy:
 
     @property
     def pos(self):
-        return self._store._components["Transform"][self._i, 0:3].astype(np.float64) + self._offset()
+        return (
+            self._store._components["Transform"][self._i, 0:3].astype(np.float64) + self._offset()
+        )
 
     @pos.setter
     def pos(self, v):
@@ -70,15 +72,16 @@ class EntityHandle:
         self._geometry_id = geometry_id
         self.transform = _TransformProxy(engine.store, index, engine)
 
-    def destroy(self):
+    def destroy(self, free_geometry: bool = True):
         """Destroy this entity and free its geometry's GPU buffers.
 
         The entity goes at the frame's command flush, like Engine.destroy. Its
         geometry's buffers are freed then too, unless another live entity still
-        draws the same geometry.
+        draws the same geometry, or free_geometry is False (the caller owns them,
+        as a Streamer does for the cells it keeps uploaded).
         """
         self._engine.destroy(np.array([self.index]))
-        if self._geometry_id is not None:
+        if free_geometry and self._geometry_id is not None:
             self._engine._geometries_to_free.add(self._geometry_id)
 
     def set_geometry(self, mesh):
@@ -118,7 +121,9 @@ class EntityHandle:
             inter[:, 6:8] = geo["uvs"]
         if bufs.get("has_joints"):
             joints = geo["joints"] if "joints" in geo else orig["joints"]
-            inter[:, bufs["joints_offset"] // 4] = np.asarray(joints, dtype=np.uint32).view(np.float32)
+            inter[:, bufs["joints_offset"] // 4] = np.asarray(joints, dtype=np.uint32).view(
+                np.float32
+            )
         self._engine._device.queue.write_buffer(bufs["vertex_buffer"], 0, inter.tobytes())
 
     def set_joints(self, matrices):
@@ -133,10 +138,14 @@ class EntityHandle:
 
         geo = self._engine._geometry_registry.get(self._geometry_id)
         if geo is None or "joints" not in geo:
-            raise ValueError("set_joints needs an entity whose geometry has joints (Mesh(joints=...))")
+            raise ValueError(
+                "set_joints needs an entity whose geometry has joints (Mesh(joints=...))"
+            )
         m = np.asarray(matrices, dtype=np.float32)
         if m.ndim != 3 or m.shape[1:] != (4, 4) or not 1 <= len(m) <= MAX_JOINTS:
-            raise ValueError(f"set_joints expects shape (J, 4, 4) with 1 <= J <= {MAX_JOINTS}, got {m.shape}")
+            raise ValueError(
+                f"set_joints expects shape (J, 4, 4) with 1 <= J <= {MAX_JOINTS}, got {m.shape}"
+            )
         self._engine._render_pipeline._joints.set(self.index, m)
 
 
@@ -165,8 +174,6 @@ class Task:
         self._cb = cb
         self._engine._pending_tasks.append(self)
         return self
-
-
 
 
 class _Loading:
@@ -204,9 +211,10 @@ def _block_mode(labels: np.ndarray, ss: int) -> np.ndarray:
         return labels
     h, w = labels.shape[0] // ss, labels.shape[1] // ss
     blocks = labels.reshape(h, ss, w, ss).transpose(0, 2, 1, 3).reshape(h, w, ss * ss)
-    counts = np.stack([(blocks == blocks[..., k:k + 1]).sum(-1) for k in range(ss * ss)], axis=-1)
+    counts = np.stack([(blocks == blocks[..., k : k + 1]).sum(-1) for k in range(ss * ss)], axis=-1)
     pick = counts.argmax(-1)
     return np.take_along_axis(blocks, pick[..., None], axis=-1)[..., 0]
+
 
 def _configure_swapchain(context, device, adapter):
     """Configure the canvas with an sRGB format and return the format used.
@@ -225,6 +233,7 @@ def _configure_swapchain(context, device, adapter):
             pass
     context.configure(device=device, format=preferred)
     return preferred
+
 
 class Engine:
     def __init__(
@@ -430,7 +439,9 @@ class Engine:
         import functools
 
         # The loop this coroutine runs on: rendercanvas's in run(), the private one offline.
-        return await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, *args, **kwargs))
+        return await asyncio.get_running_loop().run_in_executor(
+            None, functools.partial(fn, *args, **kwargs)
+        )
 
     def _get_active_loop(self) -> asyncio.AbstractEventLoop:
         """Return the asyncio loop async handlers should run on.
@@ -583,10 +594,12 @@ class Engine:
         The decorated function must be pure (no GPU / engine-state mutation); it
         returns plain data delivered back to the main thread.
         """
+
         def submit(*args, **kwargs):
             if self._executor is None:
                 self._executor = ThreadPoolExecutor(max_workers=1)
             return Task(self._executor.submit(fn, *args, **kwargs), self)
+
         return submit
 
     def submit_process(self, fn, *args):
@@ -599,6 +612,7 @@ class Engine:
         """
         if self._process_executor is None:
             import multiprocessing as mp
+
             self._process_executor = ProcessPoolExecutor(
                 max_workers=1, mp_context=mp.get_context("spawn")
             )
@@ -649,7 +663,9 @@ class Engine:
         if self._spot is not None and getattr(self._spot, "position", None) is not None:
             self._spot.position = tuple(np.asarray(self._spot.position, np.float64) + d)
         if self._shadow_config is not None:
-            self._shadow_config["target"] = tuple(np.asarray(self._shadow_config["target"], np.float64) + d)
+            self._shadow_config["target"] = tuple(
+                np.asarray(self._shadow_config["target"], np.float64) + d
+            )
 
     def _free_geometries(self):
         """Free the GPU buffers of geometries EntityHandle.destroy() let go of,
@@ -759,7 +775,11 @@ class Engine:
     def _settle_environment(self):
         """Start the precompute if needed and wait for it: for frames nobody watches load."""
         self._start_environment()
-        if self._env_task is not None and self._environment is not None and not self._environment._computed:
+        if (
+            self._env_task is not None
+            and self._environment is not None
+            and not self._environment._computed
+        ):
             self._env_task.wait()
 
     def loading(self, label: str):
@@ -779,7 +799,11 @@ class Engine:
         return _Loading(self, label)
 
     def _loading(self):
-        env = ["lighting"] if self._environment is not None and not self._environment._computed else []
+        env = (
+            ["lighting"]
+            if self._environment is not None and not self._environment._computed
+            else []
+        )
         return env + [label for label, n in self._loading_labels.items() if n > 0]
 
     def _fire_startup(self):
@@ -817,7 +841,13 @@ class Engine:
                 self._loading_panel = Panel(
                     children=[ValueDisplay(getter=self._loading_line, min_width=200)],
                     anchor="top-left",
-                    style_overrides={"width": 230, "height": 40, "padding": 10, "bg": "#1a1a1ad0", "radius": 4},
+                    style_overrides={
+                        "width": 230,
+                        "height": 40,
+                        "padding": 10,
+                        "bg": "#1a1a1ad0",
+                        "radius": 4,
+                    },
                 )
                 self.gui.append(self._loading_panel)
             # anchors other than top-left paint top-left (manifoldx#13): centre by offset
@@ -1179,13 +1209,13 @@ class Engine:
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
 
-
     # One frame is enough: shadows and IBL are complete on the first frame
     # (measured: identical output for 1, 2 and 3 frames, with shadows and with IBL).
     _STILL_FRAMES = 1
 
-    def render_frame(self, *, supersample: int = 2, pass_: str = "beauty", groups=None,
-                     dt: float = 1 / 30):
+    def render_frame(
+        self, *, supersample: int = 2, pass_: str = "beauty", groups=None, dt: float = 1 / 30
+    ):
         """Render one still frame headless and return it as a numpy array.
 
         beauty: (h, w, 3) uint8, sRGB, area-downsampled from (h*ss, w*ss).
@@ -1271,10 +1301,13 @@ class Engine:
         geom = comps["Mesh"][alive, 0]
         mat_ids = comps["Material"][alive, 0]
         special = (AxisMaterial, LabelMaterial, VolumeMaterial)
-        return np.array([
-            g > 0 and not isinstance(self._material_registry.get(int(m)), special)
-            for g, m in zip(geom, mat_ids)
-        ], dtype=bool)
+        return np.array(
+            [
+                g > 0 and not isinstance(self._material_registry.get(int(m)), special)
+                for g, m in zip(geom, mat_ids)
+            ],
+            dtype=bool,
+        )
 
     def _render_ids(self, groups):
         """Draw every mesh flat in its group's label colour; restore afterwards.

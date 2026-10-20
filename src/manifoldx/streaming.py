@@ -6,11 +6,14 @@ z in [j*cell, (j+1)*cell). `build(i, j)` returns the cell's MeshData (or None fo
 a cell with nothing to draw) and runs in a worker, never on the frame.
 
 Two rings sit around the focus cell. The cells within `ready_radius` are built
-in the background; the cells within `radius` are drawn. Stepping into a new
-cell uploads cells that are already built, at most `uploads_per_frame` a frame,
-nearest first, so a frame never waits for a builder. A cell that leaves
-`radius` stops drawing and frees its GPU buffers; one that leaves
-`ready_radius` is dropped and its data forgotten.
+in the background and uploaded to the GPU hidden; the cells within `radius` are
+drawn. The worker also packs each cell's vertices the way its vertex buffer
+holds them, and the frame copies at most `upload_bytes_per_frame` of them to
+the GPU, nearest cell first, so a big cell takes several frames and none of
+them stalls. Stepping into a new cell then draws cells that are already on the
+GPU, at most `uploads_per_frame` a frame, and costs the frame next to nothing.
+A cell that leaves `radius` stops drawing and keeps its buffers; one that
+leaves `ready_radius` is dropped, its buffers freed and its data forgotten.
 
     streamer = Streamer(engine, cell=32.0, build=build_cell)
 
@@ -34,6 +37,8 @@ from typing import Callable, NamedTuple
 
 import numpy as np
 
+from manifoldx.resources import pack_vertices
+
 
 class MeshData(NamedTuple):
     """A cell's mesh: positions relative to the cell's corner (i*cell, 0, j*cell)."""
@@ -42,6 +47,30 @@ class MeshData(NamedTuple):
     normals: np.ndarray  # f32[N, 3]
     colors: np.ndarray  # f32[N, 3], linear
     indices: np.ndarray  # u32[M]
+
+
+class _Cell:
+    """A built cell: its geometry dict, and its packed bytes until they are on the GPU."""
+
+    __slots__ = ("geo", "info", "vbytes", "ibytes")
+
+    def __init__(self, geo, info, vbytes, ibytes):
+        self.geo, self.info, self.vbytes, self.ibytes = geo, info, vbytes, ibytes
+
+
+def _pack(build, i, j):
+    """The worker's job: build cell (i, j) and pack it for its GPU buffers."""
+    data = build(i, j)
+    if data is None:
+        return None
+    geo = {
+        "positions": np.asarray(data.positions, np.float32),
+        "normals": np.asarray(data.normals, np.float32),
+        "colors": np.asarray(data.colors, np.float32),
+        "indices": np.asarray(data.indices, np.uint32),
+    }
+    vbytes, info = pack_vertices(geo)
+    return _Cell(geo, info, vbytes, geo["indices"].tobytes())
 
 
 class Streamer:
@@ -55,6 +84,7 @@ class Streamer:
         radius: int = 1,
         ready_radius: int = 2,
         uploads_per_frame: int = 2,
+        upload_bytes_per_frame: int = 2 << 20,
         workers: str = "thread",
         material=None,
     ):
@@ -63,7 +93,9 @@ class Streamer:
         if workers == "thread":
             self._pool = ThreadPoolExecutor(max_workers=1)
         elif workers == "process":
-            self._pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+            self._pool = ProcessPoolExecutor(
+                max_workers=1, mp_context=multiprocessing.get_context("spawn")
+            )
         else:
             raise ValueError(f'workers must be "thread" or "process", got {workers!r}')
         if material is None:
@@ -71,10 +103,16 @@ class Streamer:
 
             material = StandardMaterial("#ffffff", roughness=0.9, vertex_colors=True)
         self.engine, self.cell, self.build = engine, float(cell), build
-        self.radius, self.ready_radius, self.uploads_per_frame = radius, ready_radius, uploads_per_frame
+        self.radius, self.ready_radius, self.uploads_per_frame = (
+            radius,
+            ready_radius,
+            uploads_per_frame,
+        )
         self.material = material
+        self.upload_bytes_per_frame = max(4, int(upload_bytes_per_frame) // 4 * 4)
         self._pending = {}  # cell -> Future
-        self._ready = {}  # cell -> MeshData | None, built and kept
+        self._ready = {}  # cell -> _Cell | None, built and kept
+        self._gpu = {}  # cell -> its upload: geometry id, buffers, bytes written, done
         self._drawn = {}  # cell -> EntityHandle | None (None: an empty cell)
         self._stats = {"built": 0, "uploaded": 0, "dropped": 0, "max_frame_ms": 0.0}
         self._last = None
@@ -83,7 +121,9 @@ class Streamer:
         """Move the focus to world position (x, z). Call it once a frame."""
         now = perf_counter()
         if self._last is not None:
-            self._stats["max_frame_ms"] = max(self._stats["max_frame_ms"], (now - self._last) * 1000.0)
+            self._stats["max_frame_ms"] = max(
+                self._stats["max_frame_ms"], (now - self._last) * 1000.0
+            )
         self._last = now
         fi, fj = math.floor(x / self.cell), math.floor(z / self.cell)
 
@@ -99,6 +139,7 @@ class Streamer:
             self._undraw(c)
         for c in [c for c in self._ready if ring(c) > self.ready_radius]:
             del self._ready[c]
+            self._unload(c)
             self._stats["dropped"] += 1
         for c in [c for c in self._pending if ring(c) > self.ready_radius]:
             self._pending.pop(c).cancel()
@@ -110,37 +151,109 @@ class Streamer:
         )
         for c in wanted:
             if c not in self._ready and c not in self._pending:
-                self._pending[c] = self._pool.submit(self.build, *c)
+                self._pending[c] = self._pool.submit(_pack, self.build, *c)
+        room = self.upload_bytes_per_frame
+        for c in wanted:
+            if room <= 0:
+                break
+            if self._ready.get(c) is not None and not self._on_gpu(c):
+                room -= self._upload(c, room)
         budget = self.uploads_per_frame
         for c in wanted:
             if budget == 0:
                 break
-            if ring(c) <= self.radius and c not in self._drawn and c in self._ready:
+            if (
+                ring(c) <= self.radius
+                and c not in self._drawn
+                and c in self._ready
+                and self._on_gpu(c)
+            ):
                 self._draw(c)
                 budget -= 1
 
+    def _on_gpu(self, c) -> bool:
+        """Whether cell c can be drawn without building a buffer on the frame."""
+        if self._ready.get(c) is None or self.engine._device is None:
+            return True  # nothing to upload, or no device yet: the render pass builds the buffers
+        return self._gpu.get(c, {}).get("done", False)
+
+    def _upload(self, c, room: int) -> int:
+        """Copy up to `room` bytes of cell c to its GPU buffers; returns the bytes copied."""
+        import wgpu
+
+        cell, reg, dev = self._ready[c], self.engine._geometry_registry, self.engine._device
+        if dev is None:
+            return 0
+        up = self._gpu.get(c)
+        if up is None:
+            gid = reg.register(cell.geo)
+            up = self._gpu[c] = {
+                "id": gid,
+                "done": False,
+                "at": [0, 0],
+                "bufs": [
+                    dev.create_buffer(
+                        size=len(cell.vbytes),
+                        usage=wgpu.BufferUsage.VERTEX | wgpu.BufferUsage.COPY_DST,
+                    ),
+                    dev.create_buffer(
+                        size=len(cell.ibytes),
+                        usage=wgpu.BufferUsage.INDEX | wgpu.BufferUsage.COPY_DST,
+                    ),
+                ],
+            }
+        spent = 0
+        for k, data in enumerate((cell.vbytes, cell.ibytes)):
+            at = up["at"][k]
+            n = min(len(data) - at, room - spent)
+            if n > 0:
+                dev.queue.write_buffer(up["bufs"][k], at, memoryview(data)[at : at + n])
+                up["at"][k] += n
+                spent += n
+        if up["at"] == [len(cell.vbytes), len(cell.ibytes)]:
+            vb, ib = up.pop("bufs")
+            reg.adopt_buffers(
+                up["id"],
+                {
+                    **cell.info,
+                    "vertex_buffer": vb,
+                    "index_buffer": ib,
+                    "index_count": len(cell.geo["indices"]),
+                },
+            )
+            up["done"] = True
+            cell.vbytes = cell.ibytes = None
+        return spent
+
+    def _unload(self, c):
+        """Free cell c's GPU buffers, whole or half written."""
+        up = self._gpu.pop(c, None)
+        if up is None:
+            return
+        for buf in up.get("bufs", ()):
+            buf.destroy()
+        self.engine._geometry_registry.release(up["id"])
+
     def _draw(self, c):
-        data = self._ready[c]
-        if data is None:
+        cell = self._ready[c]
+        if cell is None:
             self._drawn[c] = None
             return
         from manifoldx.components import Material, Mesh, Transform
 
-        geo = {
-            "positions": np.asarray(data.positions, np.float32),
-            "normals": np.asarray(data.normals, np.float32),
-            "colors": np.asarray(data.colors, np.float32),
-            "indices": np.asarray(data.indices, np.uint32),
-        }
         self._drawn[c] = self.engine.spawn(
-            Mesh(geo), Material(self.material), Transform(pos=(c[0] * self.cell, 0.0, c[1] * self.cell))
+            Mesh(cell.geo),
+            Material(self.material),
+            Transform(pos=(c[0] * self.cell, 0.0, c[1] * self.cell)),
         )
+        # Drawn before any device: its buffers come from the render pass, and are still ours to free.
+        self._gpu.setdefault(c, {"id": self._drawn[c]._geometry_id, "done": True})
         self._stats["uploaded"] += 1
 
     def _undraw(self, c):
         handle = self._drawn.pop(c)
         if handle is not None:
-            handle.destroy()
+            handle.destroy(free_geometry=False)
 
     def drawn(self) -> set[tuple[int, int]]:
         """The cells drawn now, empty cells (build returned None) included."""
@@ -156,6 +269,8 @@ class Streamer:
         self._pool.shutdown(wait=False, cancel_futures=True)
         for c in list(self._drawn):
             self._undraw(c)
+        for c in list(self._gpu):
+            self._unload(c)
         self._pending.clear()
         self._ready.clear()
 
