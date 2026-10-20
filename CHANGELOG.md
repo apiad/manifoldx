@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`StandardMaterial(mirror=..., opacity=...)`: a cheap reflection.** `mirror=y` draws a
+  mesh reflected in the plane y, lit where it really stands, with culling flipped and
+  whatever lies below the plane dropped. `opacity < 1` blends a surface over what is
+  behind it; the renderer draws translucent meshes after every opaque one, whatever the
+  spawn order. Scenery mirrored under translucent water reflects in it, with no second
+  camera and no render target. Neither kind casts a shadow.
 - **`StandardMaterial(ripple=...)`: water in the fragment shader.** Dashed bands of light
   drift across the surface, one wave train bent by a second and broken by a third. Like
   the sway, every wave repeats over 64 s and 256 world units, so the clock and

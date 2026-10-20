@@ -671,7 +671,7 @@ class RenderPipeline:
             gb = geometry_buffers or {}
             layout = ("layout", gb.get("stride", 6 * 4), gb.get("has_uvs", False),
                       gb.get("has_colors", False), gb.get("joints_offset"))
-            key = (layout, material_type, material_subtype)
+            key = (layout, material_type, material_subtype, getattr(material, "pipeline_state", None))
 
         if key in self._pipelines:
             return self._pipelines[key], self._bind_group_layouts.get(key)
@@ -1085,7 +1085,9 @@ class RenderPipeline:
             _glow = material_subtype == "glow"        # alpha-blended rim-glow
             _scatter = material_subtype == "scatter"  # additive single-scattering atmosphere
             _cloud = material_subtype == "cloud"      # alpha-blended procedural cloud shell
-            _blended = _glow or _scatter or _cloud
+            # A material's pipeline_state: (translucent, mirrored).
+            _translucent, _mirrored = getattr(material, "pipeline_state", None) or (False, False)
+            _blended = _glow or _scatter or _cloud or _translucent
             vertex_attributes = [
                 {
                     "format": wgpu.VertexFormat.float32x3,
@@ -1138,7 +1140,9 @@ class RenderPipeline:
                 primitive={
                     "topology": wgpu.PrimitiveTopology.triangle_list,
                     "front_face": wgpu.FrontFace.ccw,
-                    "cull_mode": wgpu.CullMode.none if _blended else wgpu.CullMode.back,
+                    # A reflection turns its triangles' winding around.
+                    "cull_mode": (wgpu.CullMode.none if _blended
+                                  else wgpu.CullMode.front if _mirrored else wgpu.CullMode.back),
                 },
                 depth_stencil={
                     "format": wgpu.TextureFormat.depth24plus,
@@ -1150,7 +1154,7 @@ class RenderPipeline:
                     "entry_point": "fs_main",
                     "targets": [
                         _scatter_target(texture_format) if _scatter
-                        else _glow_target(texture_format) if (_glow or _cloud)
+                        else _glow_target(texture_format) if (_glow or _cloud or _translucent)
                         else {"format": texture_format}
                     ],
                 },
@@ -1299,10 +1303,15 @@ class RenderPipeline:
         if mesh_data is None:
             return {}
         out = {}
+        mat_data = store.get_component_data("Material", alive) if "Material" in store._components else None
         for i in range(len(alive)):
             geom_id = int(mesh_data[i, 0])
             if geom_id == 0:
                 continue
+            if mat_data is not None:
+                mat = engine._material_registry.get(int(mat_data[i, 0]))
+                if not getattr(mat, "casts_shadow", True):
+                    continue
             out.setdefault(geom_id, []).append(i)
         if with_entities:
             return {g: (models[v].astype(np.float32), alive[v]) for g, v in out.items()}
@@ -1582,6 +1591,12 @@ class RenderPipeline:
         # Draw mesh batches (if any)
         # ---------------------------------------------------------------
         if mesh_batches:
+            # Translucent meshes draw last, over everything opaque.
+            def _translucent(key):
+                state = getattr(engine._material_registry.get(key[3]), "pipeline_state", None)
+                return bool(state and state[0])
+
+            mesh_batches = dict(sorted(mesh_batches.items(), key=lambda kv: _translucent(kv[0])))
             _mesh_pass.render_mesh_batches(
                 self, engine, render_pass, mesh_batches, model_matrices, material_data, alive_indices
             )

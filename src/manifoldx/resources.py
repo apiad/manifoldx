@@ -687,9 +687,9 @@ struct PBRMaterialUniforms {
     sway:      f32,
     sway_reach: f32,
     ripple:    f32,
-    _pad_r0:   f32,
-    _pad_r1:   f32,
-    _pad_r2:   f32,
+    mirror:    f32,     // 1.0: drawn reflected in the plane y = mirror_y
+    mirror_y:  f32,
+    opacity:   f32,
 };
 
 struct PointLightData {
@@ -869,13 +869,21 @@ fn vs_main(in: VertexInput) -> VertexOutput {
         out.world_pos.x += h * (sin(a) + 0.35 * sin(b));
         out.world_pos.z += h * 0.5 * (cos(a) + 0.35 * sin(b + 1.3));
     }
-    out.position  = globals.vp * vec4<f32>(out.world_pos, 1.0);
+    // A mirrored mesh is lit where it stands, but drawn reflected in the plane y = mirror_y.
+    var seen = out.world_pos;
+    if (material.mirror > 0.0) {
+        seen.y = 2.0 * material.mirror_y - seen.y;
+    }
+    out.position  = globals.vp * vec4<f32>(seen, 1.0);
     out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    if (material.mirror > 0.0 && in.world_pos.y < material.mirror_y) {
+        discard;   // below the mirror: its reflection would stand above it
+    }
     let N = normalize(in.world_normal);
     let V = normalize(globals.camera_pos - in.world_pos);
 
@@ -947,7 +955,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                        / (globals.fog_end - globals.fog_start), 0.0, 1.0);
         color = mix(color, globals.fog_color, fd);
     }
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(color, material.opacity);
 }
 """
 
@@ -1078,6 +1086,8 @@ class StandardMaterial(Material):
         sway=0.0,
         sway_reach=4.0,
         ripple=0.0,
+        mirror=None,
+        opacity=1.0,
     ):
         from manifoldx.textures import TextureHandle
 
@@ -1099,6 +1109,12 @@ class StandardMaterial(Material):
         self.sway_reach = float(sway_reach)
         # Water: how strongly bands of light drift across the surface; 0 leaves it still.
         self.ripple = float(ripple)
+        # A cheap reflection: mirror=y draws the mesh reflected in the plane y (whatever lies
+        # below the plane is dropped), and opacity < 1 blends a surface over what is behind
+        # it, after every opaque mesh. Mirrored scenery under translucent water reflects.
+        # Neither kind casts a shadow.
+        self.mirror = None if mirror is None else float(mirror)
+        self.opacity = float(opacity)
 
     @property
     def pipeline_subtype(self):
@@ -1107,6 +1123,15 @@ class StandardMaterial(Material):
         if self.vertex_colors:
             return "vcolor"
         return None
+
+    @property
+    def pipeline_state(self):
+        """What the pipeline does besides the shader: (translucent, mirrored)."""
+        return (self.opacity < 1.0, self.mirror is not None)
+
+    @property
+    def casts_shadow(self):
+        return self.mirror is None and self.opacity >= 1.0
 
     def get_texture_bindings(self):
         if self.albedo_map is None:
@@ -1140,6 +1165,9 @@ class StandardMaterial(Material):
         data[:, 6] = self.sway
         data[:, 7] = self.sway_reach
         data[:, 8] = self.ripple
+        data[:, 9] = 0.0 if self.mirror is None else 1.0
+        data[:, 10] = 0.0 if self.mirror is None else self.mirror
+        data[:, 11] = self.opacity
 
         return data
 
