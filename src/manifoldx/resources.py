@@ -646,9 +646,9 @@ struct Globals {
     view:            mat4x4<f32>,   // offset  64
     proj:            mat4x4<f32>,   // offset 128
     camera_pos:      vec3<f32>,     // offset 192
-    _pad0:           f32,           // offset 204
+    time:            f32,           // offset 204  (seconds, wraps every 64)
     viewport_size:   vec2<f32>,     // offset 208
-    _pad1:           vec2<f32>,     // offset 216
+    origin_mod:      vec2<f32>,     // offset 216  (the floating origin's x, z mod 256)
     ibl_intensity:   f32,           // offset 224
     ibl_enabled:     u32,           // offset 228
     _pad_ibl:        vec2<f32>,     // offset 232
@@ -684,7 +684,7 @@ struct PBRMaterialUniforms {
     roughness: f32,
     metallic:  f32,
     ao:        f32,
-    _pad0:     f32,
+    sway:      f32,
     _pad1:     f32,
 };
 
@@ -845,6 +845,20 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     let model = transforms.models[in.instance];
     out.world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    if (material.sway > 0.0) {
+        // Wind: a vertex moves in proportion to its height above the model's origin,
+        // with a phase from where it stands in the world, so neighbours sway apart.
+        // Every wave repeats over 64 s and 256 world units, which time and origin_mod
+        // wrap by, so neither the clock nor a moved origin ever makes it jump.
+        let TAU = 6.28318530718;
+        let p = out.world_pos.xz + globals.origin_mod;
+        let t = globals.time;
+        let a = TAU * (27.0 * t / 64.0 - (23.0 * p.x + 13.0 * p.y) / 256.0);
+        let b = TAU * (61.0 * t / 64.0 - (-31.0 * p.x + 41.0 * p.y) / 256.0);
+        let h = clamp(in.position.y, 0.0, 4.0) * material.sway;
+        out.world_pos.x += h * (sin(a) + 0.35 * sin(b));
+        out.world_pos.z += h * 0.5 * (cos(a) + 0.35 * sin(b + 1.3));
+    }
     out.position  = globals.vp * vec4<f32>(out.world_pos, 1.0);
     out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
     return out;
@@ -1030,7 +1044,14 @@ class StandardMaterial(Material):
     binding_slot = 1
 
     def __init__(
-        self, color, roughness=0.5, metallic=0.0, ao=1.0, albedo_map=None, vertex_colors=False
+        self,
+        color,
+        roughness=0.5,
+        metallic=0.0,
+        ao=1.0,
+        albedo_map=None,
+        vertex_colors=False,
+        sway=0.0,
     ):
         from manifoldx.textures import TextureHandle
 
@@ -1046,6 +1067,9 @@ class StandardMaterial(Material):
         self.ao = ao
         self.albedo_map = albedo_map
         self.vertex_colors = vertex_colors
+        # Wind: how far a vertex sways per unit of height above its model's origin.
+        # Only the drawn mesh sways; its shadow stays put.
+        self.sway = float(sway)
 
     @property
     def pipeline_subtype(self):
@@ -1084,6 +1108,7 @@ class StandardMaterial(Material):
         data[:, 3] = self.roughness
         data[:, 4] = self.metallic
         data[:, 5] = self.ao
+        data[:, 6] = self.sway
 
         return data
 

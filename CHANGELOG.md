@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`StandardMaterial(sway=...)`: wind in the vertex shader.** A vertex moves in proportion
+  to its height above its model's origin, with a phase from its world position, so a field
+  of grass or a wood sways as waves cross it and no two trees move alike. It costs a few
+  vertex instructions and no CPU work. The clock and the floating origin reach the shader
+  in the globals' spare slots (time mod 64 s, origin mod 256 units, the periods every wave
+  repeats over), so neither a long session nor `set_origin` makes the sway jump. Shadows
+  stay still.
 - **`manifoldx.streaming`: a cell streamer.** `Streamer(engine, cell, build)` keeps the
   cells around a focus point built in a worker (a thread, or a process with
   `workers="process"`) and draws the ring under it, uploading at most

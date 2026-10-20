@@ -1022,7 +1022,7 @@ class RenderPipeline:
                     },
                     {
                         "binding": 2,
-                        "visibility": wgpu.ShaderStage.FRAGMENT,
+                        "visibility": wgpu.ShaderStage.VERTEX | wgpu.ShaderStage.FRAGMENT,
                         "buffer": {"type": wgpu.BufferBindingType.uniform},
                     },
                     {
@@ -1467,10 +1467,17 @@ class RenderPipeline:
         globals_data[192:204] = np.frombuffer(
             camera_pos.astype(np.float32).tobytes(), dtype=np.uint8
         )
-        # bytes 204-207: padding
+        # bytes 204-207: the clock, wrapped to the 64 s every swaying wave repeats over
+        globals_data[204:208] = np.frombuffer(
+            np.float32(getattr(engine, "elapsed", 0.0) % 64.0).tobytes(), dtype=np.uint8
+        )
         viewport_size = np.array([float(engine.w), float(engine.h)], dtype=np.float32)
         globals_data[208:216] = np.frombuffer(viewport_size.tobytes(), dtype=np.uint8)
-        # bytes 216-223: padding
+        # bytes 216-223: the floating origin's x, z mod 256, so world-placed waves survive a rebase
+        ox, oz = getattr(engine, "_origin", (0.0, 0.0))
+        globals_data[216:224] = np.frombuffer(
+            np.array([ox % 256.0, oz % 256.0], dtype=np.float32).tobytes(), dtype=np.uint8
+        )
         ibl_env = engine._ready_environment()
         if ibl_env is not None:
             globals_data[224:228] = np.frombuffer(
