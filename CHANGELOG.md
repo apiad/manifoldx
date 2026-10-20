@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vertex instructions and no CPU work. The clock and the floating origin reach the shader
   in the globals' spare slots (time mod 64 s, origin mod 256 units, the periods every wave
   repeats over), so neither a long session nor `set_origin` makes the sway jump. Shadows
-  stay still.
+  stay still. `sway_reach` levels the sway off past a height (`reach * tanh(h / reach)`),
+  so short grass can bend as much as a tall tree's crown.
 - **`manifoldx.streaming`: a cell streamer.** `Streamer(engine, cell, build)` keeps the
   cells around a focus point built in a worker (a thread, or a process with
   `workers="process"`) and draws the ring under it, uploading at most
