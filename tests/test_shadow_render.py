@@ -43,12 +43,12 @@ def test_set_sun_stores_light():
     assert eng._sun is sun
 
 
-def test_globals_buffer_is_432_bytes():
+def test_globals_buffer_is_560_bytes():
     eng = _make_offscreen_engine()
     eng.set_sun(DirectionalLight(color="#ffffff", intensity=3.0, direction=(0, -1, 0)))
     eng.spawn(Mesh(sphere(1.0, 24)), Material(StandardMaterial(color="#ffffff", roughness=0.5)))
     _render_array(eng)
-    assert eng._render_pipeline._globals_buffer.size == 432
+    assert eng._render_pipeline._globals_buffer.size == 560
 
 
 def test_sun_lights_sphere_with_gradient():

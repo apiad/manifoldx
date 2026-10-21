@@ -341,6 +341,11 @@ class Engine:
         self._pending_tasks = []
         self.fog_enabled = False
         self.fog_start = 0.0
+        # Points that swaying meshes part around, such as grass around whatever walks
+        # through it: up to renderer.MAX_BENDERS (x, z, radius, strength) in world coordinates.
+        # Inside the radius a vertex below 1 unit of its model's height leans away from
+        # the point by strength times its sway height, fading out toward the edge.
+        self.benders = []
         self.fog_end = 1.0
         self.fog_color = (0.1, 0.1, 0.2)
 

@@ -673,6 +673,7 @@ struct Globals {
     fog_end:         f32,           // offset 412
     fog_color:       vec3<f32>,     // offset 416
     fog_enabled:     u32,           // offset 428
+    benders:         array<vec4<f32>, 8>,  // offset 432  (x, z, radius, strength) in the render frame
 };
 
 struct Transforms {
@@ -867,8 +868,25 @@ fn vs_main(in: VertexInput) -> VertexOutput {
         let b = TAU * (61.0 * t / 64.0 - (-31.0 * p.x + 41.0 * p.y) / 256.0);
         let reach = material.sway_reach;
         let h = reach * tanh(max(in.position.y, 0.0) / reach) * material.sway;
+        let base = out.world_pos.xz;
         out.world_pos.x += h * (sin(a) + 0.35 * sin(b));
         out.world_pos.z += h * 0.5 * (cos(a) + 0.35 * sin(b + 1.3));
+        // Benders part what is low (grass, flowers; not a tree's crown) away from each point,
+        // most at its centre and nothing at its radius, bowing it down a little as it leans.
+        let low = reach * tanh(max(in.position.y, 0.0) / reach) * (1.0 - smoothstep(0.8, 1.2, in.position.y));
+        for (var i = 0u; i < 8u; i = i + 1u) {
+            let bender = globals.benders[i];
+            let off = base - bender.xy;
+            let d = length(off);
+            if (bender.z <= 0.0 || d >= bender.z || d < 1e-4) {
+                continue;
+            }
+            let f = 1.0 - d / bender.z;
+            let lean = bender.w * f * f * low;
+            out.world_pos.x += off.x / d * lean;
+            out.world_pos.z += off.y / d * lean;
+            out.world_pos.y -= 0.4 * lean;
+        }
     }
     // A mirrored mesh is lit where it stands, but drawn reflected in the plane y = mirror_y.
     var seen = out.world_pos;

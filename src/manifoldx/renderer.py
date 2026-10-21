@@ -50,6 +50,8 @@ def _scatter_target(fmt):
     }
 
 
+MAX_BENDERS = 8  # the points swaying meshes part around (Engine.benders)
+
 # Depth-only shadow-pass shader: transforms mesh geometry by the sun's
 # light_view_proj into the shadow map. No fragment stage (depth writes only).
 # Binds the shared Globals uniform (for light_view_proj) + a transforms storage.
@@ -402,7 +404,7 @@ class RenderPipeline:
         #   + viewport_size(8) + pad(8) + ibl_intensity(4) + ibl_enabled(4) + pad(8) = 240 bytes
         #   + shadow block: light_view_proj(64) + sun(32) + shadow params(16) = 352 bytes total
         self._globals_buffer = device.create_buffer(
-            size=432,  # ... + fog block (start/end/color/enabled) = 432
+            size=560,  # ... + fog block (start/end/color/enabled) = 432 + benders (8 vec4) = 560
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
@@ -1528,7 +1530,7 @@ class RenderPipeline:
         # then the shadow block: light_view_proj(64) + sun_direction(12)+pad(4)
         # + sun_color(12)+sun_intensity(4) + shadow_enabled(4)+bias(4)+map_size(4)+pad(4) = 112 bytes,
         # total 352 bytes.
-        globals_data = np.zeros(432, dtype=np.uint8)
+        globals_data = np.zeros(560, dtype=np.uint8)
         globals_data[0:64] = np.frombuffer(vp.astype(np.float32).tobytes(), dtype=np.uint8)
         globals_data[64:128] = np.frombuffer(view_mat.tobytes(), dtype=np.uint8)
         proj_mat = camera.get_projection_matrix(aspect, near=camera.near, far=camera.far).T.astype(
@@ -1630,6 +1632,12 @@ class RenderPipeline:
                 np.asarray(engine.fog_color, dtype=np.float32).tobytes(), dtype=np.uint8
             )
             globals_data[428:432] = np.frombuffer(np.uint32(1).tobytes(), dtype=np.uint8)
+
+        # benders @432 — 8 vec4 (x, z, radius, strength) in the render frame; radius 0 is unused
+        benders = np.zeros((MAX_BENDERS, 4), dtype=np.float32)
+        for bi, (bx, bz, radius, strength) in enumerate(list(getattr(engine, "benders", ()))[:MAX_BENDERS]):
+            benders[bi] = (bx - ox, bz - oz, radius, strength)
+        globals_data[432:560] = np.frombuffer(benders.tobytes(), dtype=np.uint8)
 
         self._device.queue.write_buffer(self._globals_buffer, 0, globals_data.tobytes())
 
