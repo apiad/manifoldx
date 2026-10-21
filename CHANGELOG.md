@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Frustum culling.** A mesh whose bounding sphere lies out of the camera's view is not
+  drawn, and, with a fixed shadow box (`auto_fit=False`), one outside it casts nothing. A
+  skinned mesh's sphere is padded for its moving joints, and a mirrored one is tested where
+  its reflection shows. What a game parks out of sight costs nothing, and a geometry is
+  first uploaded when first in view. `RenderPipeline.drawn` counts the instances drawn.
 - **`StandardMaterial(mirror=..., opacity=...)`: a cheap reflection.** `mirror=y` draws a
   mesh reflected in the plane y, lit where it really stands, with culling flipped and
   whatever lies below the plane dropped. `opacity < 1` blends a surface over what is

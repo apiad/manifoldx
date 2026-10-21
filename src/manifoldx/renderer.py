@@ -376,6 +376,8 @@ class RenderPipeline:
         # type, which silently broke per-instance material data. The mesh
         # pass now uses this dict keyed by mat_id, one buffer per material.
         self._material_buffers_by_mat_id = {}  # mat_id -> buffer
+        self._geom_bounds = {}  # geom_id -> (centre (3,), radius): a sphere around its rest vertices
+        self.drawn = 0  # mesh instances the last frame drew, after frustum culling
         self._globals_buffer = None  # VP matrix + view matrix + camera_pos
         self._batch_buffers = None  # _BatchBuffers instance for per-batch storage
         self._sprite_batch_buffers = None  # _BatchBuffers instance for sprite per-batch storage
@@ -1280,7 +1282,48 @@ class RenderPipeline:
             far=cfg["far"],
         )
 
-    def _collect_mesh_instances(self, engine, with_entities=False):
+    def _bounds(self, engine, geom_id):
+        """A sphere around a geometry's vertices, padded for a skinned one whose joints move them."""
+        b = self._geom_bounds.get(geom_id)
+        if b is None:
+            geo = engine._geometry_registry.get(geom_id) or {}
+            pos = geo.get("positions", geo.get("vertices")) if isinstance(geo, dict) else None
+            if pos is None or not len(pos):
+                b = (np.zeros(3), np.inf)
+            else:
+                pos = np.asarray(pos, dtype=np.float64).reshape(-1, 3)
+                lo, hi = pos.min(axis=0), pos.max(axis=0)
+                c = (lo + hi) / 2
+                r = float(np.linalg.norm(pos - c, axis=1).max())
+                b = (c, r * 1.5 + 0.5 if "joints" in geo else r)
+            self._geom_bounds[geom_id] = b
+        return b
+
+    def _in_frustum(self, engine, geom_ids, models, mat_ids, clip):
+        """Bool per instance: its bounding sphere touches the frustum of `clip`, the matrix taking
+        world points to clip space (column vectors). A mirrored instance is tested where its
+        reflection shows. `models` are (N, 16) row-major model matrices."""
+        n = len(geom_ids)
+        if n == 0:
+            return np.zeros(0, dtype=bool)
+        c = np.empty((n, 3))
+        r = np.empty(n)
+        for i, g in enumerate(geom_ids):
+            c[i], r[i] = self._bounds(engine, int(g))
+        m = np.asarray(models, dtype=np.float64).reshape(n, 4, 4)
+        centre = np.einsum("nij,nj->ni", m[:, :3, :3], c) + m[:, :3, 3]
+        radius = r * np.linalg.norm(m[:, :3, :3], axis=1).max(axis=1)
+        for i, mid in enumerate(mat_ids):
+            mirror = getattr(engine._material_registry.get(int(mid)), "mirror", None)
+            if mirror is not None:
+                centre[i, 1] = 2.0 * mirror - centre[i, 1]
+        k = np.asarray(clip, dtype=np.float64)
+        planes = np.stack([k[3] + k[0], k[3] - k[0], k[3] + k[1], k[3] - k[1], k[2], k[3] - k[2]])
+        planes /= np.linalg.norm(planes[:, :3], axis=1, keepdims=True)
+        dist = centre @ planes[:, :3].T + planes[:, 3]
+        return (dist >= -radius[:, None]).all(axis=1) | ~np.isfinite(radius)
+
+    def _collect_mesh_instances(self, engine, with_entities=False, cull=False):
         """geom_id -> (N,16) row-major model matrices, mesh entities only.
 
         With with_entities, geom_id -> (matrices, entity indices), the entity
@@ -1313,6 +1356,18 @@ class RenderPipeline:
                 if not getattr(mat, "casts_shadow", True):
                     continue
             out.setdefault(geom_id, []).append(i)
+        cfg = getattr(engine, "_shadow_config", None)
+        if cull and out and cfg is not None and not cfg.get("auto_fit", True):
+            # Only what the shadow caster's box holds casts; its box is fixed, not fitted to these.
+            spot = getattr(engine, "_spot", None)
+            clip = self._caster_light_view_proj(engine, 2 if spot is not None else 1)
+            for g in list(out):
+                v = out[g]
+                mats = mat_data[v, 0] if mat_data is not None else np.zeros(len(v))
+                keep = self._in_frustum(engine, [g] * len(v), models[v], mats, clip)
+                out[g] = [i for i, k in zip(v, keep, strict=True) if k]
+                if not out[g]:
+                    del out[g]
         if with_entities:
             return {g: (models[v].astype(np.float32), alive[v]) for g, v in out.items()}
         return {g: models[v].astype(np.float32) for g, v in out.items()}
@@ -1388,6 +1443,13 @@ class RenderPipeline:
         if has_volume:
             volume_data = self._store.get_component_data("Volume", alive_indices)
 
+        # Frustum culling: a mesh whose bounding sphere is out of view is not drawn.
+        visible = None
+        if mesh_data is not None:
+            visible = self._in_frustum(engine, mesh_data[:, 0], model_matrices,
+                                       material_data[:, 0] if material_data is not None
+                                       else np.zeros(len(alive_indices)), vp.T)
+
         # Group by (geom_id, material_type) for mesh batches
         # Group by mat_id for sprite/label/axis batches
         mesh_batches = {}  # (geom_id, mat_type) -> list of local indices
@@ -1442,7 +1504,7 @@ class RenderPipeline:
                     sprite_batches[mat_id] = []
                 sprite_batches[mat_id].append(i)
             else:
-                if not has_mesh or geom_id == 0:
+                if not has_mesh or geom_id == 0 or not visible[i]:
                     continue
 
                 mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
@@ -1590,6 +1652,7 @@ class RenderPipeline:
         # ---------------------------------------------------------------
         # Draw mesh batches (if any)
         # ---------------------------------------------------------------
+        self.drawn = sum(len(v) for v in mesh_batches.values())
         if mesh_batches:
             # Opaque meshes first, then mirrored ones, which the depth test then rejects cheaply
             # wherever the ground hides them, then translucent ones over everything.

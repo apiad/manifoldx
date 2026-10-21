@@ -31,6 +31,7 @@ def test_ten_thousand_meshes_created_and_destroyed_leave_no_buffers():
     engine = _offscreen_engine()
     reg = engine._geometry_registry
     mat = StandardMaterial("#ffffff", vertex_colors=True)
+    engine.camera.set_pose(position=(1.0, 8.0, 1.5), target=(1.0, 0.0, 1.0))   # every quad in view: none culled
     engine._draw_frame()
     start_buffers, start_geos = len(reg._gpu_buffers), len(reg._geometries)
     made = 0

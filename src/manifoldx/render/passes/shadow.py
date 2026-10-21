@@ -117,7 +117,7 @@ def render_shadow_map(rp, engine, command_encoder):
     _ensure_shadow_map(rp, cfg["resolution"])
     _ensure_vs_layout(rp)
 
-    instances = rp._collect_mesh_instances(engine, with_entities=True)
+    instances = rp._collect_mesh_instances(engine, with_entities=True, cull=True)
     if not instances:
         return
 
