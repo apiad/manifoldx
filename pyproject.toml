@@ -32,7 +32,8 @@ offline = [
     "imageio-ffmpeg>=0.5",
 ]
 viz = ["pillow>=10.0"]
-all = ["manifold-gfx[desktop,offline,viz]"]
+svg = ["thorvg-python>=1.1.3"]
+all = ["manifold-gfx[desktop,offline,viz,svg]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/manifoldx"]
