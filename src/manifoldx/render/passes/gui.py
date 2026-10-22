@@ -1,9 +1,12 @@
 """GUI render pass — runs last in the pipeline.
 
-Issues at most two batched draws per frame:
+Draws in the widget tree's paint order (a later panel covers an earlier
+one's images and text); each run of same-kind ops is one draw:
 
 1. Rects — one instanced draw via `RectMaterial`.
-2. Glyphs — one instanced draw via the local `_GLYPH_WGSL` shader, which
+2. Images — one draw per Image, each from its own texture: the SVG rasterized
+   at the pixel size it lands at on the render target (see `_prepare_images`).
+3. Glyphs — one instanced draw via the local `_GLYPH_WGSL` shader, which
    reads from LabelTextureAtlas (a texture_2d_array) and a per-instance
    storage buffer encoding screen-space billboard coords + atlas slice.
 
@@ -15,6 +18,7 @@ Pass attributes (set at pipeline-creation time in `_ensure_gui_pipeline`):
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 import numpy as np
@@ -119,6 +123,76 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 """
 
 
+# ---------------------------------------------------------------------------
+# Image shader — one screen-space quad per ImageOp, sampled from that image's
+# own texture (group 1). Instance layout (2 x vec4<f32> = 32 bytes):
+#   row0 = (xy_top_left_px.x, xy_top_left_px.y, size_px.w, size_px.h)
+#   row1 = tint rgba (alpha already times opacity)
+# The texture holds sRGB colour with straight alpha; the output is
+# pre-multiplied, blended like the glyphs, and the tint is applied like a
+# glyph's fg.
+# ---------------------------------------------------------------------------
+_IMAGE_WGSL = """
+struct Globals {
+    vp:           mat4x4<f32>,
+    view:         mat4x4<f32>,
+    proj:         mat4x4<f32>,
+    camera_pos:   vec3<f32>,
+    _pad0:        f32,
+    viewport_size: vec2<f32>,
+    _pad1:        vec2<f32>,
+};
+@group(0) @binding(0) var<uniform> globals: Globals;
+
+struct ImageInstance {
+    row0: vec4<f32>,
+    row1: vec4<f32>,
+};
+@group(0) @binding(1) var<storage, read> images: array<ImageInstance>;
+@group(1) @binding(0) var image_tex: texture_2d<f32>;
+@group(1) @binding(1) var image_sampler: sampler;
+
+struct VsIn {
+    @location(0) position: vec3<f32>,
+    @builtin(instance_index) instance_id: u32,
+};
+
+struct VsOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv:   vec2<f32>,
+    @location(1) tint: vec4<f32>,
+};
+
+@vertex
+fn vs_main(in: VsIn) -> VsOut {
+    let inst      = images[in.instance_id];
+    let xy        = inst.row0.xy;
+    let sz        = inst.row0.zw;
+    let corner_px = xy + sz * 0.5 + in.position.xy * sz;
+    var out: VsOut;
+    out.clip = vec4<f32>(
+        (corner_px.x / globals.viewport_size.x) * 2.0 - 1.0,
+        1.0 - (corner_px.y / globals.viewport_size.y) * 2.0,
+        0.0, 1.0,
+    );
+    out.uv   = in.position.xy + vec2<f32>(0.5, 0.5);
+    out.tint = inst.row1;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let texel = textureSample(image_tex, image_sampler, in.uv);
+    let a = texel.a * in.tint.a;
+    return vec4<f32>(texel.rgb * in.tint.rgb * a, a);
+}
+"""
+
+# Bytes of image textures the GUI pass keeps on the GPU before it destroys the
+# least recently drawn.
+IMAGE_TEXTURE_BUDGET = 64 * 1024 * 1024
+
+
 # Unit-quad geometry shared by all rect instances (positions in [-0.5, 0.5]).
 _UNIT_QUAD_VERTS = np.array(
     [
@@ -159,21 +233,39 @@ def render_gui_pass(rp, engine, render_pass) -> None:
     # the GUI shader, which only reads viewport_size from it.
     _ensure_globals_viewport(rp, engine)
 
-    # --- Rect draw ---
+    # Upload every kind's instances once, then draw in the tree's paint order:
+    # each run of same-kind ops is one draw over its slice of the instances.
     rect_data = RectMaterial.pack_instances(painter.rect_ops)
     if rect_data.size > 0:
         _upload_rect_instances(rp, rect_data)
-        _draw_rects(rp, engine, render_pass, rect_data.shape[0])
-
-    # --- Glyph draw ---
+    if painter.image_ops:
+        _ensure_image_pipeline(rp, engine)
+        image_groups = _prepare_images(rp, engine, painter.image_ops)
     if painter.text_ops:
         atlas = engine.get_label_atlas()
         glyph_data = _pack_glyph_instances(painter.text_ops, atlas)
-        if glyph_data.size > 0:
-            atlas.upload_dirty(rp._device, rp._device.queue)
-            _ensure_glyph_pipeline(rp, engine)
-            _upload_glyph_instances(rp, glyph_data)
-            _draw_glyphs(rp, engine, render_pass, glyph_data.shape[0])
+        atlas.upload_dirty(rp._device, rp._device.queue)
+        _ensure_glyph_pipeline(rp, engine)
+        _upload_glyph_instances(rp, glyph_data)
+
+    for kind, first, count in paint_runs(painter.order):
+        if kind == "rect":
+            _draw_rects(rp, engine, render_pass, first, count)
+        elif kind == "image":
+            _draw_images(rp, render_pass, image_groups, first, count)
+        else:
+            _draw_glyphs(rp, engine, render_pass, first, count)
+
+
+def paint_runs(order: list[tuple[str, int]]) -> list[tuple[str, int, int]]:
+    """Group the paint order into (kind, first index, count) runs of one kind."""
+    runs: list[list] = []
+    for kind, index in order:
+        if runs and runs[-1][0] == kind:
+            runs[-1][2] += 1
+        else:
+            runs.append([kind, index, 1])
+    return [tuple(r) for r in runs]
 
 
 def layout_gui(engine) -> Painter:
@@ -223,6 +315,24 @@ def _scale_ops(painter: Painter, s: float) -> None:
         else:
             scaled_text.append(replace(op, box=_scale_box(op.box, s)))
     painter.text_ops[:] = scaled_text
+    painter.image_ops[:] = [replace(op, box=_scale_box(op.box, s)) for op in painter.image_ops]
+
+
+def target_density(engine) -> float:
+    """Render-target pixels per window pixel: the display's pixel ratio, or a
+    still's supersampling factor. 1 before the first frame."""
+    th = getattr(engine, "_depth_texture_size", (0, 0))[1]
+    return th / engine.h if th and engine.h else 1.0
+
+
+def image_pixel_box(box: LayoutBox, density: float) -> tuple[LayoutBox, int, int]:
+    """Where an image lands and the pixel size to rasterize it at: the box
+    snapped to whole render-target pixels, so texels map 1:1 to the screen."""
+    pw = max(1, round(box.w * density))
+    ph = max(1, round(box.h * density))
+    x = round(box.x * density) / density
+    y = round(box.y * density) / density
+    return LayoutBox(x, y, pw / density, ph / density), pw, ph
 
 
 def _ensure_globals_viewport(rp, engine) -> None:
@@ -365,7 +475,7 @@ def _upload_rect_instances(rp, data: np.ndarray) -> None:
     rp._device.queue.write_buffer(rp._gui_instance_buf, 0, data.tobytes())
 
 
-def _draw_rects(rp, engine, render_pass, instance_count: int) -> None:
+def _draw_rects(rp, engine, render_pass, first: int, instance_count: int) -> None:
     bind_group = rp._device.create_bind_group(
         layout=rp._gui_bgl,
         entries=[
@@ -391,7 +501,7 @@ def _draw_rects(rp, engine, render_pass, instance_count: int) -> None:
     render_pass.set_bind_group(0, bind_group, [], 0, 0)
     render_pass.set_vertex_buffer(0, rp._gui_quad_vbuf)
     render_pass.set_index_buffer(rp._gui_quad_ibuf, wgpu.IndexFormat.uint32)
-    render_pass.draw_indexed(6, instance_count, 0, 0, 0)
+    render_pass.draw_indexed(6, instance_count, 0, 0, first)
 
 
 # ---------------------------------------------------------------------------
@@ -538,7 +648,7 @@ def _upload_glyph_instances(rp, data: np.ndarray) -> None:
     rp._device.queue.write_buffer(rp._gui_glyph_instance_buf, 0, data.tobytes())
 
 
-def _draw_glyphs(rp, engine, render_pass, instance_count: int) -> None:
+def _draw_glyphs(rp, engine, render_pass, first: int, instance_count: int) -> None:
     atlas = engine.get_label_atlas()
     # Must explicitly request a 2D-array view; create_view() defaults to D2.
     atlas_view = atlas.gpu_texture.create_view(
@@ -577,4 +687,214 @@ def _draw_glyphs(rp, engine, render_pass, instance_count: int) -> None:
     render_pass.set_bind_group(0, bind_group, [], 0, 0)
     render_pass.set_vertex_buffer(0, rp._gui_quad_vbuf)
     render_pass.set_index_buffer(rp._gui_quad_ibuf, wgpu.IndexFormat.uint32)
-    render_pass.draw_indexed(6, instance_count, 0, 0, 0)
+    render_pass.draw_indexed(6, instance_count, 0, 0, first)
+
+
+# ---------------------------------------------------------------------------
+# Image pipeline helpers
+# ---------------------------------------------------------------------------
+
+def _ensure_image_pipeline(rp, engine) -> None:
+    if getattr(rp, "_gui_image_pipeline", None) is not None:
+        return
+    from manifoldx.svg import LruCache
+
+    device = rp._device
+    shader = device.create_shader_module(code=_IMAGE_WGSL)
+    bgl0 = device.create_bind_group_layout(
+        entries=[
+            {
+                "binding": 0,
+                "visibility": wgpu.ShaderStage.VERTEX,
+                "buffer": {"type": wgpu.BufferBindingType.uniform},
+            },
+            {
+                "binding": 1,
+                "visibility": wgpu.ShaderStage.VERTEX,
+                "buffer": {"type": wgpu.BufferBindingType.read_only_storage},
+            },
+        ]
+    )
+    bgl1 = device.create_bind_group_layout(
+        entries=[
+            {
+                "binding": 0,
+                "visibility": wgpu.ShaderStage.FRAGMENT,
+                "texture": {
+                    "sample_type": wgpu.TextureSampleType.float,
+                    "view_dimension": wgpu.TextureViewDimension.d2,
+                    "multisampled": False,
+                },
+            },
+            {
+                "binding": 1,
+                "visibility": wgpu.ShaderStage.FRAGMENT,
+                "sampler": {"type": wgpu.SamplerBindingType.filtering},
+            },
+        ]
+    )
+    blend = {
+        "src_factor": wgpu.BlendFactor.one,
+        "dst_factor": wgpu.BlendFactor.one_minus_src_alpha,
+        "operation": wgpu.BlendOperation.add,
+    }
+    rp._gui_image_pipeline = device.create_render_pipeline(
+        layout=device.create_pipeline_layout(bind_group_layouts=[bgl0, bgl1]),
+        vertex={
+            "module": shader,
+            "entry_point": "vs_main",
+            "buffers": [
+                {
+                    "array_stride": 12,
+                    "step_mode": wgpu.VertexStepMode.vertex,
+                    "attributes": [
+                        {"shader_location": 0, "offset": 0, "format": wgpu.VertexFormat.float32x3},
+                    ],
+                },
+            ],
+        },
+        fragment={
+            "module": shader,
+            "entry_point": "fs_main",
+            "targets": [
+                {
+                    "format": engine._texture_format,
+                    "blend": {"color": blend, "alpha": blend},
+                    "write_mask": wgpu.ColorWrite.ALL,
+                }
+            ],
+        },
+        primitive={
+            "topology": wgpu.PrimitiveTopology.triangle_list,
+            "cull_mode": wgpu.CullMode.none,
+        },
+        depth_stencil={
+            "format": wgpu.TextureFormat.depth24plus,
+            "depth_write_enabled": False,
+            "depth_compare": wgpu.CompareFunction.always,
+        },
+        multisample={"count": 1, "mask": 0xFFFFFFFF, "alpha_to_coverage_enabled": False},
+    )
+    rp._gui_image_bgl0 = bgl0
+    rp._gui_image_bgl1 = bgl1
+    rp._gui_image_sampler = device.create_sampler(
+        address_mode_u=wgpu.AddressMode.clamp_to_edge,
+        address_mode_v=wgpu.AddressMode.clamp_to_edge,
+        mag_filter=wgpu.FilterMode.linear,
+        min_filter=wgpu.FilterMode.linear,
+    )
+    rp._gui_image_instance_buf = None
+    rp._gui_image_instance_capacity = 0
+    rp._gui_image_last = {}  # id(Image) -> its pixel size the frame before
+    # (digest, width px, height px) -> (texture, bind group). An evicted
+    # texture may still be bound in this frame's pass: destroy it next frame.
+    rp._gui_image_evicted = []
+    rp._gui_image_textures = LruCache(
+        IMAGE_TEXTURE_BUDGET, on_evict=lambda entry: rp._gui_image_evicted.append(entry[0])
+    )
+
+
+def _image_bind_group(rp, op, pw: int, ph: int):
+    """The bind group of `op`'s texture at pw x ph, rasterized and uploaded on
+    first use."""
+    from manifoldx.svg import rasterize_digest
+
+    key = (op.digest, pw, ph)
+    entry = rp._gui_image_textures.get(key)
+    if entry is None:
+        rgba = rasterize_digest(op.data, op.digest, pw, ph)
+        device = rp._device
+        texture = device.create_texture(
+            size=(pw, ph, 1),
+            format=wgpu.TextureFormat.rgba8unorm_srgb,
+            usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
+        )
+        device.queue.write_texture(
+            {"texture": texture, "origin": (0, 0, 0)},
+            rgba.tobytes(),
+            {"bytes_per_row": pw * 4, "rows_per_image": ph},
+            (pw, ph, 1),
+        )
+        bind_group = device.create_bind_group(
+            layout=rp._gui_image_bgl1,
+            entries=[
+                {"binding": 0, "resource": texture.create_view()},
+                {"binding": 1, "resource": rp._gui_image_sampler},
+            ],
+        )
+        entry = (texture, bind_group)
+        rp._gui_image_textures.put(key, entry, pw * ph * 4)
+    return entry[1]
+
+
+def bucket_size(pw: int, ph: int) -> tuple[int, int]:
+    """The size to rasterize an image at while its size animates: the longest
+    side rounded up to a step of 2^(1/8), so a pulse or a pop-in reuses a few
+    rasters, each drawn at most 9% smaller than it was drawn."""
+    m = max(pw, ph)
+    k = 2.0 ** (math.ceil(math.log2(m) * 8 - 1e-9) / 8) / m
+    return max(1, round(pw * k)), max(1, round(ph * k))
+
+
+def settle_size(prev, pw: int, ph: int, have_exact: bool) -> tuple[int, int]:
+    """Rasterize at the exact size unless the image's size changed since the
+    last frame (`prev`, None on its first frame) and that size has no raster
+    yet; then use `bucket_size`."""
+    if have_exact or prev is None or prev == (pw, ph):
+        return pw, ph
+    return bucket_size(pw, ph)
+
+
+def _prepare_images(rp, engine, image_ops) -> list:
+    """Upload one instance row per ImageOp and return each op's texture bind
+    group (None for an empty box)."""
+    for texture in rp._gui_image_evicted:
+        texture.destroy()
+    rp._gui_image_evicted.clear()
+    density = target_density(engine)
+    last, rp._gui_image_last = rp._gui_image_last, {}
+    rows, groups = [], []
+    for op in image_ops:
+        box, pw, ph = image_pixel_box(op.box, density)
+        rows.append([box.x, box.y, box.w, box.h, *op.tint])
+        if op.box.w <= 0 or op.box.h <= 0:
+            groups.append(None)
+            continue
+        rp._gui_image_last[op.widget] = (pw, ph)
+        have_exact = (op.digest, pw, ph) in rp._gui_image_textures
+        rw, rh = settle_size(last.get(op.widget), pw, ph, have_exact)
+        groups.append(_image_bind_group(rp, op, rw, rh))
+    data = np.asarray(rows, dtype=np.float32)
+    if rp._gui_image_instance_buf is None or data.nbytes > rp._gui_image_instance_capacity:
+        rp._gui_image_instance_capacity = max(data.nbytes, 4096)
+        rp._gui_image_instance_buf = rp._device.create_buffer(
+            size=rp._gui_image_instance_capacity,
+            usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
+        )
+    rp._device.queue.write_buffer(rp._gui_image_instance_buf, 0, data.tobytes())
+    return groups
+
+
+def _draw_images(rp, render_pass, groups: list, first: int, count: int) -> None:
+    bind_group0 = rp._device.create_bind_group(
+        layout=rp._gui_image_bgl0,
+        entries=[
+            {"binding": 0, "resource": {"buffer": rp._globals_buffer, "offset": 0, "size": 240}},
+            {
+                "binding": 1,
+                "resource": {
+                    "buffer": rp._gui_image_instance_buf,
+                    "offset": 0,
+                    "size": rp._gui_image_instance_capacity,
+                },
+            },
+        ],
+    )
+    render_pass.set_pipeline(rp._gui_image_pipeline)
+    render_pass.set_bind_group(0, bind_group0, [], 0, 0)
+    render_pass.set_vertex_buffer(0, rp._gui_quad_vbuf)
+    render_pass.set_index_buffer(rp._gui_quad_ibuf, wgpu.IndexFormat.uint32)
+    for i in range(first, first + count):
+        if groups[i] is not None:
+            render_pass.set_bind_group(1, groups[i], [], 0, 0)
+            render_pass.draw_indexed(6, 1, 0, 0, i)

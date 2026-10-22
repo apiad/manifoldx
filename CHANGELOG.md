@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SVG images in the GUI: `manifoldx.gui.Image`.** Takes an SVG as a path, markup or
+  bytes and draws it at the pixel size it lands at on screen (layout size times the GUI
+  scale times the display's pixel ratio or a still's supersampling), so it stays crisp
+  through resizes and scale changes. Style keys: `width`, `height` (one alone keeps the
+  aspect), `tint`, `opacity`. While its size animates it draws from rasters bucketed in
+  steps of 2^(1/8) and goes back to an exact raster when the size holds. Needs the new
+  `svg` extra (`thorvg-python`, no system libraries): rasterizing takes 0.13 ms for a
+  48 px icon and 1.9 ms at 512 px. `manifoldx.svg` exposes `rasterize_svg`, `svg_size`,
+  `load_font` and `clear_cache`; rasters are cached by content and size.
+- **`textures.texture_from_svg` and `textures.texture_from_array`.** An SVG or an RGBA
+  array as a mipmapped texture for `StandardMaterial(albedo_map=...)`; `load_texture`
+  now decodes and calls `texture_from_array`. Example: `examples/svg_icons.py`.
+
 - **Frustum culling.** A mesh whose bounding sphere lies out of the camera's view is not
   drawn, and, with a fixed shadow box (`auto_fit=False`), one outside it casts nothing. A
   skinned mesh's sphere is padded for its moving joints, and a mirrored one is tested where
@@ -51,6 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails if any frame takes more than twice the median (#85).
 
 ### Changed
+
+- **The GUI draws in the widget tree's order.** Rects, images and text interleave by
+  root panel and child order, so a later panel covers an earlier one's text and images.
+  Text used to be drawn above every panel.
+- **A textured `StandardMaterial` honours the albedo map's alpha.** Texels under 0.5
+  alpha are cut out, and with `opacity < 1` the rest blends by its alpha. A texture with
+  an alpha channel that rendered opaque before now shows its holes; opaque textures are
+  unchanged. Shadows are still cast by the whole mesh.
 
 - **Shadows fade out over the outer 15% of the shadow map** instead of stopping at its edge,
   so the edge of what the map covers never shows on screen as a line.

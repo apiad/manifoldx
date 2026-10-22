@@ -221,12 +221,16 @@ all = [
     { name = "glfw" },
     { name = "imageio-ffmpeg" },
     { name = "pillow" },
+    { name = "thorvg-python" },
 ]
 desktop = [
     { name = "glfw" },
 ]
 offline = [
     { name = "imageio-ffmpeg" },
+]
+svg = [
+    { name = "thorvg-python" },
 ]
 viz = [
     { name = "pillow" },
@@ -246,14 +250,15 @@ dev = [
 requires-dist = [
     { name = "glfw", marker = "extra == 'desktop'", specifier = ">=2.0" },
     { name = "imageio-ffmpeg", marker = "extra == 'offline'", specifier = ">=0.5" },
-    { name = "manifold-gfx", extras = ["desktop", "offline", "viz"], marker = "extra == 'all'" },
+    { name = "manifold-gfx", extras = ["desktop", "offline", "viz", "svg"], marker = "extra == 'all'" },
     { name = "numpy", specifier = ">=2.4.4" },
     { name = "pillow", marker = "extra == 'viz'", specifier = ">=10.0" },
     { name = "rendercanvas", specifier = ">=2.6.3" },
+    { name = "thorvg-python", marker = "extra == 'svg'", specifier = ">=1.1.3" },
     { name = "tqdm", specifier = ">=4.67.3" },
     { name = "wgpu", specifier = ">=0.31.0" },
 ]
-provides-extras = ["desktop", "offline", "viz", "all"]
+provides-extras = ["desktop", "offline", "viz", "svg", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -526,6 +531,25 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/88/3d/1364fcde8656962782aa9ea93c92d98682b1ecec2f184e625a965ad3b4a6/ruff-0.15.9-py3-none-win32.whl", hash = "sha256:bde6ff36eaf72b700f32b7196088970bf8fdb2b917b7accd8c371bfc0fd573ec", size = 10583382, upload-time = "2026-04-02T18:17:04.261Z" },
     { url = "https://files.pythonhosted.org/packages/4c/56/5c7084299bd2cacaa07ae63a91c6f4ba66edc08bf28f356b24f6b717c799/ruff-0.15.9-py3-none-win_amd64.whl", hash = "sha256:45a70921b80e1c10cf0b734ef09421f71b5aa11d27404edc89d7e8a69505e43d", size = 11744969, upload-time = "2026-04-02T18:16:59.611Z" },
     { url = "https://files.pythonhosted.org/packages/03/36/76704c4f312257d6dbaae3c959add2a622f63fcca9d864659ce6d8d97d3d/ruff-0.15.9-py3-none-win_arm64.whl", hash = "sha256:0694e601c028fd97dc5c6ee244675bc241aeefced7ef80cd9c6935a871078f53", size = 11005870, upload-time = "2026-04-02T18:17:15.773Z" },
+]
+
+[[package]]
+name = "thorvg-python"
+version = "1.1.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f7/5e/a421ce26828cf04bd9a7862ff7fb0011a6bb19ffcdf768e31c392338184c/thorvg_python-1.1.3.tar.gz", hash = "sha256:9d1c0dcacc58208fb5001390944c4547299b46e6fb50b147363a40f678fbc620", size = 78205, upload-time = "2026-05-12T17:44:56.928Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/d1/34b044fe29d49b47f9460fbe6715bf23009c5bf3632c6a104b5df8584f57/thorvg_python-1.1.3-py3-none-macosx_10_9_universal2.whl", hash = "sha256:f38141f14410c0991b8ac08db74850c6baf31a1ec45870ed74d65fdd6e02ac43", size = 2095821, upload-time = "2026-05-12T17:44:41.863Z" },
+    { url = "https://files.pythonhosted.org/packages/34/6c/a4d8e611ce8ad88878d241f08c216cbd944f7f953a744fbb96c3aa0fdd5c/thorvg_python-1.1.3-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:56adc0159e331ce5879760d4606be0e25da74387240207a48375b9b757d81b5a", size = 1103798, upload-time = "2026-05-12T17:44:43.439Z" },
+    { url = "https://files.pythonhosted.org/packages/38/2b/22418f0e626c8d585cc113176073a8e51b52979625aaff8bdc2c35073d0e/thorvg_python-1.1.3-py3-none-macosx_11_0_arm64.whl", hash = "sha256:340fc8862e87e6071a26ae9d6d5e0e8acbc9aa8c2f39a038095f79d5cae60dbf", size = 1005396, upload-time = "2026-05-12T17:44:44.871Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/19/7386a857588ebabe8d3eee8b52a1e59ad6f12ece0b2728f5e6e949214cd9/thorvg_python-1.1.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:3e8baf4df97be90c449bda9eff9b85749f32034abaa046fb0ad5a13f3e1eba88", size = 1181141, upload-time = "2026-05-12T17:44:46.313Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/18/e98658d9fce37a9e2c040a7dc0b051652510afa0ed7d201681f26d9fdd7c/thorvg_python-1.1.3-py3-none-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:6fffadda3a391044d3435cf14a446c78b3e0acc7fc4a4c1e88b4ff76207dca95", size = 1258488, upload-time = "2026-05-12T17:44:47.473Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/af/b2b006977a8bfe123af986dc291edc0df654b5e3337047eb6448648b2c6c/thorvg_python-1.1.3-py3-none-manylinux2014_ppc64le.manylinux_2_17_ppc64le.whl", hash = "sha256:bafc7bd3747c89de60926ce1e8a4ade2efe2ac98f4edc134b0974d8d5fb98ce5", size = 1479747, upload-time = "2026-05-12T17:44:48.879Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/88/b7b32b2fbdf6d99c23cd73d5c16317629ed23d7c0a7ca585352be448044d/thorvg_python-1.1.3-py3-none-manylinux2014_s390x.manylinux_2_17_s390x.whl", hash = "sha256:fad03d766a4e17f8ba544dfe78a99a12e059b9cc5ff515b6a40eef2c7a5024c3", size = 1291238, upload-time = "2026-05-12T17:44:50.262Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/6e/ed45f8cf23c6edc62865053141d0c8f16f5cad9b3aaa74fa7a8528355ed4/thorvg_python-1.1.3-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:0c2efd705bf7badd08b8f6e60696cb87fe908c9a04aa3b0352430aead00db33a", size = 1197589, upload-time = "2026-05-12T17:44:51.843Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/21/e0db08c2d299b15120d9d61063ec1f3c1d8e2f195316df532ac833489c14/thorvg_python-1.1.3-py3-none-win32.whl", hash = "sha256:2794128d3ec6c4e90f969d83b3f97a7a33e36ab794ba6e6c86710d86400e884e", size = 853588, upload-time = "2026-05-12T17:44:52.968Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/9f/99902c58bda2082dea9687fe0aa75992429a9adbe2e5d82a729859641016/thorvg_python-1.1.3-py3-none-win_amd64.whl", hash = "sha256:305671f651d2e455d241c8704636f2061be86cdb80a6743cf6d7dce6bcca1c5a", size = 969128, upload-time = "2026-05-12T17:44:54.216Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/e2/e7bfa56233ebf01d01b2479d2c5adbeda96e8fc50d7f4cbb78fe3a9faaf1/thorvg_python-1.1.3-py3-none-win_arm64.whl", hash = "sha256:4eba0ebb9f7529df7a31735716b6ff4c8e2126ec8942ae0f7aca4f3ce45294d7", size = 855735, upload-time = "2026-05-12T17:44:55.884Z" },
 ]
 
 [[package]]

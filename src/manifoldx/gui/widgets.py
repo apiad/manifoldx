@@ -148,6 +148,52 @@ class Text(Widget):
         return self._cached_intrinsic
 
 
+class Image(Widget):
+    """An SVG drawn at its on-screen pixel size, so it stays crisp at any GUI
+    scale or window size. `svg` is a path, SVG markup or bytes.
+
+    Style: `width` and `height` in UI pixels (one alone keeps the SVG's aspect;
+    neither uses the SVG's own size), `tint` (hex, multiplies the art like a
+    text's fg) and `opacity` (0..1). The art keeps its aspect ratio, centred in
+    its layout box.
+    """
+
+    def __init__(
+        self,
+        svg,
+        *,
+        style: str | None = None,
+        style_overrides: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(style=style, style_overrides=style_overrides)
+        self.svg = svg
+
+    @property
+    def svg(self):
+        return self._svg
+
+    @svg.setter
+    def svg(self, source) -> None:
+        from manifoldx import svg as _svg
+
+        self._svg = source
+        self.svg_data = _svg.svg_bytes(source)
+        self.svg_digest = _svg.svg_digest(self.svg_data)
+        self.svg_size = _svg.svg_size(self.svg_data)
+
+    def intrinsic_size(self) -> tuple[float, float]:
+        s = self.effective_style()
+        sw, sh = self.svg_size
+        w, h = s.get("width"), s.get("height")
+        if w is not None and h is not None:
+            return (float(w), float(h))
+        if w is not None:
+            return (float(w), float(w) * sh / sw)
+        if h is not None:
+            return (float(h) * sw / sh, float(h))
+        return (sw, sh)
+
+
 def _measure_text(text: str, font_size: int) -> tuple[float, float]:
     """Pixel extents of `text` rasterized at `font_size`.
 
