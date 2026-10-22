@@ -73,6 +73,12 @@ def _pack(build, i, j):
     if data.surfaces is not None:
         geo["surfaces"] = np.asarray(data.surfaces, np.int32)
     vbytes, info = pack_vertices(geo)
+    # The culling sphere, here off the frame rather than when the cell is first drawn.
+    pos = geo["positions"]
+    if len(pos):
+        lo, hi = pos.min(axis=0), pos.max(axis=0)
+        c = (lo + hi) / 2
+        geo["bounds"] = (c.astype(np.float64), float(np.linalg.norm(pos - c, axis=1).max()))
     return _Cell(geo, info, vbytes, geo["indices"].tobytes())
 
 
@@ -162,6 +168,14 @@ class Streamer:
             if self._ready.get(c) is not None and not self._on_gpu(c):
                 room -= self._upload(c, room)
         budget = self.uploads_per_frame
+        # engine.cell_draws_per_frame caps the new cells all Streamers draw in one frame
+        # together, so streamers crossing the same border take turns over a few frames.
+        cap = getattr(self.engine, "cell_draws_per_frame", None)
+        if cap is not None:
+            frame = getattr(self.engine, "_frame_index", 0)
+            if getattr(self.engine, "_cell_draws_frame", None) != frame:
+                self.engine._cell_draws_frame, self.engine._cell_draws_used = frame, 0
+            budget = max(0, min(budget, cap - self.engine._cell_draws_used))
         for c in wanted:
             if budget == 0:
                 break
@@ -173,6 +187,8 @@ class Streamer:
             ):
                 self._draw(c)
                 budget -= 1
+                if cap is not None:
+                    self.engine._cell_draws_used += 1
 
     def _on_gpu(self, c) -> bool:
         """Whether cell c can be drawn without building a buffer on the frame."""

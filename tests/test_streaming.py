@@ -230,3 +230,35 @@ def test_a_streamed_cell_carries_its_surface_pattern_ids():
     plain = _pack(lambda i, j: data._replace(surfaces=None), 0, 0)
     assert "surfaces" not in plain.geo
     assert np.frombuffer(plain.vbytes, np.float32).reshape(4, -1)[:, 9].tolist() == [0, 0, 0, 0]
+
+
+def test_streamers_share_the_engines_cell_draw_cap():
+    engine = _offscreen_engine()
+    engine.cell_draws_per_frame = 1
+    pair = [Streamer(engine, cell=8.0, build=build_cell, radius=1, ready_radius=1, uploads_per_frame=4)
+            for _ in range(2)]
+    try:
+        most = 0
+        for _ in range(300):
+            before = sum(len(s.drawn()) for s in pair)
+            for s in pair:
+                s.focus(4, 4)
+            most = max(most, sum(len(s.drawn()) for s in pair) - before)
+            engine._draw_frame()
+            if sum(len(s.drawn()) for s in pair) == 18:
+                break
+            time.sleep(0.005)
+        else:
+            raise AssertionError("the two rings never filled")
+        assert most == 1  # each would draw up to 4 a frame on its own
+    finally:
+        for s in pair:
+            s.close()
+
+
+def test_a_streamed_cell_brings_its_culling_sphere():
+    from manifoldx.streaming import _pack
+
+    cell = _pack(build_cell, 0, 0)
+    centre, radius = cell.geo["bounds"]
+    assert np.allclose(centre, [4, 0, 4]) and radius == pytest.approx(np.sqrt(32))

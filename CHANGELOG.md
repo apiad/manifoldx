@@ -133,6 +133,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **The shadow pass collects its casters without a Python loop per entity or per
+  geometry**: one mask, one culling call, one grouping. A streamed world of a few
+  hundred cell meshes paid about 15 ms a frame there.
+- **A streamed cell's culling sphere is computed in the Streamer's worker**, not on the
+  frame that first draws it.
+- **`engine.cell_draws_per_frame`**: the most new cells all Streamers together draw in
+  one frame (default None: each Streamer's own `uploads_per_frame`). Four streamers
+  crossing the same border then take turns over four frames instead of drawing four
+  cells in one.
+
 - **`Camera.get_view_matrix` uses plain float arithmetic** instead of `np.cross` on
   3-vectors, which cost more than the math; the renderer asks for it several times a
   frame.

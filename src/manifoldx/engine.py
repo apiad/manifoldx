@@ -357,6 +357,9 @@ class Engine:
 
         self._texture_registry = TextureRegistry()
         self._views: dict = {}  # TextureHandle.id -> _View: cameras rendered into textures
+        # The most new cells all streaming.Streamers together draw in one frame (None: each
+        # Streamer's own uploads_per_frame only).
+        self.cell_draws_per_frame: int | None = None
 
         # Render pipeline
         self._render_pipeline = RenderPipeline(self.store, self._device)
