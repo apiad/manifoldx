@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   darkness) default to `resources.SURFACE_PATTERNS`; `surface_patterns=` overrides
   them per material. Costs 0.5 ms on a laptop GPU and 5.3 ms on llvmpipe for a
   1280x720 frame mostly covered by patterns. Example: `examples/surface_patterns.py`.
+  Streamed cells carry them too: `streaming.MeshData(..., surfaces=ids)`.
 
 - **`Image` style key `uv` = (u0, v0, u1, v1) and `textures.write_texture(engine,
   handle, rgba, (x, y))`.** An Image draws that part of its source into its box, and

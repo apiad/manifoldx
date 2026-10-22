@@ -214,3 +214,19 @@ def test_a_streamer_warmed_before_the_device_uploads_once_it_has_one():
         assert (2, 0) in s.drawn() and calls == []
     finally:
         s.close()
+
+
+def test_a_streamed_cell_carries_its_surface_pattern_ids():
+    from manifoldx.streaming import MeshData, _pack
+
+    pos = np.array([[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], np.float32)
+    data = MeshData(pos, np.tile([0, 1, 0], (4, 1)).astype(np.float32),
+                    np.full((4, 3), 0.5, np.float32), np.array([0, 1, 2, 0, 2, 3], np.uint32),
+                    surfaces=np.array([1, 1, 2, 2]))
+    cell = _pack(lambda i, j: data, 0, 0)
+    assert cell.geo["surfaces"].tolist() == [1, 1, 2, 2]
+    packed = np.frombuffer(cell.vbytes, np.float32).reshape(4, cell.info["stride"] // 4)
+    assert packed[:, 9].tolist() == [1, 1, 2, 2]  # after position, normal and colour
+    plain = _pack(lambda i, j: data._replace(surfaces=None), 0, 0)
+    assert "surfaces" not in plain.geo
+    assert np.frombuffer(plain.vbytes, np.float32).reshape(4, -1)[:, 9].tolist() == [0, 0, 0, 0]
