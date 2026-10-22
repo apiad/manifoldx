@@ -7,6 +7,7 @@ Painting walks the tree top-down, emitting:
 
 - One `RectOp` per Panel (and, in Plan 2, per Button/Slider/Toggle).
 - One `TextOp` per Text / ValueDisplay glyph batch.
+- One `ImageOp` per Image.
 
 Ops carry resolved pixel boxes and resolved colors — the painter does no
 style lookup itself; widgets pass already-resolved styles through.
@@ -23,7 +24,7 @@ from manifoldx.gui.slider import Slider
 from manifoldx.gui.style import parse_color
 from manifoldx.gui.toggle import Toggle
 from manifoldx.gui.value_display import ValueDisplay
-from manifoldx.gui.widgets import Panel, Text, Widget, _measure_text
+from manifoldx.gui.widgets import Image, Panel, Text, Widget, _measure_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,10 +44,19 @@ class TextOp:
     fg: tuple[float, float, float, float]
 
 
+@dataclass(frozen=True, slots=True)
+class ImageOp:
+    box: LayoutBox
+    data: bytes  # the SVG document
+    digest: str  # its hash, the cache key with the pixel size
+    tint: tuple[float, float, float, float]  # alpha already multiplied by opacity
+
+
 @dataclass
 class Painter:
     rect_ops: list[RectOp] = field(default_factory=list)
     text_ops: list[TextOp] = field(default_factory=list)
+    image_ops: list[ImageOp] = field(default_factory=list)
 
     def draw_rect(
         self,
@@ -77,9 +87,20 @@ class Painter:
     ) -> None:
         self.text_ops.append(TextOp(box=box, text=text, font_size=font_size, fg=fg))
 
+    def draw_image(
+        self,
+        *,
+        box: LayoutBox,
+        data: bytes,
+        digest: str,
+        tint: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+    ) -> None:
+        self.image_ops.append(ImageOp(box=box, data=data, digest=digest, tint=tint))
+
     def clear(self) -> None:
         self.rect_ops.clear()
         self.text_ops.clear()
+        self.image_ops.clear()
 
 
 def paint(
@@ -117,6 +138,22 @@ def paint(
             text=widget.text,
             font_size=font_size,
             fg=parse_color(s["fg"]),
+        )
+    elif isinstance(widget, Image):
+        s = widget.effective_style()
+        dw, dh = widget.intrinsic_size()
+        # Keep the aspect: a flex image fills its box, any other shrinks to
+        # fit but never grows past its own size (the cross axis stretches leaves).
+        k = min(box.w / dw, box.h / dh) if dw > 0 and dh > 0 else 0.0
+        if s.get("flex") is None:
+            k = min(k, 1.0)
+        w, h = dw * k, dh * k
+        r, g, b, a = parse_color(s["tint"]) if s.get("tint") else (1.0, 1.0, 1.0, 1.0)
+        painter.draw_image(
+            box=LayoutBox(box.x + (box.w - w) * 0.5, box.y + (box.h - h) * 0.5, w, h),
+            data=widget.svg_data,
+            digest=widget.svg_digest,
+            tint=(r, g, b, a * float(s.get("opacity", 1.0))),
         )
     elif isinstance(widget, ValueDisplay):
         s = widget.effective_style()
