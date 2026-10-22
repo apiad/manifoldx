@@ -121,7 +121,8 @@ def _render(data: bytes, width: int, height: int) -> np.ndarray:
     """Draw the SVG stretched to width x height: RGBA uint8, straight alpha."""
     tvg, engine = _tvg()
     canvas = tvg.SwCanvas(engine)
-    canvas.set_target(width, height)
+    # ABGR8888S: RGBA bytes with straight alpha, as textures and the GUI shader take them.
+    canvas.set_target(width, height, None, tvg.Colorspace.ABGR8888S)
     picture = _picture(data)
     picture.set_size(width, height)
     canvas.add(picture)
@@ -130,10 +131,6 @@ def _render(data: bytes, width: int, height: int) -> np.ndarray:
     canvas.sync()
     rgba = np.frombuffer(canvas.buffer_arr, np.uint8).reshape(height, width, 4).copy()
     canvas.destroy()
-    # thorvg writes premultiplied colour; textures and the GUI shader take straight alpha.
-    a = rgba[..., 3:4].astype(np.uint32)
-    rgb = rgba[..., :3].astype(np.uint32)
-    rgba[..., :3] = np.where(a > 0, np.minimum(rgb * 255 // np.maximum(a, 1), 255), 0)
     return rgba
 
 
