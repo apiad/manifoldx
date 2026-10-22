@@ -161,7 +161,7 @@ def test_keys_are_logged_once_when_pressed():
     lines = devchannel.Lines()
     devchannel.LOG.addHandler(lines)
     channel = object.__new__(devchannel.Channel)
-    channel.keys = frozenset()
+    channel.keys, channel.meter = frozenset(), devchannel.Meter()  # keys are logged under --debug
 
     class Engine:
         class input:
@@ -172,7 +172,9 @@ def test_keys_are_logged_once_when_pressed():
             channel.frame(Engine)
     finally:
         devchannel.LOG.removeHandler(lines)
-    assert [line["text"] for line in lines.lines] == ["keys w", "keys Space", "keys w"]
+        channel.meter.close()
+    assert [line["text"] for line in lines.lines if line["text"].startswith("keys")] == [
+        "keys w", "keys Space", "keys w"]
 
 
 def test_cli_talks_to_the_running_app(hot, capsys):
@@ -200,3 +202,55 @@ def test_cli_talks_to_the_running_app(hot, capsys):
 def test_cli_says_when_no_app_runs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert cli.main(["state"]) == 1
+
+
+def test_the_meter_counts_each_second_and_logs_slow_frames():
+    lines = devchannel.Lines()
+    devchannel.LOG.addHandler(lines)
+    meter = devchannel.Meter()
+    try:
+        t = 100.0
+        for dt in [0.0] + [0.05] * 18 + [0.15]:  # 19 frames in 1.05 s, the last one slow
+            t += dt
+            meter.frame(t)
+        import gc
+        gc.collect()
+        t += 1.0
+        meter.frame(t)
+    finally:
+        devchannel.LOG.removeHandler(lines)
+        meter.close()
+    first, second = meter.history
+    assert first["fps"] == pytest.approx(19 / 1.05, abs=0.1) and first["worst_ms"] == 150.0
+    assert first["frame_ms"] == pytest.approx(1050 / 19, abs=0.1) and first["rss_mb"] > 0
+    assert second["gc"]["runs"][2] >= 1
+    texts = [line["text"] for line in lines.lines]
+    assert "slow frame 150 ms" in texts and "slow frame 1000 ms" in texts
+    assert any(text.startswith("fps 18, frame 55.3 ms (worst 150)") for text in texts)
+
+
+def test_metrics_need_debug(hot):
+    assert ask(hot, "/api/metrics")[0] == 404
+
+
+def test_metrics_under_debug(tmp_path, monkeypatch):
+    try:
+        import wgpu
+        wgpu.gpu.request_adapter_sync()
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"offscreen canvas unavailable: {e}")
+    app = tmp_path / "app.py"
+    app.write_text(textwrap.dedent(APP))
+    h = HotReloader(script=str(app), canvas_factory=lambda e: get_offscreen_canvas(e.w, e.h), poll=0, port=0,
+                    debug=True)
+    h.start()
+    try:
+        import time
+        end = time.monotonic() + 1.3
+        while time.monotonic() < end:
+            h.step()
+        status, body = ask(h, "/api/metrics")
+        got = json.loads(body)
+        assert status == 200 and got and {"fps", "frame_ms", "worst_ms", "rss_mb", "gc"} <= set(got[-1])
+    finally:
+        h.channel.close()

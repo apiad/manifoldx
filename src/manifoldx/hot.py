@@ -57,7 +57,7 @@ class HotReloader:
     """
 
     def __init__(self, script=None, module=None, argv=(), canvas_factory=None, poll=0.25, channel=True,
-                 port=devchannel.PORT):
+                 port=devchannel.PORT, debug=False):
         self.script = os.path.abspath(script) if script else None
         self.module = module
         self.argv = list(argv)
@@ -71,6 +71,7 @@ class HotReloader:
         self._paused = False  # the running code raised; wait for an edit
         self._open_channel = channel  # the dev page and API, and .manifoldx/ (devchannel)
         self.port = port
+        self.debug = debug  # the channel's watchers: metrics, slow frames and collections, keys
         self.channel = None
 
     def _owned(self, path):
@@ -128,7 +129,7 @@ class HotReloader:
         engine._init_canvas(self.canvas_factory(engine))
         self._activate(engine)
         if self._open_channel:
-            self.channel = devchannel.Channel(self._root, self, self.port)
+            self.channel = devchannel.Channel(self._root, self, self.port, debug=self.debug)
             LOG.info("started %s", self.module or self.script)
             print(f"manifoldx run: dev page and API at {self.channel.url}", file=sys.stderr)
 
