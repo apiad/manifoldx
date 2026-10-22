@@ -138,9 +138,15 @@ class HotReloader:
 
     def reload(self):
         """Rerun the app on the open window; on failure keep the running version."""
-        for name, m in list(sys.modules.items()):
-            if getattr(m, "__file__", None) and self._owned(m.__file__):
-                del sys.modules[name]
+        dropped = [name for name, m in list(sys.modules.items())
+                   if getattr(m, "__file__", None) and self._owned(m.__file__)]
+        for name in dropped:
+            module = sys.modules.pop(name)
+            # A parent that stays (a namespace package has no file) still holds the old module as an
+            # attribute, and `from pkg import mod` would hand it back instead of importing the new one.
+            parent, _, child = name.rpartition(".")
+            if parent in sys.modules and getattr(sys.modules[parent], child, None) is module:
+                delattr(sys.modules[parent], child)
         try:
             engine = self._load()
         except Exception as e:

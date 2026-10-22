@@ -158,6 +158,27 @@ def test_editing_the_module_run_with_m_reloads_it(tmp_path, monkeypatch):
         sys.modules.pop("watchpkg", None)
 
 
+def test_from_import_of_a_namespace_package_module_gets_the_new_code(tmp_path, monkeypatch):
+    (tmp_path / "nspkg").mkdir()  # no __init__.py: a namespace package, which never reloads itself
+    write(tmp_path / "nspkg" / "sub.py", "VALUE = 1\n")
+    write(tmp_path / "app.py", APP.format(version="__import__('importlib').import_module('appglue').VALUE"))
+    write(tmp_path / "appglue.py", "from nspkg import sub\nVALUE = sub.VALUE\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    hot = HotReloader(script=str(tmp_path / "app.py"), canvas_factory=offscreen, poll=0, channel=False)
+    try:
+        hot.start()
+        hot.step()
+        assert hot.state.version == 1
+
+        write(tmp_path / "nspkg" / "sub.py", "VALUE = 2\n")
+        hot.step()
+        hot.step()
+        assert hot.state.version == 2
+    finally:
+        for name in ("nspkg", "nspkg.sub", "appglue"):
+            sys.modules.pop(name, None)
+
+
 def test_reload_cancels_old_async_handlers(tmp_path):
     source = APP.replace(
         '@engine.on("frame")',
