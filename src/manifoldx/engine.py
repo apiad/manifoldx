@@ -4,7 +4,9 @@ import wgpu
 import sys
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from time import perf_counter_ns
 
 # Import ECS components
@@ -235,6 +237,17 @@ def _configure_swapchain(context, device, adapter):
     return preferred
 
 
+
+@dataclass
+class _View:
+    """A camera rendered into a texture before each frame's main pass."""
+    camera: Any
+    handle: Any  # TextureHandle
+    depth_view: Any
+    live: bool
+    pending: bool
+    background: Any
+
 class Engine:
     def __init__(
         self,
@@ -318,6 +331,7 @@ class Engine:
         from manifoldx.textures import TextureRegistry
 
         self._texture_registry = TextureRegistry()
+        self._views: dict = {}  # TextureHandle.id -> _View: cameras rendered into textures
 
         # Render pipeline
         self._render_pipeline = RenderPipeline(self.store, self._device)
@@ -1178,6 +1192,10 @@ class Engine:
             self._depth_texture_view = self._depth_texture.create_view()
             self._depth_texture_size = tex_size
 
+        # Second cameras first: each view is its own submit, so its globals and
+        # instance uploads land before the main pass overwrites them.
+        self._render_views()
+
         # Create command encoder
         command_encoder = self._device.create_command_encoder()
 
@@ -1213,6 +1231,93 @@ class Engine:
 
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
+
+    def render_to_texture(self, camera, size, *, live: bool = True, background=None):
+        """Render the scene through `camera` into a texture of `size` = (width, height)
+        pixels, before each frame's main pass, and return its TextureHandle.
+
+        The texture works as an Image's source in the GUI and as an albedo_map. The
+        GUI is not drawn into it. With live=False it renders on the next frame and
+        then only when refresh_texture asks, so a still view costs nothing.
+        `background` is an RGBA clear colour (default: the engine's background,
+        opaque)."""
+        from manifoldx.textures import TextureHandle
+
+        if self._device is None:
+            raise RuntimeError(
+                "engine has no device yet; initialize the canvas before render_to_texture"
+            )
+        w, h = int(size[0]), int(size[1])
+        texture = self._device.create_texture(
+            size=(w, h, 1),
+            format=self._texture_format,
+            usage=(wgpu.TextureUsage.RENDER_ATTACHMENT | wgpu.TextureUsage.TEXTURE_BINDING
+                   | wgpu.TextureUsage.COPY_SRC),
+        )
+        depth = self._device.create_texture(
+            size=(w, h, 1),
+            format=wgpu.TextureFormat.depth24plus,
+            usage=wgpu.TextureUsage.RENDER_ATTACHMENT,
+        )
+        sampler = self._device.create_sampler(
+            mag_filter=wgpu.FilterMode.linear,
+            min_filter=wgpu.FilterMode.linear,
+            address_mode_u=wgpu.AddressMode.clamp_to_edge,
+            address_mode_v=wgpu.AddressMode.clamp_to_edge,
+        )
+        registry = self._texture_registry
+        handle = TextureHandle(
+            id=registry.alloc_id(), texture=texture, view=texture.create_view(),
+            sampler=sampler, size=(w, h),
+        )
+        registry.add(handle)
+        self._views[handle.id] = _View(camera, handle, depth.create_view(), live, True, background)
+        return handle
+
+    def refresh_texture(self, handle) -> None:
+        """Render a render_to_texture view again on the next frame."""
+        self._views[handle.id].pending = True
+
+    def set_texture_live(self, handle, live: bool) -> None:
+        """Render a render_to_texture view every frame (True) or only on request."""
+        self._views[handle.id].live = bool(live)
+
+    def drop_texture(self, handle) -> None:
+        """Stop rendering a render_to_texture view; its texture keeps the last image."""
+        self._views.pop(handle.id, None)
+
+    def _render_views(self) -> None:
+        views = [v for v in self._views.values() if v.live or v.pending]
+        if not views:
+            return
+        saved = (self._camera, self.w, self.h)
+        try:
+            for view in views:
+                view.pending = False
+                self._camera = view.camera
+                self.w, self.h = view.handle.size
+                encoder = self._device.create_command_encoder()
+                bg = view.background or (*self.background_color, 1.0)
+                render_pass = encoder.begin_render_pass(
+                    color_attachments=[{
+                        "view": view.handle.view,
+                        "resolve_target": None,
+                        "clear_value": tuple(bg),
+                        "load_op": wgpu.LoadOp.clear,
+                        "store_op": wgpu.StoreOp.store,
+                    }],
+                    depth_stencil_attachment={
+                        "view": view.depth_view,
+                        "depth_clear_value": 1.0,
+                        "depth_load_op": wgpu.LoadOp.clear,
+                        "depth_store_op": wgpu.StoreOp.store,
+                    },
+                )
+                self._render_pipeline._render_scene_passes(self, render_pass)
+                render_pass.end()
+                self._device.queue.submit([encoder.finish()])
+        finally:
+            self._camera, self.w, self.h = saved
 
     # One frame is enough: shadows and IBL are complete on the first frame
     # (measured: identical output for 1, 2 and 3 frames, with shadows and with IBL).
