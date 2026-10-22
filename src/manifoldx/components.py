@@ -396,3 +396,21 @@ __all__ = [
     "Material",
     "Colors",
 ]
+
+
+from manifoldx.types import Float  # noqa: E402
+
+
+class Layer(Component):
+    """The render layer an entity is on; entities without one are on layer 0.
+
+    A camera draws the entities whose layer is in its `layers` set (None: all).
+    Put a render_to_texture stage on its own layer and give its camera only that
+    layer, and the view's cost follows the stage, not the world:
+
+        engine.spawn(Mesh(head), Material(skin), Transform(...), Layer(layer=1))
+        portrait_camera.layers = {1}
+        engine.camera.layers = {0}   # the main camera skips the stage
+    """
+
+    layer: Float = 0.0

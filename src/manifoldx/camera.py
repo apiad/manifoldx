@@ -1,5 +1,7 @@
 """Camera class for 3D rendering."""
 
+import math
+
 import numpy as np
 
 
@@ -15,6 +17,8 @@ class Camera:
         self.up = np.array(up, dtype=np.float32)
         self.near = near
         self.far = far
+        # Render layers this camera draws: a set of Layer indices, or None for all.
+        self.layers: set[int] | None = None
         self._compute_spherical()
 
     def _compute_spherical(self):
@@ -31,26 +35,25 @@ class Camera:
 
         Convention: camera looks down -Z in view space (standard OpenGL/WebGPU).
         """
-        # Forward direction (from camera toward target)
-        forward = self.target - self.position
-        forward = forward / np.linalg.norm(forward)
+        # Plain float arithmetic: np.cross on 3-vectors costs more than the math,
+        # and the renderer asks for this matrix several times a frame.
+        px, py, pz = (float(v) for v in self.position)
+        fx, fy, fz = (float(t) - p for t, p in zip(self.target, (px, py, pz)))
+        n = math.sqrt(fx * fx + fy * fy + fz * fz)
+        fx, fy, fz = fx / n, fy / n, fz / n  # forward, camera toward target
+        ux, uy, uz = (float(v) for v in self.up)
+        rx, ry, rz = fy * uz - fz * uy, fz * ux - fx * uz, fx * uy - fy * ux  # forward x up
+        n = math.sqrt(rx * rx + ry * ry + rz * rz)
+        rx, ry, rz = rx / n, ry / n, rz / n
+        tx, ty, tz = ry * fz - rz * fy, rz * fx - rx * fz, rx * fy - ry * fx  # right x forward
 
-        # Right (x-axis): cross(forward, up)
-        right = np.cross(forward, self.up)
-        right = right / np.linalg.norm(right)
-
-        # True up: cross(right, forward)
-        up = np.cross(right, forward)
-
-        # Build view matrix: rotation part uses -forward for Z (camera looks down -Z)
-        view = np.eye(4, dtype=np.float32)
-        view[0, 0:3] = right
-        view[1, 0:3] = up
-        view[2, 0:3] = -forward  # Negate: camera looks down -Z
-        view[0, 3] = -np.dot(right, self.position)
-        view[1, 3] = -np.dot(up, self.position)
-        view[2, 3] = np.dot(forward, self.position)  # Note: no negate since forward already negated
-
+        # Rotation rows right, up, -forward (camera looks down -Z), then the translation.
+        view = np.array([
+            [rx, ry, rz, -(rx * px + ry * py + rz * pz)],
+            [tx, ty, tz, -(tx * px + ty * py + tz * pz)],
+            [-fx, -fy, -fz, fx * px + fy * py + fz * pz],
+            [0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float32)
         return view
 
     def get_forward(self):

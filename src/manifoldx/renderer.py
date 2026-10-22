@@ -1403,8 +1403,15 @@ class RenderPipeline:
 
     def _render_scene_passes(self, engine, render_pass):
         """Issue draw calls for scene entities (mesh / sprite / volume / label / axis)."""
-        # Get all alive entities
+        # Get all alive entities on the camera's layers
         alive_indices = np.where(self._store._alive)[0]
+        layers = getattr(engine._camera, "layers", None)
+        if layers is not None:
+            if "Layer" in self._store._components:
+                on = self._store._components["Layer"][alive_indices, 0]
+            else:
+                on = np.zeros(len(alive_indices))
+            alive_indices = alive_indices[np.isin(on, list(layers))]
         if len(alive_indices) == 0:
             return
 
