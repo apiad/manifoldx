@@ -81,14 +81,28 @@ def load_texture(engine, path: str | Path) -> TextureHandle:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(str(p))
+    rgba = np.asarray(Image.open(p).convert("RGBA"), dtype=np.uint8)
+    return texture_from_array(engine, rgba, _source=p)
 
-    img = Image.open(p).convert("RGBA")
+
+def texture_from_array(engine, rgba: np.ndarray, *, _source: Path | None = None) -> TextureHandle:
+    """Upload a (height, width, 4) or (height, width, 3) uint8 image, sRGB colour
+    with straight alpha, as a texture like load_texture's: Rgba8UnormSrgb, full mip
+    chain, trilinear and anisotropic, repeat addressing."""
+    from PIL import Image
+
+    rgba = np.asarray(rgba)
+    if rgba.dtype != np.uint8 or rgba.ndim != 3 or rgba.shape[2] not in (3, 4):
+        raise ValueError(
+            f"texture_from_array expects a (h, w, 4|3) uint8 array, got {rgba.dtype} {rgba.shape}"
+        )
+    img = Image.fromarray(np.ascontiguousarray(rgba)).convert("RGBA")
     w, h = img.size
 
     device = getattr(engine, "_device", None)
     if device is None:
         raise RuntimeError(
-            "engine has no device yet; initialize the canvas before load_texture(...)"
+            "engine has no device yet; initialize the canvas before creating textures"
         )
 
     limits = getattr(device, "limits", {}) or {}
@@ -127,7 +141,25 @@ def load_texture(engine, path: str | Path) -> TextureHandle:
     registry = engine._texture_registry
     handle = TextureHandle(
         id=registry.alloc_id(), texture=texture, view=view, sampler=sampler,
-        size=(w, h), source=p,
+        size=(w, h), source=_source,
     )
     registry.add(handle)
     return handle
+
+
+def texture_from_svg(engine, svg, size_px: int | tuple[int, int]) -> TextureHandle:
+    """Rasterize an SVG (path, markup or bytes) and upload it with texture_from_array.
+
+    `size_px` is the longest side in pixels, the other following the SVG's aspect
+    ratio, or an exact (width, height). Transparent parts stay transparent: a
+    StandardMaterial with this albedo_map cuts them out."""
+    from manifoldx import svg as _svg
+
+    data = _svg.svg_bytes(svg)
+    if isinstance(size_px, int):
+        sw, sh = _svg.svg_size(data)
+        k = size_px / max(sw, sh)
+        w, h = max(1, round(sw * k)), max(1, round(sh * k))
+    else:
+        w, h = int(size_px[0]), int(size_px[1])
+    return texture_from_array(engine, _svg.rasterize_svg(data, w, h))

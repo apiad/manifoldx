@@ -1008,8 +1008,15 @@ _STANDARDMATERIAL_TEXTURED_SHADER = (
     )
     .replace(
         "    let F0 = mix(vec3<f32>(0.04), material.albedo, material.metallic);",
-        "    let sampled_albedo = textureSample(albedo_tex, albedo_sampler, in.uv).rgb;\n"
+        "    let albedo_texel = textureSample(albedo_tex, albedo_sampler, in.uv);\n"
+        "    // Texels under half alpha are holes; translucent materials blend the rest.\n"
+        "    if albedo_texel.a < 0.5 { discard; }\n"
+        "    let sampled_albedo = albedo_texel.rgb;\n"
         "    let F0 = mix(vec3<f32>(0.04), sampled_albedo, material.metallic);",
+    )
+    .replace(
+        "    return vec4<f32>(color, material.opacity);",
+        "    return vec4<f32>(color, material.opacity * albedo_texel.a);",
     )
     .replace(
         "Lo += calculatePointLight(N, V, in.world_pos, F0,\n"
