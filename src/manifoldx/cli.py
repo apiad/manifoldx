@@ -2,11 +2,15 @@
 
 `manifoldx run` runs an app and reloads it in the same window whenever its source changes.
 `manifoldx export` runs an app and writes its scene to glTF instead of a window.
+`manifoldx look`, `state` and `log` read the app running under `manifoldx run` in this folder
+(its dev channel, .manifoldx/): the frame on screen, engine.state, and the log's last lines.
 
     manifoldx run app.py [-- <app args>]
     manifoldx run -m package.module [-- <app args>]
     manifoldx export app.py scene.glb [--strict] [-- <app args>]
     manifoldx export -m package.module scene.glb [--strict] [-- <app args>]
+    manifoldx look | state [--timeout S]
+    manifoldx log [-n N]
 """
 
 import argparse
@@ -30,7 +34,33 @@ def main(argv=None):
     run = sub.add_parser("run", help="run an app and reload it in the same window when its source changes")
     run.add_argument("-m", dest="module", help="run this module as __main__, like python -m")
     run.add_argument("script", nargs="?", metavar="app.py")
+    for name, what in (("look", "write the frame on screen to .manifoldx/look.png and print its path"),
+                       ("state", "write engine.state to .manifoldx/state.json and print it")):
+        ask = sub.add_parser(name, help=f"ask the app under manifoldx run here to {what}")
+        ask.add_argument("--timeout", type=float, default=5.0, help="seconds to wait for the app (default 5)")
+    log = sub.add_parser("log", help="print the last lines of the log of manifoldx run here")
+    log.add_argument("-n", type=int, default=40, help="how many lines (default 40)")
     args = parser.parse_args(argv)
+    if args.command in ("look", "state"):
+        from manifoldx import devchannel
+
+        try:
+            out = devchannel.ask(args.command, timeout=args.timeout)
+        except TimeoutError as e:
+            print(f"manifoldx {args.command}: {e}", file=sys.stderr)
+            return 1
+        print(out.read_text(encoding="utf-8") if args.command == "state" else out)
+        return 0
+    if args.command == "log":
+        from manifoldx.devchannel import FOLDER
+
+        path = os.path.join(FOLDER, "log.txt")
+        if not os.path.exists(path):
+            print(f"manifoldx log: no {path} here; start the app with manifoldx run", file=sys.stderr)
+            return 1
+        with open(path, encoding="utf-8") as f:
+            print("".join(f.readlines()[-args.n:]), end="")
+        return 0
     if args.command == "run":
         if (args.module is None) == (args.script is None):
             parser.error("give app.py or -m module")

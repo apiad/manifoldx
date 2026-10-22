@@ -229,14 +229,16 @@ def _configure_swapchain(context, device, adapter):
     too dark, which beats failing to start).
     """
     preferred = str(context.get_preferred_format(adapter))
-    if preferred in ("rgba8unorm", "bgra8unorm"):
+    formats = [f"{preferred}-srgb", preferred] if preferred in ("rgba8unorm", "bgra8unorm") else [preferred]
+    # COPY_SRC lets `manifoldx look` read a presented frame back; a surface that refuses it still draws.
+    usages = [wgpu.TextureUsage.RENDER_ATTACHMENT | wgpu.TextureUsage.COPY_SRC, wgpu.TextureUsage.RENDER_ATTACHMENT]
+    for i, (fmt, usage) in enumerate((f, u) for f in formats for u in usages):
         try:
-            context.configure(device=device, format=f"{preferred}-srgb")
-            return f"{preferred}-srgb"
+            context.configure(device=device, format=fmt, usage=usage)
+            return fmt
         except Exception:
-            pass
-    context.configure(device=device, format=preferred)
-    return preferred
+            if i == len(formats) * len(usages) - 1:
+                raise
 
 
 
@@ -325,6 +327,7 @@ class Engine:
         from manifoldx import hot
 
         self.state = hot._state if hot._state is not None else hot.State()
+        self._look_to = None  # a path: the next presented frame goes there as a PNG (manifoldx look)
 
         # Input layer — keyboard + mouse + resize. The bridge attaches to
         # the canvas in _init_canvas; until then it is dormant.
@@ -1264,6 +1267,23 @@ class Engine:
 
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
+
+        if self._look_to is not None:  # asked by manifoldx look
+            path, self._look_to = self._look_to, None
+            from manifoldx import devchannel
+
+            try:
+                devchannel.save_texture(self._device, texture, self._texture_format, path)
+            except Exception as e:  # a surface without COPY_SRC: say so in the log, keep drawing
+                devchannel.LOG.warning("look failed: %r", e)
+
+    def log(self, message: str) -> None:
+        """A line for the dev channel's log under `manifoldx run` (.manifoldx/log.txt); nothing otherwise.
+
+        Write what an agent following the person needs: where they are, what opened, what they chose."""
+        from manifoldx import devchannel
+
+        devchannel.LOG.info(message)
 
     def render_to_texture(self, camera, size, *, live: bool = True, background=None,
                           fog: bool = False):

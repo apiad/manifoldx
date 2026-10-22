@@ -12,6 +12,9 @@ import sys
 import time
 import traceback
 
+from manifoldx import devchannel
+from manifoldx.devchannel import LOG
+
 _state = None  # the State every Engine shares while HotReloader loads an app
 
 _MANIFOLDX_DIR = os.path.dirname(os.path.abspath(__file__)) + os.sep
@@ -52,7 +55,7 @@ class HotReloader:
     directory for a module), outside site-packages and manifoldx itself.
     """
 
-    def __init__(self, script=None, module=None, argv=(), canvas_factory=None, poll=0.25):
+    def __init__(self, script=None, module=None, argv=(), canvas_factory=None, poll=0.25, channel=True):
         self.script = os.path.abspath(script) if script else None
         self.module = module
         self.argv = list(argv)
@@ -64,6 +67,8 @@ class HotReloader:
         self._mtimes = {}
         self._last_poll = time.monotonic()
         self._paused = False  # the running code raised; wait for an edit
+        self._open_channel = channel  # the .manifoldx/ folder an agent reads (devchannel)
+        self.channel = None
 
     def _owned(self, path):
         path = os.path.abspath(path)
@@ -107,6 +112,9 @@ class HotReloader:
             raise SystemExit(f"manifoldx run: {self.module or self.script} finished without calling engine.run()")
         engine._init_canvas(self.canvas_factory(engine))
         self._activate(engine)
+        if self._open_channel:
+            self.channel = devchannel.Channel(self._root)
+            LOG.info("started %s", self.module or self.script)
 
     def changed(self):
         return any(_mtime(f) != t for f, t in self._mtimes.items())
@@ -118,9 +126,10 @@ class HotReloader:
                 del sys.modules[name]
         try:
             engine = self._load()
-        except Exception:
+        except Exception as e:
             traceback.print_exc()
             print("manifoldx run: reload failed, kept the running version", file=sys.stderr)
+            LOG.info("reload failed, kept the running version: %r", e)
             return
         if engine is None:
             print("manifoldx run: the app no longer calls engine.run(), kept the running version", file=sys.stderr)
@@ -133,6 +142,7 @@ class HotReloader:
         engine._init_canvas(old._render_canvas, gpu=(old._adapter, old._device, old._texture_format))
         self._activate(engine)
         print("manifoldx run: reloaded", file=sys.stderr)
+        LOG.info("reloaded")
 
     def step(self):
         """One frame: reload if a source changed, then tick the engine unless paused on an error."""
@@ -141,14 +151,20 @@ class HotReloader:
             self._last_poll = now
             if self.changed():
                 self.reload()
+            if self.channel is not None:
+                self.channel.poll(self.engine)
         if self._paused:
             return
         try:
             self.engine._tick()
-        except Exception:
+        except Exception as e:
             traceback.print_exc()
             print("manifoldx run: paused until the next edit", file=sys.stderr)
+            LOG.info("paused until the next edit: %r", e)
             self._paused = True
+            return
+        if self.channel is not None:
+            self.channel.frame(self.engine)
 
     def run(self):
         """Open the window and loop until it closes."""
@@ -167,3 +183,6 @@ class HotReloader:
         finally:
             self.engine._running = False
             self.engine.shutdown_events()
+            if self.channel is not None:
+                LOG.info("closed")
+                self.channel.close()
