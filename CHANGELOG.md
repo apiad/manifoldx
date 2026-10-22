@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Render layers: `Layer(layer=n)` on entities, `camera.layers = {n, ...}`.** A camera
+  draws only entities on its layers (`None`, the default, draws all; an entity without
+  `Layer` is on layer 0), and drops the others before any per-entity work. A
+  render_to_texture view of a stage on its own layer then costs what the stage costs:
+  1.3 to 1.6 ms of CPU a frame for a one-entity portrait with a game town loaded, against
+  2 to 3 ms without layers (laptop GPU and llvmpipe, host under load).
+
 - **`engine.render_to_texture(camera, (w, h), live=True, background=None)`: a second
   camera into a texture.** Rendered before each frame's main pass, without the GUI, and
   usable as an Image's source or an albedo_map. `live=False` renders once and then only
@@ -91,6 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the edge of what the map covers never shows on screen as a line.
 
 ### Performance
+
+- **`Camera.get_view_matrix` uses plain float arithmetic** instead of `np.cross` on
+  3-vectors, which cost more than the math; the renderer asks for it several times a
+  frame.
 
 - **Frustum culling looks up bounds once per geometry and material, not per instance,
   and the scene pass skips culled meshes before its per-entity loop** (when no axis,
