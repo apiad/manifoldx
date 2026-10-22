@@ -143,19 +143,23 @@ class Text(Widget):
 
     def intrinsic_size(self) -> tuple[float, float]:
         if self._cached_intrinsic is None:
-            font_size = int(self.effective_style().get("font_size", 12))
-            self._cached_intrinsic = _measure_text(self._text, font_size)
+            s = self.effective_style()
+            self._cached_intrinsic = _measure_text(
+                self._text, int(s.get("font_size", 12)), s.get("font")
+            )
         return self._cached_intrinsic
 
 
 class Image(Widget):
     """An SVG drawn at its on-screen pixel size, so it stays crisp at any GUI
-    scale or window size. `svg` is a path, SVG markup or bytes.
+    scale or window size. `svg` is a path, SVG markup or bytes, or a
+    TextureHandle (such as engine.render_to_texture's), drawn as it is.
 
     Style: `width` and `height` in UI pixels (one alone keeps the SVG's aspect;
     neither uses the SVG's own size), `tint` (hex, multiplies the art like a
-    text's fg) and `opacity` (0..1). The art keeps its aspect ratio, centred in
-    its layout box.
+    text's fg), `opacity` (0..1) and `radius` (rounds the corners; half the
+    size makes a circle). The art keeps its aspect ratio, centred in its layout
+    box.
     """
 
     def __init__(
@@ -175,8 +179,13 @@ class Image(Widget):
     @svg.setter
     def svg(self, source) -> None:
         from manifoldx import svg as _svg
+        from manifoldx.textures import TextureHandle
 
         self._svg = source
+        if isinstance(source, TextureHandle):
+            self.svg_data = self.svg_digest = None
+            self.svg_size = tuple(float(v) for v in source.size)
+            return
         self.svg_data = _svg.svg_bytes(source)
         self.svg_digest = _svg.svg_digest(self.svg_data)
         self.svg_size = _svg.svg_size(self.svg_data)
@@ -194,12 +203,17 @@ class Image(Widget):
         return (sw, sh)
 
 
-def _measure_text(text: str, font_size: int) -> tuple[float, float]:
+def _measure_text(text: str, font_size: int, font: str | None = None) -> tuple[float, float]:
     """Pixel extents of `text` rasterized at `font_size`.
 
     Delegates to the label-atlas PIL rasterizer for accuracy so that layout
-    boxes match the actual glyph footprint painted by the GPU pass.
+    boxes match the actual glyph footprint painted by the GPU pass. With a
+    `font` file, the line as the image path draws it.
     """
+    if font is not None:
+        from manifoldx.gui.font_text import measure
+
+        return measure(text, str(font), font_size)
     from manifoldx.viz.text import LabelTextureAtlas
     w, h, *_ = LabelTextureAtlas.measure_string(text, font_size=font_size)
     return (float(w), float(h))
