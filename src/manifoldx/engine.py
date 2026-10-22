@@ -319,6 +319,12 @@ class Engine:
         # _pump_aio_loop, which re-raises the first error per the v1
         # "errors crash the engine" policy.
         self._task_errors: list[BaseException] = []
+        self._tasks: set = set()  # async-handler tasks still running, cancelled by _detach
+
+        # Values that survive a hot reload under `manifoldx run` (fresh otherwise).
+        from manifoldx import hot
+
+        self.state = hot._state if hot._state is not None else hot.State()
 
         # Input layer — keyboard + mouse + resize. The bridge attaches to
         # the canvas in _init_canvas; until then it is dormant.
@@ -502,6 +508,7 @@ class Engine:
         exceptions into _task_errors so _pump_aio_loop can re-raise them on
         the next pump (per the v1 "errors crash the engine" policy).
         """
+        self._tasks.discard(task)
         if task.cancelled():
             return
         exc = task.exception()
@@ -1087,8 +1094,12 @@ class Engine:
 
     # === Canvas Initialization ===
 
-    def _init_canvas(self, canvas):
-        """Initialize WebGPU context from a canvas (shared by run() and render())."""
+    def _init_canvas(self, canvas, gpu=None):
+        """Initialize WebGPU context from a canvas (shared by run() and render()).
+
+        gpu is (adapter, device, texture_format) of an engine already drawing on
+        this canvas: a hot reload reuses them instead of requesting a new device.
+        """
         self._render_canvas = canvas
 
         # Wire input event flow: rendercanvas → _InputBridge → bus + state.
@@ -1097,13 +1108,16 @@ class Engine:
         # Get the wgpu context from the canvas
         self._wgpu_context = canvas.get_wgpu_context()
 
-        # Request adapter and device (use sync API to avoid deprecation warnings)
-        self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
-        self._device = self._adapter.request_device_sync()
+        if gpu is not None:
+            self._adapter, self._device, self._texture_format = gpu
+        else:
+            # Request adapter and device (use sync API to avoid deprecation warnings)
+            self._adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+            self._device = self._adapter.request_device_sync()
 
-        # Get preferred texture format from canvas context
-        # Configure the swap chain (sRGB target: it encodes gamma, once)
-        self._texture_format = _configure_swapchain(self._wgpu_context, self._device, self._adapter)
+            # Get preferred texture format from canvas context
+            # Configure the swap chain (sRGB target: it encodes gamma, once)
+            self._texture_format = _configure_swapchain(self._wgpu_context, self._device, self._adapter)
 
         # Update registries with device reference
         self._geometry_registry._device = self._device
@@ -1510,15 +1524,43 @@ class Engine:
 
     def _run_loop(self):
         """Called each frame by the event loop (run() mode)."""
+        self._tick()
+        # Re-queue for next frame if still running
+        if self._running:
+            self._render_canvas.request_draw(self._run_loop)
+
+    def _tick(self):
+        """One interactive frame: startup on the first one, then draw."""
         if self._startup_pending:
             # Inside the running loop, so async startup handlers live on it and load
             # between frames instead of never running (manifoldx#28).
             self._startup_pending = False
             self._fire_startup()
         self._draw_frame()
-        # Re-queue for next frame if still running
-        if self._running:
-            self._render_canvas.request_draw(self._run_loop)
+
+    def _detach(self):
+        """Stop this engine without closing its window, for a hot reload.
+
+        Fires 'shutdown', cancels this engine's async tasks and waiters, unhooks
+        its input from the canvas and drops its background workers. The canvas,
+        device and asyncio loop stay up for the engine that replaces it.
+        """
+        self._running = False
+        self._event_bus.dispatch_immediate(self, "shutdown", {})
+        for task in list(self._tasks):
+            task.cancel()
+        self._frame_waiters.cancel_all()
+        try:
+            asyncio.get_running_loop()  # a shared loop runs the cancellations itself
+        except RuntimeError:
+            if self._aio_loop is not None and not self._aio_loop.is_closed():
+                self._aio_loop.run_until_complete(asyncio.sleep(0))  # let cancelled tasks unwind
+                self._aio_loop.close()
+        if self._render_canvas is not None:
+            self._input_bridge.detach(self._render_canvas)
+        for executor in (self._executor, self._process_executor):
+            if executor is not None:
+                executor.shutdown(wait=False, cancel_futures=True)
 
     def run(self):
         """Run the engine with real-time rendering.

@@ -1,5 +1,10 @@
-"""The manifoldx command. `manifoldx export` runs an app and writes its scene to glTF instead of a window.
+"""The manifoldx command.
 
+`manifoldx run` runs an app and reloads it in the same window whenever its source changes.
+`manifoldx export` runs an app and writes its scene to glTF instead of a window.
+
+    manifoldx run app.py [-- <app args>]
+    manifoldx run -m package.module [-- <app args>]
     manifoldx export app.py scene.glb [--strict] [-- <app args>]
     manifoldx export -m package.module scene.glb [--strict] [-- <app args>]
 """
@@ -22,7 +27,17 @@ def main(argv=None):
     ex.add_argument("-m", dest="module", help="run this module as __main__, like python -m")
     ex.add_argument("paths", nargs="+", metavar="[app.py] out.glb")
     ex.add_argument("--strict", action="store_true", help="exit with code 1 and write nothing if anything is left out")
+    run = sub.add_parser("run", help="run an app and reload it in the same window when its source changes")
+    run.add_argument("-m", dest="module", help="run this module as __main__, like python -m")
+    run.add_argument("script", nargs="?", metavar="app.py")
     args = parser.parse_args(argv)
+    if args.command == "run":
+        if (args.module is None) == (args.script is None):
+            parser.error("give app.py or -m module")
+        from manifoldx.hot import HotReloader
+
+        HotReloader(script=args.script, module=args.module, argv=app_args).run()
+        return 0
     if len(args.paths) != (1 if args.module else 2):
         parser.error("give app.py and out.glb, or -m module and out.glb")
     return export(args.module, None if args.module else args.paths[0], args.paths[-1], args.strict, app_args)

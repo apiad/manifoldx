@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`manifoldx run app.py` (or `-m package.module`) with hot reload, and
+  `engine.state`.** Saving any of the app's source files reruns it in the same window,
+  on the same GPU device. The scene is rebuilt from the new code; `engine.state`, a
+  dict that also reads as attributes, carries over, so an app that keeps its camera
+  angle or game progress there continues where it was. A broken edit keeps the running
+  version; an error while running pauses the app until the next save (#92).
+
 - **Surface patterns in the fragment shader.** A vertex-coloured geometry's `surfaces`
   key gives each vertex a pattern id (0 flat, 1 grass, 2 cobbles, 3 veins, 4 brick,
   5 blocks, 6 planks, 7 tiles), and `StandardMaterial(vertex_colors=True)` draws that
