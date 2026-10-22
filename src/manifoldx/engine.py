@@ -328,6 +328,7 @@ class Engine:
 
         self.state = hot._state if hot._state is not None else hot.State()
         self._looks = []  # futures waiting for the next presented frame as PNG bytes (the dev server's look)
+        self._look_copy = None  # a frame copied for them, read back on the frame after
 
         # Input layer — keyboard + mouse + resize. The bridge attaches to
         # the canvas in _init_canvas; until then it is dormant.
@@ -1213,6 +1214,10 @@ class Engine:
         # Ensure render pipeline is initialized
         self._render_pipeline._ensure_pipeline(self._device, self._texture_format)
 
+        if self._look_copy is not None:  # the GPU finished last frame's copy by now
+            copy, self._look_copy = self._look_copy, None
+            copy.finish()
+
         # Get the next frame's texture and create view
         texture = self._wgpu_context.get_current_texture()
         texture_view = texture.create_view()
@@ -1268,18 +1273,11 @@ class Engine:
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
 
-        if self._looks:  # asked by the dev server under manifoldx run
+        if self._looks:  # asked by the dev server: copy the frame now, read it next frame
             looks, self._looks = self._looks, []
             from manifoldx import devchannel
 
-            try:
-                shot = devchannel.save_png(self._device, texture, self._texture_format)
-            except Exception as e:  # noqa: BLE001  a surface without COPY_SRC: the request says so, drawing goes on
-                for look in looks:
-                    look.set_exception(e)
-            else:
-                for look in looks:
-                    look.set_result(shot)
+            self._look_copy = devchannel.Readback(self._device, texture, self._texture_format, looks)
 
     def log(self, message: str) -> None:
         """A line for the dev log under `manifoldx run` (its page, /api/log, .manifoldx/log.txt); nothing otherwise.

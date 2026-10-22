@@ -11,6 +11,7 @@ running under `manifoldx run` in this folder (see manifoldx.devchannel).
     manifoldx export -m package.module scene.glb [--strict] [-- <app args>]
     manifoldx look | events | state [key.path] | set '<merge patch>' | emit <event> ['<payload>']
     manifoldx log [-n N] [--after SEQ] [--match REGEX] [--wait S]
+    manifoldx metrics [-n N]
 """
 
 import argparse
@@ -35,6 +36,8 @@ def main(argv=None):
     run.add_argument("-m", dest="module", help="run this module as __main__, like python -m")
     run.add_argument("script", nargs="?", metavar="app.py")
     run.add_argument("--port", type=int, default=None, help="the dev server's port (default 8770 or the next free)")
+    run.add_argument("--debug", action="store_true",
+                     help="also measure each frame, memory and garbage collection, and log slow ones and keys")
     sub.add_parser("look", help="save the frame on screen to .manifoldx/look.png and print its path")
     st = sub.add_parser("state", help="print engine.state as JSON")
     st.add_argument("path", nargs="?", help="a dotted key path inside the state, e.g. player.x")
@@ -44,13 +47,15 @@ def main(argv=None):
     em.add_argument("event")
     em.add_argument("payload", nargs="?", default="null")
     sub.add_parser("events", help="list the events the app handles, with their handlers' docstrings")
+    mt = sub.add_parser("metrics", help="print the last seconds of metrics (manifoldx run --debug)")
+    mt.add_argument("-n", type=int, default=10, help="how many seconds (default 10)")
     lg = sub.add_parser("log", help="print log lines; with --match or --wait, exit 1 when no line came")
     lg.add_argument("-n", type=int, default=40, help="how many of the last lines (default 40)")
     lg.add_argument("--after", type=int, help="only lines after this sequence number")
     lg.add_argument("--match", help="only lines matching this regex")
     lg.add_argument("--wait", type=float, default=0.0, help="seconds to wait for a line (at most 300)")
     args = parser.parse_args(argv)
-    if args.command in ("look", "state", "set", "emit", "events", "log"):
+    if args.command in ("look", "state", "set", "emit", "events", "log", "metrics"):
         return dev_command(args)
     if args.command == "run":
         if (args.module is None) == (args.script is None):
@@ -58,7 +63,7 @@ def main(argv=None):
         from manifoldx.hot import HotReloader
 
         port = {} if args.port is None else {"port": args.port}
-        HotReloader(script=args.script, module=args.module, argv=app_args, **port).run()
+        HotReloader(script=args.script, module=args.module, argv=app_args, debug=args.debug, **port).run()
         return 0
     if len(args.paths) != (1 if args.module else 2):
         parser.error("give app.py and out.glb, or -m module and out.glb")
@@ -108,6 +113,10 @@ def dev_command(args):
         show(call("/api/state", "PATCH", args.patch))
     elif args.command == "emit":
         show(call("/api/events/" + quote(args.event, safe=""), "POST", args.payload))
+    elif args.command == "metrics":
+        for m in json.loads(call("/api/metrics"))[-args.n:]:
+            print(f"{m['time']}  fps {m['fps']:5.1f}  frame {m['frame_ms']:5.1f} ms  worst {m['worst_ms']:6.1f} ms"
+                  f"  {m['rss_mb']:7.1f} MB  gc {'/'.join(map(str, m['gc']['runs']))} {m['gc']['ms']} ms")
     elif args.command == "events":
         for name, docs in json.loads(call("/api/events")).items():
             print(name + "".join(f"\n    {d}" for d in docs if d))

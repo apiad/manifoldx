@@ -1,6 +1,6 @@
 ---
 when: building or debugging an app, game or simulation together with an agent; using `manifoldx look`, `state`, `set`, `emit`, `events` or `log`; giving an app events an agent can fire; following a person who plays
-triggers: ["agent", "dev server", "dev page", "manifoldx look", "manifoldx state", "manifoldx set", "manifoldx emit", "manifoldx events", "manifoldx log", "engine.log", "/api/state", "/api/events", "/api/log", "monitor", "follow the player"]
+triggers: ["agent", "--debug", "metrics", "fps", "frame rate", "memory", "gc", "dev server", "dev page", "manifoldx look", "manifoldx state", "manifoldx set", "manifoldx emit", "manifoldx events", "manifoldx log", "engine.log", "/api/state", "/api/events", "/api/log", "monitor", "follow the player"]
 ---
 
 # Working with an agent: the dev server of `manifoldx run`
@@ -11,7 +11,7 @@ Read this when you build something on manifoldx with an agent in the loop: the a
 
 ## The loop
 
-1. The person, or the agent, starts the app: `uv run manifoldx run -m mygame.dev` (or `app.py`).
+1. The person, or the agent, starts the app: `uv run manifoldx run --debug -m mygame.dev` (or `app.py`; without `--debug` it skips the watchers below).
 2. `manifoldx run` prints `dev page and API at http://127.0.0.1:8770`. The page shows the frame on screen, the log as it grows, `engine.state`, and a button for every event the app handles.
 3. The agent works from a shell in the same folder:
    - `manifoldx look` saves the frame on screen to `.manifoldx/look.png`. Read the image.
@@ -36,8 +36,20 @@ The server listens on 127.0.0.1 only (port 8770, or the next free one; `manifold
 | `POST /api/events/<name>` | `engine.emit(name, body)`; 404 with the known events when nothing handles it |
 | `GET /api/log?after=N&match=RE&wait=S&last=K` | lines after sequence number `N` (or the last `K`, default 50) matching the regex; `wait` blocks up to `S` seconds (at most 300) for one; the answer's `next` is the `after` of the next request |
 | `GET /api/look` | the next frame presented, GUI included, as PNG |
+| `GET /api/metrics` | under `--debug`: one entry per second for the last 2 minutes (fps, mean and worst frame ms, resident MB, garbage collections per generation and their ms) |
 
 Every request that reads or changes the app runs on the engine's thread between frames, so it never races a system or a handler. While the app is paused on an error, state, set and emit still answer; look waits for a frame and fails with 504 after 5 s.
+
+## `manifoldx run --debug`: the watchers
+
+Plain `manifoldx run` keeps the dev server light: the log has only the runner's lines and the app's own. `--debug` adds what everyone needs to debug performance, with no code in the app:
+
+- `manifoldx metrics -n 30` (and a panel on the page): each second's fps, mean and worst frame time, resident memory, and garbage collections per generation with the time they took.
+- The log gets a line every 10 s with the same numbers, a `slow frame N ms` line for each frame over 100 ms, a `slow gc` line for each collection over 20 ms, and the keys pressed.
+
+A slow frame line says only how long; log where the person was from the app (`engine.log`) so the two lines meet in the log. To find what makes frames slow, watch for them: `manifoldx log --match 'slow frame' --wait 120`, then `manifoldx log -n 20` for what happened around them.
+
+**A look costs a little, so ask for one when you need it.** The frame that takes it only queues a copy; the next frame reads it back and a thread encodes the PNG, but each look still costs a GPU copy and a readback. The page's "live frame" box (off by default) asks for one every 1.5 s.
 
 ## Writing an app an agent can drive
 

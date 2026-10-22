@@ -10,6 +10,9 @@
 - `GET /api/log?after=N&match=RE&wait=S&last=K`: log lines after sequence number N (or the last K), those
   matching the regex RE; with `wait`, block up to S seconds until one arrives.
 - `GET /api/look`: the next frame presented, GUI included, as a PNG.
+- `GET /api/metrics` (under `manifoldx run --debug`): each second's frame rate, frame times, memory and
+  garbage collections, the last METRICS_KEEP seconds. Debug also logs the keys pressed, a frame slower than
+  SLOW_FRAME, a collection slower than SLOW_GC, and the metrics every METRICS_LOG seconds.
 
 Everything that reads or changes the app runs on the engine's thread between frames, so a request
 never races the app. The log is also written to `.manifoldx/log.txt` (rotated at 256 KB, one old file
@@ -17,6 +20,7 @@ kept), and `.manifoldx/server.json` holds the URL the `manifoldx` commands use.
 """
 
 import collections
+import gc
 import json
 import logging
 import os
@@ -33,6 +37,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+import sys
+
 import numpy as np
 
 FOLDER = ".manifoldx"
@@ -41,6 +47,10 @@ MAX_BYTES = 256_000
 KEEP_LINES = 5000   # log lines the API keeps in memory
 WAIT_MAX = 300.0    # seconds a log request may wait
 LOOK_WAIT = 5.0     # seconds a look waits for a frame (none come while the app is paused)
+SLOW_FRAME = 0.1    # seconds: under --debug a frame this long is logged at once
+SLOW_GC = 0.02      # seconds: under --debug a garbage collection this long is logged at once
+METRICS_LOG = 10.0  # seconds between metrics lines in the log under --debug
+METRICS_KEEP = 120  # seconds of metrics /api/metrics keeps
 
 # engine.log writes here. Only manifoldx run gives it somewhere to go; otherwise its lines are dropped.
 LOG = logging.getLogger("manifoldx.app")
@@ -94,10 +104,72 @@ def merge_patch(target, patch):
             target[key] = value
 
 
+def _rss_mb():
+    """The process's resident memory in MB (Linux /proc; elsewhere the peak, from resource)."""
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 2**20
+    except (OSError, ValueError):
+        import resource
+
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return peak / 2**20 if sys.platform == "darwin" else peak / 1024
+
+
+class Meter:
+    """Under --debug: each second's frame rate, frame times, memory and garbage collections."""
+
+    def __init__(self):
+        self.history = collections.deque(maxlen=METRICS_KEEP)
+        self.start = self.last = None
+        self.frames, self.total, self.worst = 0, 0.0, 0.0
+        self.gc_runs, self.gc_time, self.gc_at = [0, 0, 0], 0.0, None
+        self.logged = 0.0
+        gc.callbacks.append(self._gc)
+
+    def close(self):
+        gc.callbacks.remove(self._gc)
+
+    def _gc(self, phase, info):
+        if phase == "start":
+            self.gc_at = time.perf_counter()
+        elif self.gc_at is not None:
+            took, self.gc_at = time.perf_counter() - self.gc_at, None
+            self.gc_runs[info["generation"]] += 1
+            self.gc_time += took
+            if took >= SLOW_GC:
+                LOG.info("slow gc: generation %d took %.0f ms, %d collected", info["generation"], 1000 * took,
+                         info["collected"])
+
+    def frame(self, now):
+        """After each frame, with the time it ended."""
+        if self.last is not None:
+            dt = now - self.last
+            self.frames += 1
+            self.total += dt
+            self.worst = max(self.worst, dt)
+            if dt >= SLOW_FRAME:
+                LOG.info("slow frame %.0f ms", 1000 * dt)
+        self.last = now
+        if self.start is None:
+            self.start = now
+        elif now - self.start >= 1.0:
+            m = {"time": time.strftime("%H:%M:%S"), "fps": round(self.frames / (now - self.start), 1),
+                 "frame_ms": round(1000 * self.total / max(self.frames, 1), 1), "worst_ms": round(1000 * self.worst, 1),
+                 "rss_mb": round(_rss_mb(), 1), "gc": {"runs": list(self.gc_runs), "ms": round(1000 * self.gc_time, 1)}}
+            self.history.append(m)
+            if now - self.logged >= METRICS_LOG:
+                self.logged = now
+                LOG.info("fps %.0f, frame %.1f ms (worst %.0f), %.0f MB, gc %s in %.0f ms", m["fps"], m["frame_ms"],
+                         m["worst_ms"], m["rss_mb"], "/".join(map(str, self.gc_runs)), m["gc"]["ms"])
+            self.start, self.frames, self.total, self.worst = now, 0, 0.0, 0.0
+            self.gc_runs, self.gc_time = [0, 0, 0], 0.0
+
+
 class Channel:
     """The dev channel of one `manifoldx run`: the log, the server, and the jobs the engine's thread runs."""
 
-    def __init__(self, root, hot, port=PORT):
+    def __init__(self, root, hot, port=PORT, debug=False):
         self.dir = Path(root) / FOLDER
         self.dir.mkdir(parents=True, exist_ok=True)
         self.hot = hot  # the HotReloader: its engine is the one running now, across reloads
@@ -108,12 +180,15 @@ class Channel:
         LOG.addHandler(self.lines)
         self.jobs = queue.SimpleQueue()
         self.keys = frozenset()
+        self.meter = Meter() if debug else None  # with it, the keys pressed are logged too
         self.server = _bind(port, self)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         (self.dir / "server.json").write_text(json.dumps({"url": self.url, "pid": os.getpid()}))
         threading.Thread(target=self.server.serve_forever, name="manifoldx-dev", daemon=True).start()
 
     def close(self):
+        if self.meter is not None:
+            self.meter.close()
         self.server.shutdown()
         self.server.server_close()
         (self.dir / "server.json").unlink(missing_ok=True)
@@ -136,7 +211,10 @@ class Channel:
                 future.set_exception(e)
 
     def frame(self, engine):
-        """After a frame: log the keys pressed since the last one."""
+        """After a frame, under --debug: measure it, and log the keys pressed since the last one."""
+        if self.meter is None:
+            return
+        self.meter.frame(time.perf_counter())
         keys = engine.input.pressed_keys
         if down := sorted(keys - self.keys):
             LOG.info("keys %s", " ".join(down))
@@ -209,6 +287,10 @@ class _Handler(BaseHTTPRequestHandler):
                 wait=float(q.get("wait", 0)), last=int(q.get("last", 50)))))
         if url.path == "/api/look":
             return self._answer(lambda: (200, ch.look(), "image/png"))
+        if url.path == "/api/metrics":
+            if ch.meter is None:
+                return self._send(404, {"error": "metrics need manifoldx run --debug"})
+            return self._send(200, list(ch.meter.history))
         self._send(404, {"error": f"no {url.path}"})
 
     def do_PATCH(self):
@@ -265,13 +347,55 @@ def server_url(root="."):
         return None
 
 
-def save_png(device, texture, texture_format):
-    """PNG bytes of a presented frame's texture."""
-    w, h = texture.size[0], texture.size[1]
-    data = device.queue.read_texture({"texture": texture, "origin": (0, 0, 0), "mip_level": 0},
-                                     {"offset": 0, "bytes_per_row": w * 4, "rows_per_image": h}, (w, h, 1))
-    pixels = np.frombuffer(data, np.uint8).reshape(h, w, 4)
-    return png(pixels[..., [2, 1, 0]] if str(texture_format).startswith("bgra") else pixels[..., :3])
+class Readback:
+    """A presented frame on its way to PNG bytes for the looks waiting, kept off the frames.
+
+    The frame only queues a copy of its texture into a buffer. The next frame maps the buffer,
+    which the GPU has filled by then, and a thread encodes the PNG and answers the looks."""
+
+    def __init__(self, device, texture, texture_format, looks):
+        import wgpu
+
+        self.looks, self.bgra = looks, str(texture_format).startswith("bgra")
+        self.w, self.h = texture.size[0], texture.size[1]
+        self.row = (self.w * 4 + 255) // 256 * 256  # a buffer copy's rows are 256-byte aligned
+        try:
+            self.buffer = device.create_buffer(size=self.row * self.h,
+                                               usage=wgpu.BufferUsage.MAP_READ | wgpu.BufferUsage.COPY_DST)
+            encoder = device.create_command_encoder()
+            encoder.copy_texture_to_buffer({"texture": texture, "origin": (0, 0, 0), "mip_level": 0},
+                                           {"buffer": self.buffer, "offset": 0, "bytes_per_row": self.row,
+                                            "rows_per_image": self.h}, (self.w, self.h, 1))
+            device.queue.submit([encoder.finish()])
+        except Exception as e:  # noqa: BLE001  a surface without COPY_SRC: the looks say so, drawing goes on
+            self.fail(e)
+
+    def fail(self, e):
+        for look in self.looks:
+            look.set_exception(e)
+        self.looks = []
+
+    def finish(self):
+        if not self.looks:
+            return
+        import wgpu
+
+        try:
+            self.buffer.map_sync(wgpu.MapMode.READ)
+            data = bytes(self.buffer.read_mapped())
+            self.buffer.unmap()
+        except Exception as e:  # noqa: BLE001
+            return self.fail(e)
+        threading.Thread(target=self._encode, args=(data,), name="manifoldx-look", daemon=True).start()
+
+    def _encode(self, data):
+        try:
+            pixels = np.frombuffer(data, np.uint8).reshape(self.h, self.row)[:, :self.w * 4].reshape(self.h, self.w, 4)
+            shot = png(pixels[..., [2, 1, 0]] if self.bgra else pixels[..., :3])
+        except Exception as e:  # noqa: BLE001
+            return self.fail(e)
+        for look in self.looks:
+            look.set_result(shot)
 
 
 def png(rgb):
@@ -304,11 +428,12 @@ button{background:#5b4fd6;color:#fff;border:0;border-radius:4px;padding:5px 10px
 @media(max-width:900px){main{grid-template-columns:1fr}}
 </style></head><body>
 <header><b>manifoldx run</b><span id="status"></span>
-<label><input type="checkbox" id="auto" checked> live frame</label></header>
+<label><input type="checkbox" id="auto"> live frame</label></header>
 <main><div>
 <section><h2>Frame</h2><img id="frame" alt="the frame on screen"><button onclick="look()">refresh</button></section>
 <section><h2>Log</h2><pre id="log"></pre></section>
 </div><div>
+<section id="msec" hidden><h2>Metrics (--debug)</h2><pre id="metrics"></pre></section>
 <section><h2>State</h2><pre id="state"></pre>
 <textarea id="patch" rows="4" placeholder='merge patch, e.g. {"cam": {"yaw": 0.5}}'></textarea>
 <button onclick="patch()">patch state</button><span id="perr" class="err"></span></section>
@@ -357,8 +482,19 @@ async function events() {
     div.append(b, s); box.append(div);
   }
 }
-logLoop(); state(); events(); look();
-setInterval(state, 1000); setInterval(events, 5000);
+async function metrics() {
+  const r = await fetch('/api/metrics');
+  if (!r.ok) return;
+  const h = await r.json(), m = h[h.length - 1];
+  $('msec').hidden = false;
+  if (!m) return;
+  const fps = h.slice(-60).map(x => x.fps), bars = '▁▂▃▄▅▆▇█', top = Math.max(...fps, 1);
+  $('metrics').textContent = `fps ${m.fps}   frame ${m.frame_ms} ms   worst ${m.worst_ms} ms\n` +
+    `memory ${m.rss_mb} MB   gc ${m.gc.runs.join('/')} in ${m.gc.ms} ms\n` +
+    fps.map(f => bars[Math.min(7, Math.floor(8 * f / top))]).join('') + '  fps, last minute';
+}
+logLoop(); state(); events(); look(); metrics();
+setInterval(state, 1000); setInterval(events, 5000); setInterval(metrics, 1000);
 setInterval(() => { if ($('auto').checked) look(); }, 1500);
 </script></body></html>
 """

@@ -145,10 +145,11 @@ python my_scene.py --render --fps 60 --duration 120 --output movie.mp4
 `manifoldx run` reloads your app in the same window on every save, and serves a dev page and an HTTP API beside it, on 127.0.0.1. An agent (or you) can see the frame on screen, read the log the app writes with `engine.log`, read and patch `engine.state`, fire the app's events, and wait for a log line, while a person plays:
 
 ```bash
-uv run manifoldx run -m mygame.dev     # prints: dev page and API at http://127.0.0.1:8770
+uv run manifoldx run --debug -m mygame.dev   # prints: dev page and API at http://127.0.0.1:8770
 manifoldx look                          # .manifoldx/look.png: the frame on screen
 manifoldx log --match "entered cave" --wait 300
 manifoldx emit spawn '{"kind": "slime"}'
+manifoldx metrics -n 30                 # --debug: fps, frame times, memory, gc per second
 manifoldx set '{"player": {"hp": 1}}'
 ```
 
