@@ -312,6 +312,21 @@ python demos/terrain_stream.py --render --duration 8 --output flyby.mp4
 - Front-to-back composite raymarching in a fragment shader, with depth-test on / depth-write off and pre-multiplied alpha blending
 - Reusable colormap LUT + per-material 256-sample opacity LUT (built from piecewise stops or a numpy array)
 
+### Hot reload
+
+`manifoldx run app.py` (or `manifoldx run -m package.module`) runs an app and reruns it in the same window each time one of its source files changes. The scene is rebuilt from the new code. Keep in `engine.state` whatever should survive a reload, as plain data:
+
+```python
+engine.state.setdefault("angle", 0.0)
+
+@engine.system
+def spin(query: Query[Transform], dt: float):
+    engine.state.angle += dt
+    query[Transform].rot = Transform.rotation(x=0, y=engine.state.angle, z=0)
+```
+
+A broken edit leaves the running version on screen; an error while running pauses the app until the next save.
+
 ### Video Rendering
 
 Render simulations to video files for sharing or CI using the built-in CLI:

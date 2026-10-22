@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`manifoldx run app.py` (or `-m package.module`) with hot reload, and
+  `engine.state`.** Saving any of the app's source files reruns it in the same window,
+  on the same GPU device. The scene is rebuilt from the new code; `engine.state`, a
+  dict that also reads as attributes, carries over, so an app that keeps its camera
+  angle or game progress there continues where it was. A broken edit keeps the running
+  version; an error while running pauses the app until the next save (#92).
+
 - **`Image` style key `uv` = (u0, v0, u1, v1) and `textures.write_texture(engine,
   handle, rgba, (x, y))`.** An Image draws that part of its source into its box, and
   the window can change every frame without an upload, so a big map texture pans under

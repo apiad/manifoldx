@@ -166,6 +166,7 @@ def _invoke_async(handler: Handler, payload, engine) -> None:
         coro = handler.func(payload)
     loop = engine._get_active_loop()
     task = loop.create_task(coro)
+    engine._tasks.add(task)
     task.add_done_callback(engine._on_task_done)
 
 

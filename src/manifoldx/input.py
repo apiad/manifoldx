@@ -224,6 +224,9 @@ class InputState:
         self._accum_wheel_dy = 0.0
 
 
+_BRIDGED_EVENTS = ("key_down", "key_up", "pointer_down", "pointer_up", "pointer_move", "wheel", "resize")
+
+
 class _InputBridge:
     """Forward rendercanvas events to the engine event bus and the InputState.
 
@@ -244,16 +247,10 @@ class _InputBridge:
         self._last_pointer_pos: tuple[float, float] | None = None
 
     def attach(self, canvas) -> None:
-        canvas.add_event_handler(
-            self._on_event,
-            "key_down",
-            "key_up",
-            "pointer_down",
-            "pointer_up",
-            "pointer_move",
-            "wheel",
-            "resize",
-        )
+        canvas.add_event_handler(self._on_event, *_BRIDGED_EVENTS)
+
+    def detach(self, canvas) -> None:
+        canvas.remove_event_handler(self._on_event, *_BRIDGED_EVENTS)
 
     def begin_frame(self) -> None:
         self._state._begin_frame()
