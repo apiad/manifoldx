@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`engine.render_to_texture(camera, (w, h), live=True, background=None)`: a second
+  camera into a texture.** Rendered before each frame's main pass, without the GUI, and
+  usable as an Image's source or an albedo_map. `live=False` renders once and then only
+  on `refresh_texture(handle)`, so a still view costs nothing; `set_texture_live` and
+  `drop_texture` switch and stop it. A live view costs 2.5 to 3.5 ms of CPU a frame in a
+  20-entity scene and 4 to 7 ms with 2000 entities, nearly independent of its size from
+  150 to 300 px, on a laptop GPU and on llvmpipe alike. Example:
+  `examples/render_to_texture.py`.
+- **`Image` draws a `TextureHandle`, and rounds its corners with `radius`.** Half the
+  size makes a circle, antialiased in the shader.
+- **`Text(style_overrides={"font": path})`: text in a font file.** Drawn by Pillow at
+  its pixel size through the image path, with kerning and no 256-pixel width limit, and
+  tinted by `fg`. Text without a `font` key is unchanged.
+
 - **SVG images in the GUI: `manifoldx.gui.Image`.** Takes an SVG as a path, markup or
   bytes and draws it at the pixel size it lands at on screen (layout size times the GUI
   scale times the display's pixel ratio or a still's supersampling), so it stays crisp
@@ -77,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the edge of what the map covers never shows on screen as a line.
 
 ### Performance
+
+- **Frustum culling looks up bounds once per geometry and material, not per instance,
+  and the scene pass skips culled meshes before its per-entity loop** (when no axis,
+  label or volume entities exist). A camera that sees a corner of a large scene, such
+  as a render_to_texture view, no longer walks every entity in Python.
 
 - **The Streamer uploads the ready ring hidden, a few MB a frame.** Its worker also packs
   each cell's vertices (`resources.pack_vertices`, shared with `create_buffers`), and the
