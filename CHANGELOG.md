@@ -92,6 +92,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`render_to_texture` views skip the world's fog unless `fog=True`, and `background`
+  is sRGB** (a hex string or an RGB/RGBA tuple, like GUI colours; an RGB tuple used to
+  fail inside wgpu). Fog grows with distance from the camera, so a minimap camera high
+  over the ground came out pale.
+
 - **GUI colours are sRGB, so a hex shows as itself.** `bg`, `border_color`, `fg` and
   `tint` are decoded from sRGB like material colours and SVG fills; before, a hex was
   drawn as linear light and showed lighter (`#808080` came out as about `#bcbcbc`).
