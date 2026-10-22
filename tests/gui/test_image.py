@@ -116,7 +116,57 @@ def test_gpu_rerasterizes_at_the_new_scale():
     eng._draw_frame()
     canvas.draw()
     eng.gui.scale = 2.0
-    eng._draw_frame()
-    canvas.draw()
+    for _ in range(2):  # the frame of the change draws a bucketed raster, the next the exact one
+        eng._draw_frame()
+        canvas.draw()
     sizes = {(w, h) for (_d, w, h) in svg._cache._items}
-    assert sizes == {(40, 20), (80, 40)}
+    assert (80, 40) in sizes and (40, 20) in sizes
+
+
+def test_paint_runs_group_same_kind_ops():
+    from manifoldx.render.passes.gui import paint_runs
+
+    order = [("rect", 0), ("rect", 1), ("image", 0), ("text", 0), ("rect", 2), ("image", 1)]
+    assert paint_runs(order) == [
+        ("rect", 0, 2), ("image", 0, 1), ("text", 0, 1), ("rect", 2, 1), ("image", 1, 1)
+    ]
+
+
+def test_later_root_panel_covers_earlier_images():
+    eng, canvas = _offscreen()
+    eng.gui.append(Panel([Image(WHITE, style_overrides={"width": 40, "tint": "#00ff00"})],
+                         offset=(10, 10), style_overrides={"padding": 0, "width": 40}))
+    eng.gui.append(Panel([Image(WHITE, style_overrides={"width": 20, "tint": "#ff0000"})],
+                         offset=(30, 30),
+                         style_overrides={"padding": 0, "width": 30, "height": 30, "bg": "#0000ffff"}))
+    eng._draw_frame()
+    frame = np.asarray(canvas.draw())
+    assert frame[15, 15, :3].tolist() == [0, 255, 0]  # first icon, uncovered
+    # the second panel spans 30..60; its icon x 35..55, y 30..50; the first icon 10..50
+    assert frame[40, 32, 2] > 200 and frame[40, 32, 1] < 30  # second panel over the first icon
+    assert frame[40, 45, :3].tolist() == [255, 0, 0]  # second icon, drawn after its panel
+
+
+def test_bucket_size_steps_and_settle():
+    from manifoldx.render.passes.gui import bucket_size, settle_size
+
+    for n in (17, 48, 100, 333):
+        b, _ = bucket_size(n, n)
+        assert n <= b <= n * 2 ** (1 / 8) + 1
+    assert bucket_size(50, 50) == bucket_size(51, 51)  # neighbours share a raster
+    assert settle_size(None, 50, 50, False) == (50, 50)  # first frame: exact
+    assert settle_size((50, 50), 50, 50, False) == (50, 50)  # settled: exact
+    assert settle_size((48, 48), 50, 50, False) == bucket_size(50, 50)  # animating
+    assert settle_size((48, 48), 50, 50, True) == (50, 50)  # exact already cached
+
+
+def test_gpu_pulse_reuses_bucketed_rasters():
+    eng, canvas = _offscreen()
+    img = Image(ICON, style_overrides={"width": 40})
+    eng.gui.append(Panel([img], style_overrides={"padding": 0}))
+    widths = [40 + 8 * abs(((i % 10) - 5) / 5) for i in range(40)]  # 40..48..40, four cycles
+    for w in widths:
+        img.style_overrides["width"] = w
+        eng._draw_frame()
+        canvas.draw()
+    assert len(svg._cache) <= 6

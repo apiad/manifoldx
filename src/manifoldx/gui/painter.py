@@ -1,7 +1,8 @@
 """Painter accumulator for the GUI layer.
 
 The painter is the seam between the widget tree (pure Python, layout-aware)
-and the render pass (GPU-aware, batches into two instanced draws).
+and the render pass (GPU-aware). `order` keeps the tree's paint order across
+op kinds; the pass draws each run of same-kind ops as one draw.
 
 Painting walks the tree top-down, emitting:
 
@@ -50,6 +51,7 @@ class ImageOp:
     data: bytes  # the SVG document
     digest: str  # its hash, the cache key with the pixel size
     tint: tuple[float, float, float, float]  # alpha already multiplied by opacity
+    widget: int = 0  # id() of the Image, to tell a resize in progress from a settled size
 
 
 @dataclass
@@ -57,6 +59,8 @@ class Painter:
     rect_ops: list[RectOp] = field(default_factory=list)
     text_ops: list[TextOp] = field(default_factory=list)
     image_ops: list[ImageOp] = field(default_factory=list)
+    # Paint order across kinds: ("rect" | "text" | "image", index into that list).
+    order: list[tuple[str, int]] = field(default_factory=list)
 
     def draw_rect(
         self,
@@ -67,6 +71,7 @@ class Painter:
         border: float = 0.0,
         radius: float = 0.0,
     ) -> None:
+        self.order.append(("rect", len(self.rect_ops)))
         self.rect_ops.append(
             RectOp(
                 box=box,
@@ -85,6 +90,7 @@ class Painter:
         font_size: int,
         fg: tuple[float, float, float, float],
     ) -> None:
+        self.order.append(("text", len(self.text_ops)))
         self.text_ops.append(TextOp(box=box, text=text, font_size=font_size, fg=fg))
 
     def draw_image(
@@ -94,13 +100,18 @@ class Painter:
         data: bytes,
         digest: str,
         tint: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        widget: int = 0,
     ) -> None:
-        self.image_ops.append(ImageOp(box=box, data=data, digest=digest, tint=tint))
+        self.order.append(("image", len(self.image_ops)))
+        self.image_ops.append(
+            ImageOp(box=box, data=data, digest=digest, tint=tint, widget=widget)
+        )
 
     def clear(self) -> None:
         self.rect_ops.clear()
         self.text_ops.clear()
         self.image_ops.clear()
+        self.order.clear()
 
 
 def paint(
@@ -154,6 +165,7 @@ def paint(
             data=widget.svg_data,
             digest=widget.svg_digest,
             tint=(r, g, b, a * float(s.get("opacity", 1.0))),
+            widget=id(widget),
         )
     elif isinstance(widget, ValueDisplay):
         s = widget.effective_style()

@@ -1,10 +1,11 @@
 """GUI render pass — runs last in the pipeline.
 
-Draws, in order:
+Draws in the widget tree's paint order (a later panel covers an earlier
+one's images and text); each run of same-kind ops is one draw:
 
 1. Rects — one instanced draw via `RectMaterial`.
 2. Images — one draw per Image, each from its own texture: the SVG rasterized
-   at the pixel size it lands at on the render target (see `_draw_images`).
+   at the pixel size it lands at on the render target (see `_prepare_images`).
 3. Glyphs — one instanced draw via the local `_GLYPH_WGSL` shader, which
    reads from LabelTextureAtlas (a texture_2d_array) and a per-instance
    storage buffer encoding screen-space billboard coords + atlas slice.
@@ -17,6 +18,7 @@ Pass attributes (set at pipeline-creation time in `_ensure_gui_pipeline`):
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 import numpy as np
@@ -231,26 +233,39 @@ def render_gui_pass(rp, engine, render_pass) -> None:
     # the GUI shader, which only reads viewport_size from it.
     _ensure_globals_viewport(rp, engine)
 
-    # --- Rect draw ---
+    # Upload every kind's instances once, then draw in the tree's paint order:
+    # each run of same-kind ops is one draw over its slice of the instances.
     rect_data = RectMaterial.pack_instances(painter.rect_ops)
     if rect_data.size > 0:
         _upload_rect_instances(rp, rect_data)
-        _draw_rects(rp, engine, render_pass, rect_data.shape[0])
-
-    # --- Image draws ---
     if painter.image_ops:
         _ensure_image_pipeline(rp, engine)
-        _draw_images(rp, engine, render_pass, painter.image_ops)
-
-    # --- Glyph draw ---
+        image_groups = _prepare_images(rp, engine, painter.image_ops)
     if painter.text_ops:
         atlas = engine.get_label_atlas()
         glyph_data = _pack_glyph_instances(painter.text_ops, atlas)
-        if glyph_data.size > 0:
-            atlas.upload_dirty(rp._device, rp._device.queue)
-            _ensure_glyph_pipeline(rp, engine)
-            _upload_glyph_instances(rp, glyph_data)
-            _draw_glyphs(rp, engine, render_pass, glyph_data.shape[0])
+        atlas.upload_dirty(rp._device, rp._device.queue)
+        _ensure_glyph_pipeline(rp, engine)
+        _upload_glyph_instances(rp, glyph_data)
+
+    for kind, first, count in paint_runs(painter.order):
+        if kind == "rect":
+            _draw_rects(rp, engine, render_pass, first, count)
+        elif kind == "image":
+            _draw_images(rp, render_pass, image_groups, first, count)
+        else:
+            _draw_glyphs(rp, engine, render_pass, first, count)
+
+
+def paint_runs(order: list[tuple[str, int]]) -> list[tuple[str, int, int]]:
+    """Group the paint order into (kind, first index, count) runs of one kind."""
+    runs: list[list] = []
+    for kind, index in order:
+        if runs and runs[-1][0] == kind:
+            runs[-1][2] += 1
+        else:
+            runs.append([kind, index, 1])
+    return [tuple(r) for r in runs]
 
 
 def layout_gui(engine) -> Painter:
@@ -460,7 +475,7 @@ def _upload_rect_instances(rp, data: np.ndarray) -> None:
     rp._device.queue.write_buffer(rp._gui_instance_buf, 0, data.tobytes())
 
 
-def _draw_rects(rp, engine, render_pass, instance_count: int) -> None:
+def _draw_rects(rp, engine, render_pass, first: int, instance_count: int) -> None:
     bind_group = rp._device.create_bind_group(
         layout=rp._gui_bgl,
         entries=[
@@ -486,7 +501,7 @@ def _draw_rects(rp, engine, render_pass, instance_count: int) -> None:
     render_pass.set_bind_group(0, bind_group, [], 0, 0)
     render_pass.set_vertex_buffer(0, rp._gui_quad_vbuf)
     render_pass.set_index_buffer(rp._gui_quad_ibuf, wgpu.IndexFormat.uint32)
-    render_pass.draw_indexed(6, instance_count, 0, 0, 0)
+    render_pass.draw_indexed(6, instance_count, 0, 0, first)
 
 
 # ---------------------------------------------------------------------------
@@ -633,7 +648,7 @@ def _upload_glyph_instances(rp, data: np.ndarray) -> None:
     rp._device.queue.write_buffer(rp._gui_glyph_instance_buf, 0, data.tobytes())
 
 
-def _draw_glyphs(rp, engine, render_pass, instance_count: int) -> None:
+def _draw_glyphs(rp, engine, render_pass, first: int, instance_count: int) -> None:
     atlas = engine.get_label_atlas()
     # Must explicitly request a 2D-array view; create_view() defaults to D2.
     atlas_view = atlas.gpu_texture.create_view(
@@ -672,7 +687,7 @@ def _draw_glyphs(rp, engine, render_pass, instance_count: int) -> None:
     render_pass.set_bind_group(0, bind_group, [], 0, 0)
     render_pass.set_vertex_buffer(0, rp._gui_quad_vbuf)
     render_pass.set_index_buffer(rp._gui_quad_ibuf, wgpu.IndexFormat.uint32)
-    render_pass.draw_indexed(6, instance_count, 0, 0, 0)
+    render_pass.draw_indexed(6, instance_count, 0, 0, first)
 
 
 # ---------------------------------------------------------------------------
@@ -770,6 +785,7 @@ def _ensure_image_pipeline(rp, engine) -> None:
     )
     rp._gui_image_instance_buf = None
     rp._gui_image_instance_capacity = 0
+    rp._gui_image_last = {}  # id(Image) -> its pixel size the frame before
     # (digest, width px, height px) -> (texture, bind group). An evicted
     # texture may still be bound in this frame's pass: destroy it next frame.
     rp._gui_image_evicted = []
@@ -811,20 +827,43 @@ def _image_bind_group(rp, op, pw: int, ph: int):
     return entry[1]
 
 
-def _draw_images(rp, engine, render_pass, image_ops) -> None:
+def bucket_size(pw: int, ph: int) -> tuple[int, int]:
+    """The size to rasterize an image at while its size animates: the longest
+    side rounded up to a step of 2^(1/8), so a pulse or a pop-in reuses a few
+    rasters, each drawn at most 9% smaller than it was drawn."""
+    m = max(pw, ph)
+    k = 2.0 ** (math.ceil(math.log2(m) * 8 - 1e-9) / 8) / m
+    return max(1, round(pw * k)), max(1, round(ph * k))
+
+
+def settle_size(prev, pw: int, ph: int, have_exact: bool) -> tuple[int, int]:
+    """Rasterize at the exact size unless the image's size changed since the
+    last frame (`prev`, None on its first frame) and that size has no raster
+    yet; then use `bucket_size`."""
+    if have_exact or prev is None or prev == (pw, ph):
+        return pw, ph
+    return bucket_size(pw, ph)
+
+
+def _prepare_images(rp, engine, image_ops) -> list:
+    """Upload one instance row per ImageOp and return each op's texture bind
+    group (None for an empty box)."""
     for texture in rp._gui_image_evicted:
         texture.destroy()
     rp._gui_image_evicted.clear()
     density = target_density(engine)
+    last, rp._gui_image_last = rp._gui_image_last, {}
     rows, groups = [], []
     for op in image_ops:
         box, pw, ph = image_pixel_box(op.box, density)
-        if box.w <= 0 or box.h <= 0:
-            continue
         rows.append([box.x, box.y, box.w, box.h, *op.tint])
-        groups.append(_image_bind_group(rp, op, pw, ph))
-    if not rows:
-        return
+        if op.box.w <= 0 or op.box.h <= 0:
+            groups.append(None)
+            continue
+        rp._gui_image_last[op.widget] = (pw, ph)
+        have_exact = (op.digest, pw, ph) in rp._gui_image_textures
+        rw, rh = settle_size(last.get(op.widget), pw, ph, have_exact)
+        groups.append(_image_bind_group(rp, op, rw, rh))
     data = np.asarray(rows, dtype=np.float32)
     if rp._gui_image_instance_buf is None or data.nbytes > rp._gui_image_instance_capacity:
         rp._gui_image_instance_capacity = max(data.nbytes, 4096)
@@ -833,6 +872,10 @@ def _draw_images(rp, engine, render_pass, image_ops) -> None:
             usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
         )
     rp._device.queue.write_buffer(rp._gui_image_instance_buf, 0, data.tobytes())
+    return groups
+
+
+def _draw_images(rp, render_pass, groups: list, first: int, count: int) -> None:
     bind_group0 = rp._device.create_bind_group(
         layout=rp._gui_image_bgl0,
         entries=[
@@ -851,6 +894,7 @@ def _draw_images(rp, engine, render_pass, image_ops) -> None:
     render_pass.set_bind_group(0, bind_group0, [], 0, 0)
     render_pass.set_vertex_buffer(0, rp._gui_quad_vbuf)
     render_pass.set_index_buffer(rp._gui_quad_ibuf, wgpu.IndexFormat.uint32)
-    for i, group in enumerate(groups):
-        render_pass.set_bind_group(1, group, [], 0, 0)
-        render_pass.draw_indexed(6, 1, 0, 0, i)
+    for i in range(first, first + count):
+        if groups[i] is not None:
+            render_pass.set_bind_group(1, groups[i], [], 0, 0)
+            render_pass.draw_indexed(6, 1, 0, 0, i)
