@@ -66,7 +66,7 @@ def test_cache_evicts_least_recently_used(monkeypatch):
 def test_text_renders_with_the_preloaded_font():
     text = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
-        '<text x="4" y="40" font-family="DejaVu Sans Mono" font-size="24" fill="#000">Ab</text>'
+        '<text x="4" y="40" font-family="DejaVuSansMono" font-size="24" fill="#000">Ab</text>'
         "</svg>"
     )
     assert svg.rasterize_svg(text, 64, 64)[..., 3].sum() > 0

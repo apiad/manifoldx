@@ -111,7 +111,9 @@ def svg_size(source: SvgSource) -> tuple[float, float]:
 
 
 def load_font(path: str | os.PathLike) -> None:
-    """Make a font file available to SVG <text>, matched by its family name."""
+    """Make a font file available to SVG <text>. thorvg matches it by the file
+    name without extension (font-family="DejaVuSans" for DejaVuSans.ttf), not by
+    the family name inside the font; with no match it uses a loaded font."""
     tvg, engine = _tvg()
     if tvg.Text(engine).font_load(str(path)) != tvg.Result.SUCCESS:
         raise ValueError(f"could not load font {path}")

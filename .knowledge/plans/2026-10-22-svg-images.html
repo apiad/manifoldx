@@ -117,7 +117,7 @@ Panel([icon, ...], style_overrides={"direction": "h"})          # nests like any
 from manifoldx import svg
 svg.svg_size(source) -> (w, h)                       # intrinsic size from width/height or viewBox
 svg.rasterize_svg(source, width, height) -> np.ndarray  # (height, width, 4) uint8, sRGB, straight alpha; cached
-svg.load_font(path)                                  # fonts for SVG <text>; the bundled DejaVu Sans Mono is preloaded
+svg.load_font(path)                                  # fonts for SVG <text>, matched by file stem (font-family="DejaVuSansMono" is preloaded)
 svg.clear_cache()
 
 from manifoldx import textures
