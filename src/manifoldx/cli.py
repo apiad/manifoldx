@@ -102,7 +102,11 @@ def dev_command(args):
     elif args.command == "state":
         value = json.loads(call("/api/state"))
         for key in args.path.split(".") if args.path else ():
-            value = value[int(key)] if isinstance(value, list) else value[key]
+            try:
+                value = value[int(key)] if isinstance(value, list) else value[key]
+            except (KeyError, IndexError, ValueError, TypeError):
+                print(f"manifoldx state: no {args.path!r} in engine.state", file=sys.stderr)
+                return 1
         print(json.dumps(value, indent=1, ensure_ascii=False))
     elif args.command == "set":
         show(call("/api/state", "PATCH", args.patch))

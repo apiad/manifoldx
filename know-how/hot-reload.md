@@ -68,7 +68,7 @@ Rules:
 - **Threads and processes you start yourself are not stopped.** Only the engine's own workers are. Stop yours in `@engine.on("shutdown")`, which fires on every reload as well as on exit.
 - **Engine constructor arguments do not apply on reload.** The window stays, so a new `title`, `width`, `height`, `fullscreen` or `monitor` needs a restart.
 - **Only the app's own files reload.** Editing manifoldx or any other installed package (even an editable install from another repo) needs a restart. With `-m`, run from the project root so the package's files count as the app's.
-- **A file the app never imported is not watched**, except the script itself. A module that failed to import on its first load is watched only once something imported it.
+- **A file the app never imported is not watched**, except the one it starts from (the script, or the `-m` module). A module that failed to import on its first load is watched only once something imported it.
 - **`-- --render` does not work**: `engine.cli()` then renders a video instead of calling `run()`, and `manifoldx run` exits saying the app never called `engine.run()`.
 - **Two saves of one module within the same second that leave it the same size** can load the old cached bytecode (Python checks `.pyc` by whole-second mtime and size). Save again.
 

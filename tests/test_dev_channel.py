@@ -186,6 +186,7 @@ def test_cli_talks_to_the_running_app(hot, capsys):
         return out["rc"], capsys.readouterr().out
 
     assert run("state", "where.place") == (0, '"yard"\n')
+    assert run("state", "nope")[0] == 1
     assert run("set", '{"where": {"place": "lake"}}')[0] == 0 and hot.engine.state.where["place"] == "lake"
     assert run("emit", "hit", '{"what": "a rock"}')[0] == 0
     rc, out = run("log", "--match", "hit a rock", "--wait", "5")

@@ -6,6 +6,7 @@ as plain data: numbers, strings, lists, dicts, numpy arrays. Instances of classe
 from your own modules go stale, because those modules are imported afresh.
 """
 
+import importlib.util
 import os
 import runpy
 import sys
@@ -93,14 +94,26 @@ class HotReloader:
             else:
                 runpy.run_path(self.script, run_name="__main__")
         finally:
+            entry = self._entry()  # while the app's folder is still on sys.path
             _state = None
             Engine.run, sys.argv = original, saved_argv
             sys.path[:] = saved_path
             # Keep watching files a broken edit failed to import, so fixing them reloads.
-            files = set(self._mtimes) | ({self.script} if self.script else set())
+            files = set(self._mtimes) | entry
             files |= {m.__file__ for m in list(sys.modules.values()) if getattr(m, "__file__", None) and self._owned(m.__file__)}
             self._mtimes = {f: _mtime(f) for f in files}
         return captured[-1] if captured else None
+
+    def _entry(self):
+        """The file the app starts from: the script, or the -m module's, which runs as __main__
+        and so never stays in sys.modules to be watched like the modules it imports."""
+        if self.script:
+            return {self.script}
+        try:
+            spec = importlib.util.find_spec(self.module)
+        except (ImportError, ValueError):
+            return set()
+        return {spec.origin} if spec and spec.origin and self._owned(spec.origin) else set()
 
     def _activate(self, engine):
         engine._running = True
