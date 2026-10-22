@@ -47,6 +47,7 @@ class MeshData(NamedTuple):
     normals: np.ndarray  # f32[N, 3]
     colors: np.ndarray  # f32[N, 3], linear
     indices: np.ndarray  # u32[M]
+    surfaces: np.ndarray | None = None  # i[N]: surface pattern ids (resources.SURFACE_PATTERNS)
 
 
 class _Cell:
@@ -69,6 +70,8 @@ def _pack(build, i, j):
         "colors": np.asarray(data.colors, np.float32),
         "indices": np.asarray(data.indices, np.uint32),
     }
+    if data.surfaces is not None:
+        geo["surfaces"] = np.asarray(data.surfaces, np.int32)
     vbytes, info = pack_vertices(geo)
     return _Cell(geo, info, vbytes, geo["indices"].tobytes())
 
