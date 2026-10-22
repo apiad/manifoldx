@@ -18,6 +18,7 @@ Pass attributes (set at pipeline-creation time in `_ensure_gui_pipeline`):
 
 from __future__ import annotations
 
+import functools
 import math
 from dataclasses import replace
 
@@ -310,6 +311,12 @@ def layout_gui(engine) -> Painter:
 
 
 def _linear(c: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    return _linear_cached(tuple(float(v) for v in c))
+
+
+@functools.lru_cache(maxsize=4096)
+def _linear_cached(c: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    """A GUI uses a few colours on many widgets every frame: decode each once."""
     from manifoldx.resources import srgb_to_linear
 
     r, g, b = (float(v) for v in srgb_to_linear(c[:3]))
@@ -515,8 +522,22 @@ def _upload_rect_instances(rp, data: np.ndarray) -> None:
     rp._device.queue.write_buffer(rp._gui_instance_buf, 0, data.tobytes())
 
 
+def _bind_group(rp, key, make):
+    """The bind group for `key`, made once. Keys hold the GPU objects they bind, compared by
+    identity, so a grown buffer or a new atlas texture makes a new group. Creating one per draw
+    cost a game ~20 ms a frame with 80 labels on screen."""
+    cache = rp.__dict__.setdefault("_gui_bind_groups", {})
+    group = cache.get(key)
+    if group is None:
+        if len(cache) >= 16:  # stale buffers and atlases: let them go
+            cache.clear()
+        group = cache[key] = make()
+    return group
+
+
 def _draw_rects(rp, engine, render_pass, first: int, instance_count: int) -> None:
-    bind_group = rp._device.create_bind_group(
+    key = ("rects", rp._globals_buffer, rp._gui_instance_buf, rp._gui_instance_capacity)
+    bind_group = _bind_group(rp, key, lambda: rp._device.create_bind_group(
         layout=rp._gui_bgl,
         entries=[
             {
@@ -536,7 +557,7 @@ def _draw_rects(rp, engine, render_pass, first: int, instance_count: int) -> Non
                 },
             },
         ],
-    )
+    ))
     render_pass.set_pipeline(rp._gui_pipeline)
     render_pass.set_bind_group(0, bind_group, [], 0, 0)
     render_pass.set_vertex_buffer(0, rp._gui_quad_vbuf)
@@ -690,11 +711,9 @@ def _upload_glyph_instances(rp, data: np.ndarray) -> None:
 
 def _draw_glyphs(rp, engine, render_pass, first: int, instance_count: int) -> None:
     atlas = engine.get_label_atlas()
-    # Must explicitly request a 2D-array view; create_view() defaults to D2.
-    atlas_view = atlas.gpu_texture.create_view(
-        dimension=wgpu.TextureViewDimension.d2_array,
-    )
-    bind_group = rp._device.create_bind_group(
+    key = ("glyphs", rp._globals_buffer, rp._gui_glyph_instance_buf, rp._gui_glyph_instance_capacity,
+           atlas.gpu_texture, atlas.gpu_sampler)
+    bind_group = _bind_group(rp, key, lambda: rp._device.create_bind_group(
         layout=rp._gui_glyph_bgl,
         entries=[
             {
@@ -715,14 +734,15 @@ def _draw_glyphs(rp, engine, render_pass, first: int, instance_count: int) -> No
             },
             {
                 "binding": 2,
-                "resource": atlas_view,
+                # Must explicitly request a 2D-array view; create_view() defaults to D2.
+                "resource": atlas.gpu_texture.create_view(dimension=wgpu.TextureViewDimension.d2_array),
             },
             {
                 "binding": 3,
                 "resource": atlas.gpu_sampler,
             },
         ],
-    )
+    ))
     render_pass.set_pipeline(rp._gui_glyph_pipeline)
     render_pass.set_bind_group(0, bind_group, [], 0, 0)
     render_pass.set_vertex_buffer(0, rp._gui_quad_vbuf)
