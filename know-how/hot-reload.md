@@ -1,6 +1,6 @@
 ---
-when: running an app with `manifoldx run`, keeping state across reloads with `engine.state`, making an app reload fast, or following a running app from an agent (`manifoldx look`, `state`, `log`)
-triggers: ["hot reload", "manifoldx run", "engine.state", "reload", "live edit", "keep state", "watch files", "manifoldx look", "manifoldx state", "manifoldx log", "engine.log", "dev channel"]
+when: running an app with `manifoldx run`, keeping state across reloads with `engine.state`, or making an app reload fast
+triggers: ["hot reload", "manifoldx run", "engine.state", "reload", "live edit", "keep state", "watch files"]
 ---
 
 # Hot reload with `manifoldx run` and `engine.state`
@@ -72,25 +72,9 @@ Rules:
 - **`-- --render` does not work**: `engine.cli()` then renders a video instead of calling `run()`, and `manifoldx run` exits saying the app never called `engine.run()`.
 - **Two saves of one module within the same second that leave it the same size** can load the old cached bytecode (Python checks `.pyc` by whole-second mtime and size). Save again.
 
-## Following a running app: the dev channel
+## The dev server
 
-`manifoldx run` keeps a folder `.manifoldx/` in the directory it was started from, so an agent working beside a person can see what they see. Add `.manifoldx/` to the project's `.gitignore`.
-
-```bash
-manifoldx look          # the frame on screen, GUI included, to .manifoldx/look.png; prints the path
-manifoldx state         # engine.state as JSON (repr for what JSON cannot hold) to .manifoldx/state.json; prints it
-manifoldx log -n 60     # the last lines of .manifoldx/log.txt
-```
-
-Run them from the same directory as `manifoldx run`. `look` and `state` drop a request file in `.manifoldx/requests/`, which the running app answers on its next poll (0.25 s); they give up after `--timeout` seconds (default 5) and exit 1, as when no app runs there.
-
-`log.txt` rotates at 256 KB, keeping one old file as `log.txt.1`. It holds the start, every reload, every failed reload and pause with its error, the keys pressed, and the app's own lines:
-
-```python
-engine.log(f"entered {place.id}")      # one line when something changes, not one per frame
-```
-
-`engine.log` costs nothing outside `manifoldx run`. Log what the person does and what the app shows them (a place entered, a menu opened, a choice made, who is speaking), so an agent reading the tail knows where they are when they say "this looks wrong".
+`manifoldx run` also serves a dev page and an HTTP API on 127.0.0.1 (the frame on screen, the log, `engine.state`, the app's events), and the commands `manifoldx look`, `state`, `set`, `emit`, `events` and `log` that use them. `know-how/agent-loop.md` says how to work with them and how to write an app an agent can drive.
 
 ## Performance
 

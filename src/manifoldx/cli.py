@@ -2,15 +2,15 @@
 
 `manifoldx run` runs an app and reloads it in the same window whenever its source changes.
 `manifoldx export` runs an app and writes its scene to glTF instead of a window.
-`manifoldx look`, `state` and `log` read the app running under `manifoldx run` in this folder
-(its dev channel, .manifoldx/): the frame on screen, engine.state, and the log's last lines.
+`manifoldx look`, `state`, `set`, `emit`, `events` and `log` talk to the dev server of the app
+running under `manifoldx run` in this folder (see manifoldx.devchannel).
 
     manifoldx run app.py [-- <app args>]
     manifoldx run -m package.module [-- <app args>]
     manifoldx export app.py scene.glb [--strict] [-- <app args>]
     manifoldx export -m package.module scene.glb [--strict] [-- <app args>]
-    manifoldx look | state [--timeout S]
-    manifoldx log [-n N]
+    manifoldx look | events | state [key.path] | set '<merge patch>' | emit <event> ['<payload>']
+    manifoldx log [-n N] [--after SEQ] [--match REGEX] [--wait S]
 """
 
 import argparse
@@ -34,43 +34,93 @@ def main(argv=None):
     run = sub.add_parser("run", help="run an app and reload it in the same window when its source changes")
     run.add_argument("-m", dest="module", help="run this module as __main__, like python -m")
     run.add_argument("script", nargs="?", metavar="app.py")
-    for name, what in (("look", "write the frame on screen to .manifoldx/look.png and print its path"),
-                       ("state", "write engine.state to .manifoldx/state.json and print it")):
-        ask = sub.add_parser(name, help=f"ask the app under manifoldx run here to {what}")
-        ask.add_argument("--timeout", type=float, default=5.0, help="seconds to wait for the app (default 5)")
-    log = sub.add_parser("log", help="print the last lines of the log of manifoldx run here")
-    log.add_argument("-n", type=int, default=40, help="how many lines (default 40)")
+    run.add_argument("--port", type=int, default=None, help="the dev server's port (default 8770 or the next free)")
+    sub.add_parser("look", help="save the frame on screen to .manifoldx/look.png and print its path")
+    st = sub.add_parser("state", help="print engine.state as JSON")
+    st.add_argument("path", nargs="?", help="a dotted key path inside the state, e.g. player.x")
+    se = sub.add_parser("set", help="apply a JSON merge patch to engine.state (null deletes a key)")
+    se.add_argument("patch", help='e.g. \'{"player": {"x": 3}}\'')
+    em = sub.add_parser("emit", help="emit an event the app handles, with an optional JSON payload")
+    em.add_argument("event")
+    em.add_argument("payload", nargs="?", default="null")
+    sub.add_parser("events", help="list the events the app handles, with their handlers' docstrings")
+    lg = sub.add_parser("log", help="print log lines; with --match or --wait, exit 1 when no line came")
+    lg.add_argument("-n", type=int, default=40, help="how many of the last lines (default 40)")
+    lg.add_argument("--after", type=int, help="only lines after this sequence number")
+    lg.add_argument("--match", help="only lines matching this regex")
+    lg.add_argument("--wait", type=float, default=0.0, help="seconds to wait for a line (at most 300)")
     args = parser.parse_args(argv)
-    if args.command in ("look", "state"):
-        from manifoldx import devchannel
-
-        try:
-            out = devchannel.ask(args.command, timeout=args.timeout)
-        except TimeoutError as e:
-            print(f"manifoldx {args.command}: {e}", file=sys.stderr)
-            return 1
-        print(out.read_text(encoding="utf-8") if args.command == "state" else out)
-        return 0
-    if args.command == "log":
-        from manifoldx.devchannel import FOLDER
-
-        path = os.path.join(FOLDER, "log.txt")
-        if not os.path.exists(path):
-            print(f"manifoldx log: no {path} here; start the app with manifoldx run", file=sys.stderr)
-            return 1
-        with open(path, encoding="utf-8") as f:
-            print("".join(f.readlines()[-args.n:]), end="")
-        return 0
+    if args.command in ("look", "state", "set", "emit", "events", "log"):
+        return dev_command(args)
     if args.command == "run":
         if (args.module is None) == (args.script is None):
             parser.error("give app.py or -m module")
         from manifoldx.hot import HotReloader
 
-        HotReloader(script=args.script, module=args.module, argv=app_args).run()
+        port = {} if args.port is None else {"port": args.port}
+        HotReloader(script=args.script, module=args.module, argv=app_args, **port).run()
         return 0
     if len(args.paths) != (1 if args.module else 2):
         parser.error("give app.py and out.glb, or -m module and out.glb")
     return export(args.module, None if args.module else args.paths[0], args.paths[-1], args.strict, app_args)
+
+
+def dev_command(args):
+    """look, state, set, emit, events and log: ask the dev server of the app running here."""
+    import json
+    import urllib.error
+    import urllib.request
+    from urllib.parse import quote, urlencode
+
+    from manifoldx.devchannel import FOLDER, server_url
+
+    url = server_url()
+    if url is None:
+        print(f"manifoldx {args.command}: no app runs under manifoldx run here (no {FOLDER}/server.json)",
+              file=sys.stderr)
+        return 1
+
+    def call(path, method="GET", body=None, timeout=30):
+        data = None if body is None else body.encode()
+        request = urllib.request.Request(url + path, data=data, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            raise SystemExit(f"manifoldx {args.command}: {e.code} {e.read().decode(errors='replace')}") from None
+        except OSError as e:
+            raise SystemExit(f"manifoldx {args.command}: the app does not answer at {url}: {e}") from None
+
+    def show(raw):
+        print(json.dumps(json.loads(raw), indent=1, ensure_ascii=False))
+
+    if args.command == "look":
+        out = os.path.join(FOLDER, "look.png")
+        with open(out, "wb") as f:
+            f.write(call("/api/look"))
+        print(out)
+    elif args.command == "state":
+        value = json.loads(call("/api/state"))
+        for key in args.path.split(".") if args.path else ():
+            value = value[int(key)] if isinstance(value, list) else value[key]
+        print(json.dumps(value, indent=1, ensure_ascii=False))
+    elif args.command == "set":
+        show(call("/api/state", "PATCH", args.patch))
+    elif args.command == "emit":
+        show(call("/api/events/" + quote(args.event, safe=""), "POST", args.payload))
+    elif args.command == "events":
+        for name, docs in json.loads(call("/api/events")).items():
+            print(name + "".join(f"\n    {d}" for d in docs if d))
+    else:
+        q = {"match": args.match} if args.match else {}
+        q |= {"after": args.after} if args.after is not None else {"last": args.n}
+        q |= {"wait": args.wait} if args.wait else {}
+        got = json.loads(call("/api/log?" + urlencode(q), timeout=args.wait + 30))
+        for line in got["lines"]:
+            print(f"{line['seq']} {line['time']} {line['text']}")
+        if (args.wait or args.match) and not got["lines"]:
+            return 1
+    return 0
 
 
 def export(module, script, output, strict, app_args):

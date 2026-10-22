@@ -55,7 +55,8 @@ class HotReloader:
     directory for a module), outside site-packages and manifoldx itself.
     """
 
-    def __init__(self, script=None, module=None, argv=(), canvas_factory=None, poll=0.25, channel=True):
+    def __init__(self, script=None, module=None, argv=(), canvas_factory=None, poll=0.25, channel=True,
+                 port=devchannel.PORT):
         self.script = os.path.abspath(script) if script else None
         self.module = module
         self.argv = list(argv)
@@ -67,7 +68,8 @@ class HotReloader:
         self._mtimes = {}
         self._last_poll = time.monotonic()
         self._paused = False  # the running code raised; wait for an edit
-        self._open_channel = channel  # the .manifoldx/ folder an agent reads (devchannel)
+        self._open_channel = channel  # the dev page and API, and .manifoldx/ (devchannel)
+        self.port = port
         self.channel = None
 
     def _owned(self, path):
@@ -113,8 +115,9 @@ class HotReloader:
         engine._init_canvas(self.canvas_factory(engine))
         self._activate(engine)
         if self._open_channel:
-            self.channel = devchannel.Channel(self._root)
+            self.channel = devchannel.Channel(self._root, self, self.port)
             LOG.info("started %s", self.module or self.script)
+            print(f"manifoldx run: dev page and API at {self.channel.url}", file=sys.stderr)
 
     def changed(self):
         return any(_mtime(f) != t for f, t in self._mtimes.items())
@@ -151,8 +154,8 @@ class HotReloader:
             self._last_poll = now
             if self.changed():
                 self.reload()
-            if self.channel is not None:
-                self.channel.poll(self.engine)
+        if self.channel is not None:
+            self.channel.run_jobs()
         if self._paused:
             return
         try:

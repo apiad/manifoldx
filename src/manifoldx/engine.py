@@ -327,7 +327,7 @@ class Engine:
         from manifoldx import hot
 
         self.state = hot._state if hot._state is not None else hot.State()
-        self._look_to = None  # a path: the next presented frame goes there as a PNG (manifoldx look)
+        self._looks = []  # futures waiting for the next presented frame as PNG bytes (the dev server's look)
 
         # Input layer — keyboard + mouse + resize. The bridge attaches to
         # the canvas in _init_canvas; until then it is dormant.
@@ -1268,17 +1268,21 @@ class Engine:
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
 
-        if self._look_to is not None:  # asked by manifoldx look
-            path, self._look_to = self._look_to, None
+        if self._looks:  # asked by the dev server under manifoldx run
+            looks, self._looks = self._looks, []
             from manifoldx import devchannel
 
             try:
-                devchannel.save_texture(self._device, texture, self._texture_format, path)
-            except Exception as e:  # a surface without COPY_SRC: say so in the log, keep drawing
-                devchannel.LOG.warning("look failed: %r", e)
+                shot = devchannel.save_png(self._device, texture, self._texture_format)
+            except Exception as e:  # noqa: BLE001  a surface without COPY_SRC: the request says so, drawing goes on
+                for look in looks:
+                    look.set_exception(e)
+            else:
+                for look in looks:
+                    look.set_result(shot)
 
     def log(self, message: str) -> None:
-        """A line for the dev channel's log under `manifoldx run` (.manifoldx/log.txt); nothing otherwise.
+        """A line for the dev log under `manifoldx run` (its page, /api/log, .manifoldx/log.txt); nothing otherwise.
 
         Write what an agent following the person needs: where they are, what opened, what they chose."""
         from manifoldx import devchannel
