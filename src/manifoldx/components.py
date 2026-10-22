@@ -1,5 +1,6 @@
 """Built-in components: Component (base), Transform, Mesh, Material."""
 
+import inspect
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -80,7 +81,9 @@ class Component:
     def __init_subclass__(cls, *, gpu_only: bool = False, **kwargs):
         super().__init_subclass__(**kwargs)
         cls._gpu_only = bool(gpu_only)
-        annotations = cls.__dict__.get("__annotations__", {})
+        # inspect.get_annotations, not __dict__["__annotations__"]: Python 3.14
+        # evaluates class annotations lazily and leaves that key unset.
+        annotations = inspect.get_annotations(cls)
         fields = []
         defaults = {}
         for name, tp in annotations.items():

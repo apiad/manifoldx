@@ -75,3 +75,22 @@ def test_a_view_only_culls_its_own_layer(monkeypatch):
                         lambda e, g, *a: seen.append((e.w, len(g))) or real(e, g, *a))
     eng._draw_frame()
     assert (32, 1) in seen  # the view tested one entity, not 501
+
+
+def test_annotated_components_get_their_fields():
+    """Python 3.14 evaluates class annotations lazily; fields must still be found."""
+    from manifoldx.viz.components import Radius
+
+    assert Layer._field_specs == (("layer", (1,)),)
+    assert Radius._field_specs == (("radius", (1,)),)
+
+
+def test_a_camera_whose_layers_hold_nothing_draws_nothing():
+    eng, canvas = _offscreen()
+    eng.spawn(Mesh(sphere(1.0, 16)), Material(PhongMaterial("#00ff00")),
+              Transform(pos=(0, 0, 0)), Layer(layer=1))
+    eng.camera.set_pose(position=(0, 0, 6), target=(0, 0, 0))
+    eng.camera.layers = {5}
+    eng._draw_frame()
+    frame = np.asarray(canvas.draw()).astype(int)
+    assert frame[48, 48, 1] < 100
