@@ -60,7 +60,7 @@ details.task[data-state=done] summary .st{color:var(--ok)}
 </style>
 </head>
 <body>
-<div class="chrome"><span class="tab">svg-images</span><span class="pill">plan</span><span class="pill">2026-10-22</span><span class="pill opt">branch feat/svg-images</span></div>
+<div class="chrome"><span class="tab">svg-images</span><span class="pill">plan · built</span><span class="pill">2026-10-22</span><span class="pill opt">branch feat/svg-images</span></div>
 <main>
 <p class="lede">SVG art drawn crisp at its on-screen pixel size, in the GUI as an <code>Image</code> widget and in the 3D world as a texture. One rasterizer, one cache, no PNG step for users.</p>
 <div class="bar" aria-hidden="true"><i id="prog"></i></div>
@@ -91,7 +91,7 @@ details.task[data-state=done] summary .st{color:var(--ok)}
 <tr><td>One GPU texture per (SVG, pixel size), one draw per image, instead of an atlas.</td><td>Icons run from 16 px to a 1200 px wordmark, which a fixed-slice array like the text atlas cannot hold, and a packed atlas needs repacking on every resize. Checked before the PR: the cost of 200 icons per frame on llvmpipe; above 1 ms it becomes a packed atlas behind the same API.</td></tr>
 <tr><td>Cache key is (SHA-1 of the SVG bytes, width px, height px); LRU with a 64 MB budget; evicted textures are destroyed.</td><td>A resize makes new sizes; the budget keeps old ones from piling up. Hashing content means a path and the same markup share an entry.</td></tr>
 <tr><td>Pixel size = layout size × GUI scale × the render target's pixels per window pixel, rounded; quads snap to whole target pixels.</td><td>That is the size the image lands at, so it maps 1:1 to the screen: crisp on HiDPI and in supersampled stills.</td></tr>
-<tr><td>Draw order in the GUI pass: rects, then images, then text.</td><td>Same rule text already has: an image sits over every panel. A panel that covers an image in front of it is out of scope.</td></tr>
+<tr><td>Draw order in the GUI pass: rects, then images, then text (changed during the build, see 05).</td><td>Same rule text already has: an image sits over every panel.</td></tr>
 <tr><td>Images blend premultiplied like glyphs; <code>tint</code> is passed to the shader exactly as text's <code>fg</code>.</td><td>A white icon tinted with a text colour then matches the text beside it.</td></tr>
 <tr><td>Textured <code>StandardMaterial</code> now honours albedo alpha: texels under 0.5 are discarded, and translucent materials multiply opacity by texel alpha.</td><td>A sign or logo needs see-through parts. Behaviour change for other users: a texture with an alpha channel that rendered opaque before now shows its holes. Opaque textures are unchanged. Shadows still use the full mesh.</td></tr>
 </tbody></table>
@@ -128,27 +128,43 @@ StandardMaterial(albedo_map=handle)                  # alpha < 0.5 is cut out
 </script>
 
 <h2><span>04</span>Tasks</h2>
-<details class="task" id="task-1" data-state="pending"><summary>1. Rasterizer and cache <span class="st"></span><div class="files">src/manifoldx/svg.py, pyproject.toml, tests/test_svg.py</div></summary>
+<details class="task" id="task-1" data-state="done"><summary>1. Rasterizer and cache <span class="st"></span><div class="files">src/manifoldx/svg.py, pyproject.toml, tests/test_svg.py</div></summary>
 <ol><li>Tests: source kinds give the same pixels; sizes match the request; a second call at the same size does not rasterize again; a new size does; LRU evicts past the budget; a missing extra raises an ImportError naming <code>manifold-gfx[svg]</code>.</li>
 <li>Implement over one module-level thorvg Engine; unpremultiply the output.</li></ol>
 <p>verify: <code>uv run pytest tests/test_svg.py</code></p></details>
-<details class="task" id="task-2" data-state="pending"><summary>2. Image widget, ImageOp, GUI pass <span class="st"></span><div class="files">gui/widgets.py, gui/painter.py, render/passes/gui.py, tests/gui/</div></summary>
+<details class="task" id="task-2" data-state="done"><summary>2. Image widget, ImageOp, GUI pass <span class="st"></span><div class="files">gui/widgets.py, gui/painter.py, render/passes/gui.py, tests/gui/</div></summary>
 <ol><li>Tests: intrinsic and one-sided sizes keep aspect; paint emits an ImageOp centred in the box; the pixel size follows GUI scale and target density; changing scale asks for a new size.</li>
 <li>Textured-quad pipeline with the glyph pipeline's blend state; per-image texture cache on the pipeline, destroyed on eviction.</li>
 <li>Measure the first draw of a 48 px and a 512 px icon through the pass, and 200 icons per frame on llvmpipe.</li></ol>
 <p>verify: <code>uv run pytest tests/gui</code></p></details>
-<details class="task" id="task-3" data-state="pending"><summary>3. Textures from arrays and SVG; alpha in StandardMaterial <span class="st"></span><div class="files">textures.py, resources.py, tests/test_textures*.py</div></summary>
+<details class="task" id="task-3" data-state="done"><summary>3. Textures from arrays and SVG; alpha in StandardMaterial <span class="st"></span><div class="files">textures.py, resources.py, tests/test_textures*.py</div></summary>
 <ol><li><code>load_texture</code> becomes decode plus <code>texture_from_array</code>; no change for its callers.</li>
 <li>Textured shader samples alpha, discards under 0.5, multiplies output alpha.</li>
 <li>Tests: handle size, aspect from <code>size_px</code>, an offscreen render where a transparent texel shows the background.</li></ol>
 <p>verify: <code>uv run pytest tests/test_textures*.py</code></p></details>
-<details class="task" id="task-4" data-state="pending"><summary>4. Example, still, changelog <span class="st"></span><div class="files">examples/svg_icons.py, CHANGELOG.md, AGENTS.md</div></summary>
+<details class="task" id="task-4" data-state="done"><summary>4. Example, still, changelog <span class="st"></span><div class="files">examples/svg_icons.py, CHANGELOG.md, AGENTS.md</div></summary>
 <ol><li>Icons at 24, 48, 96 and 192 px, a resize mid-run, an SVG texture on a spinning cube; <code>--still out.png</code> headless.</li>
 <li>Full suite and lint serial; all examples still import and render.</li></ol>
 <p>verify: <code>make test &amp;&amp; make lint</code> and the still</p></details>
 
-<h2><span>05</span>Non-goals</h2>
-<p>Animated SVG and Lottie, SVG filters beyond what thorvg draws, per-image z-order against panels, normal maps from SVG.</p>
+<h2><span>05</span>Where the build departs from this plan</h2>
+<table>
+<thead><tr><th>change</th><th>why</th></tr></thead>
+<tbody>
+<tr><td>The GUI draws in the widget tree's order (rects, images and text interleaved), not rects, then images, then text.</td><td>The game's director asked for it: a dialog over buttons must hide their icons. Each run of same-kind ops is one draw; text is no longer above every panel.</td></tr>
+<tr><td>An Image whose pixel size changes from frame to frame draws from a raster bucketed in steps of 2^(1/8), and gets an exact raster again the frame its size holds (<code>settle_size</code>, <code>bucket_size</code> in <code>render/passes/gui.py</code>).</td><td>The game animates icon sizes every frame (pulses, pop-ins); an exact raster per frame would fill the cache.</td></tr>
+<tr><td>Rasters use thorvg's straight-alpha colorspace (ABGR8888S).</td><td>Dividing premultiplied colour in numpy took 30 ms at 512 px; thorvg's own path takes 1.9 ms in all.</td></tr>
+<tr><td>One texture per image stays, though 200 icons cost more than the 1 ms threshold set above.</td><td>Measured on a laptop with the GPU and with llvmpipe: image draws for 200 icons take 1.6 to 2 ms, of which 0.5 to 0.7 ms is draw calls, all an atlas would save. Laying out the same 200 widgets already costs about 2 ms in the existing GUI code.</td></tr>
+</tbody></table>
+<div class="tiles">
+  <div class="tile"><b>0.9 ms</b><small>first draw of a 48 px icon through the pass (llvmpipe)</small></div>
+  <div class="tile"><b>2.2 ms</b><small>first draw of a 512 px icon (llvmpipe)</small></div>
+  <div class="tile"><b>0.13 ms</b><small>a warm frame's image draws for one icon</small></div>
+  <div class="tile"><b>75 ms</b><small>once, first frame with any image on llvmpipe: shader compile</small></div>
+</div>
+
+<h2><span>06</span>Non-goals</h2>
+<p>Animated SVG and Lottie, SVG filters beyond what thorvg draws, rotating an Image, normal maps from SVG.</p>
 </main>
 <script>
 document.querySelectorAll('script[type="text/plain"]').forEach(s=>{const p=document.createElement('pre');p.textContent=s.textContent.replace(/^\n/,'');s.after(p)});
