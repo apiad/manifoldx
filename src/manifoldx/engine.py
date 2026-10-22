@@ -119,6 +119,8 @@ class EntityHandle:
             inter[:, 3:6] = geo["normals"]
         if bufs.get("has_colors"):
             inter[:, 6:9] = geo["colors"]
+            if "surfaces" in geo:
+                inter[:, 9] = np.asarray(geo["surfaces"], dtype=np.float32)
         elif bufs.get("has_uvs"):
             inter[:, 6:8] = geo["uvs"]
         if bufs.get("has_joints"):

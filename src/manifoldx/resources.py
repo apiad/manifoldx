@@ -1047,16 +1047,167 @@ _STANDARDMATERIAL_TEXTURED_SHADER = (
 )
 
 
+_SURFACE_PATTERNS_WGSL = """
+// ---- surface patterns: world-space comic textures, picked by a per-vertex id ----
+const SP_INK = vec3<f32>(0.0080, 0.0063, 0.0112);  // #1c1a21 as pow(c, 2.2), as the reference
+
+fn sp_mod(x: f32, y: f32) -> f32 { return x - y * floor(x / y); }
+fn sp_h1(p: vec2<f32>) -> f32 { return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453); }
+fn sp_h2(p: vec2<f32>) -> vec2<f32> {
+    return fract(sin(vec2<f32>(dot(p, vec2<f32>(127.1, 311.7)), dot(p, vec2<f32>(269.5, 183.3)))) * 43758.5453);
+}
+fn sp_vnoise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    var f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(sp_h1(i), sp_h1(i + vec2<f32>(1.0, 0.0)), f.x),
+               mix(sp_h1(i + vec2<f32>(0.0, 1.0)), sp_h1(i + vec2<f32>(1.0, 1.0)), f.x), f.y);
+}
+fn sp_fbm(p: vec2<f32>) -> f32 {
+    return 0.55 * sp_vnoise(p) + 0.3 * sp_vnoise(p * 2.03 + 7.1) + 0.15 * sp_vnoise(p * 4.1 + 3.7);
+}
+fn sp_seg(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0));
+}
+// Each pattern returns (tone 0..1, ink 0..1).
+fn sp_grass(u: vec2<f32>, aa: f32, w: f32) -> vec2<f32> {
+    let t = sp_fbm(u * 0.6);
+    let c = floor(u * 1.6);
+    let f = fract(u * 1.6);
+    var ink = 0.0;
+    if (sp_h1(c + 3.1) > 0.45) {
+        let p = f - (0.25 + 0.5 * sp_h2(c));
+        let d = min(min(sp_seg(p, vec2<f32>(0.0), vec2<f32>(-0.09, 0.16)),
+                        sp_seg(p, vec2<f32>(0.0), vec2<f32>(0.0, 0.2))),
+                    sp_seg(p, vec2<f32>(0.0), vec2<f32>(0.09, 0.16)));
+        ink = 1.0 - smoothstep(w * 1.6, w * 1.6 + aa * 1.6, d);
+    }
+    return vec2<f32>(t, ink);
+}
+fn sp_cobbles(u: vec2<f32>, aa: f32, w: f32) -> vec2<f32> {
+    let i = floor(u);
+    let f = fract(u);
+    var f1 = 9.0;
+    var f2 = 9.0;
+    var best = vec2<f32>(0.0);
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let g = vec2<f32>(f32(x), f32(y));
+            let r = g + 0.15 + 0.7 * sp_h2(i + g) - f;
+            let d = dot(r, r);
+            if (d < f1) { f2 = f1; f1 = d; best = i + g; } else if (d < f2) { f2 = d; }
+        }
+    }
+    return vec2<f32>(sp_h1(best), 1.0 - smoothstep(w, w + aa, sqrt(f2) - sqrt(f1)));
+}
+fn sp_veins(u: vec2<f32>, aa: f32, w: f32) -> vec2<f32> {
+    let t = sp_fbm(u * 0.45);
+    let v = abs(sp_vnoise(u * 0.7 + 3.0 * sp_fbm(u * 0.3)) - 0.5);
+    return vec2<f32>(t, 1.0 - smoothstep(w * 0.5, w * 0.5 + aa, v));
+}
+fn sp_bricks(u: vec2<f32>, size: vec2<f32>, aa: f32, w: f32) -> vec2<f32> {
+    var q = u / size;
+    let row = floor(q.y);
+    q.x += 0.5 * sp_mod(row, 2.0);
+    let f = fract(q);
+    let c = floor(q);
+    let dx = min(f.x, 1.0 - f.x) * size.x;
+    let dy = min(f.y, 1.0 - f.y) * size.y;
+    return vec2<f32>(sp_h1(c + row * 7.0), 1.0 - smoothstep(w, w + aa, min(dx, dy)));
+}
+fn sp_planks(u: vec2<f32>, aa: f32, w: f32) -> vec2<f32> {
+    let bw = 0.4;
+    let row = floor(u.y / bw);
+    let y = fract(u.y / bw) * bw;
+    let len = 3.0;
+    let x = u.x / len + sp_h1(vec2<f32>(row, 1.0));
+    let fx = fract(x) * len;
+    let d = min(min(y, bw - y), min(fx, len - fx));
+    let grain = sp_vnoise(vec2<f32>(u.x * 0.6, u.y * 9.0) + row * 13.0);
+    return vec2<f32>(0.35 * sp_h1(vec2<f32>(row, floor(x))) + 0.65 * grain,
+                     1.0 - smoothstep(w, w + aa, d));
+}
+fn sp_tiles(u: vec2<f32>, aa: f32, w: f32) -> vec2<f32> {
+    let size = vec2<f32>(0.6, 0.45);
+    var q = u / size;
+    let row = floor(q.y);
+    q.x += 0.5 * sp_mod(row, 2.0);
+    let f = fract(q);
+    let c = floor(q);
+    let e = 2.0 * f.x - 1.0;
+    let edge_y = 0.28 * (1.0 - e * e);  // each tile's rounded lower edge
+    let dy = abs(f.y - edge_y) * size.y;
+    let dx = min(f.x, 1.0 - f.x) * size.x;
+    let side = select(9.0, dx, f.y > edge_y);
+    return vec2<f32>(0.5 * sp_h1(c + row * 5.0) + 0.5 * clamp(f.y, 0.0, 1.0),
+                     1.0 - smoothstep(w, w + aa, min(dy, side)));
+}
+// The albedo of surface `id` (0 none, 1 grass .. 7 tiles) round the linear colour `base`,
+// at pattern coordinate `proj` (world units) whose screen derivative length is `fw`.
+fn surface_albedo(base: vec3<f32>, id: i32, proj: vec2<f32>, fw: f32) -> vec3<f32> {
+    if (id <= 0 || id > 7) { return base; }
+    let k0 = id - 1;
+    let prm = material.patterns[k0];  // scale, contrast, tones, ink width
+    let dark = material.darks[k0 / 4][k0 % 4];
+    let u = proj / prm.x;
+    let fwu = fw / prm.x;
+    let aa = fwu * 0.7;
+    var r = vec2<f32>(0.5, 0.0);
+    switch k0 {
+        case 0: { r = sp_grass(u, aa, prm.w); }
+        case 1: { r = sp_cobbles(u, aa, prm.w); }
+        case 2: { r = sp_veins(u, aa, prm.w); }
+        case 3: { r = sp_bricks(u, vec2<f32>(0.5, 0.25), aa, prm.w); }
+        case 4: { r = sp_bricks(u, vec2<f32>(1.0, 0.55), aa, prm.w); }
+        case 5: { r = sp_planks(u, aa, prm.w); }
+        default: { r = sp_tiles(u, aa, prm.w); }
+    }
+    let t = r.x;
+    var k = select(-0.5, 0.5, t >= 0.5);
+    if (prm.z > 2.5) { k = select(select(1.0, 0.0, t < 0.7), -1.0, t < 0.38); }
+    var col = base * (1.0 + k * prm.y * 1.6);
+    col = mix(col, mix(col, SP_INK, dark), r.y);
+    // Fade to the flat colour once a pattern cell is only a few pixels on screen.
+    let fade = smoothstep(4.0, 10.0, 1.0 / max(fwu, 1e-5));
+    return mix(base, col, fade);
+}
+"""
+
 _STANDARDMATERIAL_VCOLOR_SHADER = (
     _STANDARDMATERIAL_SHADER.replace(
         "    @location(1) normal:   vec3<f32>,\n    @builtin(instance_index) instance: u32,",
         "    @location(1) normal:   vec3<f32>,\n"
-        "    @location(2) color:    vec3<f32>,\n"
+        "    @location(2) color:    vec4<f32>,   // rgb + surface pattern id\n"
         "    @builtin(instance_index) instance: u32,",
     )
     .replace(
         "    @location(1) world_pos:    vec3<f32>,\n};",
-        "    @location(1) world_pos:    vec3<f32>,\n    @location(2) vcolor:       vec3<f32>,\n};",
+        "    @location(1) world_pos:    vec3<f32>,\n    @location(2) vcolor:       vec4<f32>,\n};",
+    )
+    .replace(
+        "    cut:       vec4<f32>,   // x0, z0, x1, z1: an xz rectangle where nothing draws (empty when x1 <= x0)\n};",
+        "    cut:       vec4<f32>,   // x0, z0, x1, z1: an xz rectangle where nothing draws (empty when x1 <= x0)\n"
+        "    patterns:  array<vec4<f32>, 7>,  // per surface: scale, contrast, tones, ink width\n"
+        "    darks:     array<vec4<f32>, 2>,  // per surface: ink darkness, four to a vec4\n};",
+    )
+    .replace(
+        "@group(0) @binding(3) var<uniform> light_data: LightData;\n",
+        "@group(0) @binding(3) var<uniform> light_data: LightData;\n" + _SURFACE_PATTERNS_WGSL,
+        1,
+    )
+    .replace(
+        "fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {\n    if (material.mirror",
+        "fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {\n"
+        "    // Pattern coordinate: world position on the plane the normal faces most, with the\n"
+        "    // floating origin added back. Derivatives first, in uniform control flow.\n"
+        "    let sp_n = abs(normalize(in.world_normal));\n"
+        "    let sp_w = in.world_pos + vec3<f32>(globals.origin_mod.x, 0.0, globals.origin_mod.y);\n"
+        "    let sp_proj = select(select(sp_w.xy, sp_w.zy, sp_n.x >= sp_n.z), sp_w.xz,\n"
+        "                         sp_n.y >= sp_n.x && sp_n.y >= sp_n.z);\n"
+        "    let sp_fw = length(fwidth(sp_proj));\n"
+        "    if (material.mirror",
     )
     .replace(
         "    out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);\n"
@@ -1067,7 +1218,8 @@ _STANDARDMATERIAL_VCOLOR_SHADER = (
     )
     .replace(
         "    let F0 = mix(vec3<f32>(0.04), material.albedo, material.metallic);",
-        "    let vertex_albedo = in.vcolor * material.albedo;\n"
+        "    let vertex_albedo = surface_albedo(in.vcolor.xyz * material.albedo,\n"
+        "                                       i32(in.vcolor.w + 0.5), sp_proj, sp_fw);\n"
         "    let F0 = mix(vec3<f32>(0.04), vertex_albedo, material.metallic);",
     )
     .replace(
@@ -1099,8 +1251,27 @@ _STANDARDMATERIAL_VCOLOR_SHADER = (
 )
 
 
+# Surface patterns (vertex_colors materials): id -> (scale, contrast, tones, ink width,
+# ink darkness). Ids: 1 grass, 2 cobbles, 3 veins, 4 brick, 5 blocks, 6 planks, 7 tiles;
+# 0 draws the flat vertex colour. Tuned values from a game's art direction; blocks
+# and planks share brick's.
+SURFACE_PATTERNS = {
+    1: (1.0, 0.18, 3, 0.06, 0.55),
+    2: (1.6, 0.16, 3, 0.06, 0.60),
+    3: (1.0, 0.20, 3, 0.05, 0.60),
+    4: (1.0, 0.10, 2, 0.05, 0.45),
+    5: (1.0, 0.10, 2, 0.05, 0.45),
+    6: (1.0, 0.10, 2, 0.05, 0.45),
+    7: (1.0, 0.16, 3, 0.07, 0.60),
+}
+
+
 class StandardMaterial(Material):
-    """PBR material with GGX BRDF. Optional 2D albedo map."""
+    """PBR material with GGX BRDF. Optional 2D albedo map.
+
+    With vertex_colors, a geometry's "surfaces" key (one int per vertex) picks a
+    world-space pattern drawn round each vertex colour; `surface_patterns` overrides
+    entries of SURFACE_PATTERNS for this material."""
 
     binding_slot = 1
 
@@ -1118,6 +1289,7 @@ class StandardMaterial(Material):
         mirror=None,
         opacity=1.0,
         cut=None,
+        surface_patterns=None,
     ):
         from manifoldx.textures import TextureHandle
 
@@ -1148,6 +1320,7 @@ class StandardMaterial(Material):
         # cut=(x0, z0, x1, z1): an xz rectangle, in render space, where nothing of the mesh
         # draws, such as far land under near water. Set it again any frame to move it.
         self.cut = cut
+        self.surface_patterns = {**SURFACE_PATTERNS, **(surface_patterns or {})}
 
     @property
     def pipeline_subtype(self):
@@ -1203,7 +1376,13 @@ class StandardMaterial(Material):
         data[:, 11] = self.opacity
         if self.cut is not None:
             data[:, 12:16] = self.cut
-
+        if self.vertex_colors:  # the pattern table the vcolor shader reads
+            table = np.zeros((n, 44), dtype=np.float32)
+            for sid in range(1, 8):
+                scale, contrast, tones, ink, dark = self.surface_patterns[sid]
+                table[:, (sid - 1) * 4:(sid - 1) * 4 + 4] = (scale, contrast, tones, ink)
+                table[:, 28 + sid - 1] = dark
+            data = np.concatenate([data, table], axis=1)
         return data
 
 
@@ -1248,12 +1427,14 @@ def pack_vertices(geometry_obj: dict):
             normals = geometry_obj["normals"].astype(np.float32)
             colors = geometry_obj["colors"].astype(np.float32)
             n_verts = len(positions)
-            interleaved = np.zeros((n_verts, 9), dtype=np.float32)
+            interleaved = np.zeros((n_verts, 10), dtype=np.float32)
             interleaved[:, 0:3] = positions
             interleaved[:, 3:6] = normals
             interleaved[:, 6:9] = colors
+            if "surfaces" in geometry_obj:  # the surface pattern id, 0 for none
+                interleaved[:, 9] = np.asarray(geometry_obj["surfaces"], dtype=np.float32)
             data = interleaved.tobytes()
-            buffers["stride"] = 9 * 4  # pos(3) + normal(3) + color(3)
+            buffers["stride"] = 10 * 4  # pos(3) + normal(3) + color(3) + surface id(1)
             buffers["has_normals"] = True
             buffers["has_uvs"] = False
             buffers["has_colors"] = True
