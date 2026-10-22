@@ -1290,7 +1290,9 @@ class RenderPipeline:
         if b is None:
             geo = engine._geometry_registry.get(geom_id) or {}
             pos = geo.get("positions", geo.get("vertices")) if isinstance(geo, dict) else None
-            if pos is None or not len(pos):
+            if isinstance(geo, dict) and "bounds" in geo and "joints" not in geo:
+                b = geo["bounds"]  # computed where the geometry was built (a Streamer worker)
+            elif pos is None or not len(pos):
                 b = (np.zeros(3), np.inf)
             else:
                 pos = np.asarray(pos, dtype=np.float64).reshape(-1, 3)
@@ -1351,29 +1353,27 @@ class RenderPipeline:
         mesh_data = store.get_component_data("Mesh", alive)
         if mesh_data is None:
             return {}
-        out = {}
+        # Vectorized: one mask for mesh entities whose material casts, one culling call,
+        # then a stable grouping by geometry (entity order within a geometry as before).
         mat_data = store.get_component_data("Material", alive) if "Material" in store._components else None
-        for i in range(len(alive)):
-            geom_id = int(mesh_data[i, 0])
-            if geom_id == 0:
-                continue
-            if mat_data is not None:
-                mat = engine._material_registry.get(int(mat_data[i, 0]))
-                if not getattr(mat, "casts_shadow", True):
-                    continue
-            out.setdefault(geom_id, []).append(i)
+        geoms = mesh_data[:, 0].astype(np.int64)
+        keep = geoms != 0
+        mats = mat_data[:, 0].astype(np.int64) if mat_data is not None else np.zeros(len(alive), np.int64)
+        if mat_data is not None:
+            silent = [m for m in np.unique(mats[keep]).tolist()
+                      if not getattr(engine._material_registry.get(int(m)), "casts_shadow", True)]
+            if silent:
+                keep &= ~np.isin(mats, silent)
+        idx = np.nonzero(keep)[0]
         cfg = getattr(engine, "_shadow_config", None)
-        if cull and out and cfg is not None and not cfg.get("auto_fit", True):
+        if cull and len(idx) and cfg is not None and not cfg.get("auto_fit", True):
             # Only what the shadow caster's box holds casts; its box is fixed, not fitted to these.
             spot = getattr(engine, "_spot", None)
             clip = self._caster_light_view_proj(engine, 2 if spot is not None else 1)
-            for g in list(out):
-                v = out[g]
-                mats = mat_data[v, 0] if mat_data is not None else np.zeros(len(v))
-                keep = self._in_frustum(engine, [g] * len(v), models[v], mats, clip)
-                out[g] = [i for i, k in zip(v, keep, strict=True) if k]
-                if not out[g]:
-                    del out[g]
+            idx = idx[self._in_frustum(engine, geoms[idx], models[idx], mats[idx], clip)]
+        order = idx[np.argsort(geoms[idx], kind="stable")]
+        bounds = np.flatnonzero(np.diff(geoms[order])) + 1
+        out = {int(geoms[part[0]]): part for part in np.split(order, bounds) if len(part)}
         if with_entities:
             return {g: (models[v].astype(np.float32), alive[v]) for g, v in out.items()}
         return {g: models[v].astype(np.float32) for g, v in out.items()}

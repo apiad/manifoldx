@@ -65,3 +65,23 @@ def test_a_mesh_outside_the_shadow_box_casts_nothing():
     _cube(e, (0.0, -1000.0, 0.0))
     e.render_frame(supersample=1)
     assert sum(len(m) for m, _ in e._render_pipeline._collect_mesh_instances(e, with_entities=True, cull=True).values()) == 1
+
+
+def test_shadow_collection_groups_casters_by_geometry_in_entity_order():
+    import manifoldx as mx
+    from manifoldx.components import Material, Mesh, Transform
+    from manifoldx.resources import StandardMaterial, sphere
+
+    eng = mx.Engine("t", width=32, height=32)
+    a, b = sphere(1.0, 8), sphere(0.5, 8)
+    lit = StandardMaterial(color="#ffffff")
+    glass = StandardMaterial(color="#ffffff", opacity=0.5)  # translucent: casts no shadow
+    for k in range(3):
+        eng.spawn(Mesh(a), Material(lit), Transform(pos=(k, 0, 0)))
+        eng.spawn(Mesh(b), Material(lit), Transform(pos=(k, 1, 0)))
+        eng.spawn(Mesh(b), Material(glass), Transform(pos=(k, 2, 0)))
+    out = eng._render_pipeline._collect_mesh_instances(eng, with_entities=True)
+    assert sorted(len(v[1]) for v in out.values()) == [3, 3]
+    for mats, ents in out.values():
+        assert list(ents) == sorted(ents)
+        assert mats.shape == (3, 16)
