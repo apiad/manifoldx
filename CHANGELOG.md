@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Surface patterns in the fragment shader.** A vertex-coloured geometry's `surfaces`
+  key gives each vertex a pattern id (0 flat, 1 grass, 2 cobbles, 3 veins, 4 brick,
+  5 blocks, 6 planks, 7 tiles), and `StandardMaterial(vertex_colors=True)` draws that
+  pattern from world position round the vertex colour: two or three flat tones and
+  antialiased ink joints, fading to the flat colour once a cell is a few pixels wide.
+  No texture memory. Parameters per pattern (scale, contrast, tones, ink width, ink
+  darkness) default to `resources.SURFACE_PATTERNS`; `surface_patterns=` overrides
+  them per material. Costs 0.5 ms on a laptop GPU and 5.3 ms on llvmpipe for a
+  1280x720 frame mostly covered by patterns. Example: `examples/surface_patterns.py`.
+
 - **`Image` style key `uv` = (u0, v0, u1, v1) and `textures.write_texture(engine,
   handle, rgba, (x, y))`.** An Image draws that part of its source into its box, and
   the window can change every frame without an upload, so a big map texture pans under
