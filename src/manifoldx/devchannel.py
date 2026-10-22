@@ -123,6 +123,7 @@ class Meter:
         self.history = collections.deque(maxlen=METRICS_KEEP)
         self.start = self.last = None
         self.frames, self.total, self.worst = 0, 0.0, 0.0
+        self.split = {"update": 0.0, "acquire": 0.0, "render": 0.0}  # summed over the second
         self.gc_runs, self.gc_time, self.gc_at = [0, 0, 0], 0.0, None
         self.logged = 0.0
         gc.callbacks.append(self._gc)
@@ -141,12 +142,14 @@ class Meter:
                 LOG.info("slow gc: generation %d took %.0f ms, %d collected", info["generation"], 1000 * took,
                          info["collected"])
 
-    def frame(self, now):
-        """After each frame, with the time it ended."""
+    def frame(self, now, split=None):
+        """After each frame, with the time it ended and engine.frame_split (seconds per part)."""
         if self.last is not None:
             dt = now - self.last
             self.frames += 1
             self.total += dt
+            for part, seconds in (split or {}).items():
+                self.split[part] += seconds
             self.worst = max(self.worst, dt)
             if dt >= SLOW_FRAME:
                 LOG.info("slow frame %.0f ms", 1000 * dt)
@@ -157,12 +160,19 @@ class Meter:
             m = {"time": time.strftime("%H:%M:%S"), "fps": round(self.frames / (now - self.start), 1),
                  "frame_ms": round(1000 * self.total / max(self.frames, 1), 1), "worst_ms": round(1000 * self.worst, 1),
                  "rss_mb": round(_rss_mb(), 1), "gc": {"runs": list(self.gc_runs), "ms": round(1000 * self.gc_time, 1)}}
+            n = max(self.frames, 1)
+            parts = {part: round(1000 * seconds / n, 1) for part, seconds in self.split.items()}
+            parts["idle"] = round(max(0.0, m["frame_ms"] - sum(parts.values())), 1)  # between frames: the loop
+            m["split_ms"] = parts
             self.history.append(m)
             if now - self.logged >= METRICS_LOG:
                 self.logged = now
-                LOG.info("fps %.0f, frame %.1f ms (worst %.0f), %.0f MB, gc %s in %.0f ms", m["fps"], m["frame_ms"],
-                         m["worst_ms"], m["rss_mb"], "/".join(map(str, self.gc_runs)), m["gc"]["ms"])
+                LOG.info("fps %.0f, frame %.1f ms (worst %.0f; update %.1f, render %.1f, acquire %.1f, idle %.1f), "
+                         "%.0f MB, gc %s in %.0f ms", m["fps"], m["frame_ms"], m["worst_ms"], parts["update"],
+                         parts["render"], parts["acquire"], parts["idle"], m["rss_mb"],
+                         "/".join(map(str, self.gc_runs)), m["gc"]["ms"])
             self.start, self.frames, self.total, self.worst = now, 0, 0.0, 0.0
+            self.split = dict.fromkeys(self.split, 0.0)
             self.gc_runs, self.gc_time = [0, 0, 0], 0.0
 
 
@@ -214,7 +224,7 @@ class Channel:
         """After a frame, under --debug: measure it, and log the keys pressed since the last one."""
         if self.meter is None:
             return
-        self.meter.frame(time.perf_counter())
+        self.meter.frame(time.perf_counter(), getattr(engine, "frame_split", None))
         keys = engine.input.pressed_keys
         if down := sorted(keys - self.keys):
             LOG.info("keys %s", " ".join(down))
@@ -489,7 +499,9 @@ async function metrics() {
   $('msec').hidden = false;
   if (!m) return;
   const fps = h.slice(-60).map(x => x.fps), bars = '▁▂▃▄▅▆▇█', top = Math.max(...fps, 1);
+  const s = m.split_ms || {};
   $('metrics').textContent = `fps ${m.fps}   frame ${m.frame_ms} ms   worst ${m.worst_ms} ms\n` +
+    `update ${s.update} ms   render ${s.render} ms   acquire ${s.acquire} ms   idle ${s.idle} ms\n` +
     `memory ${m.rss_mb} MB   gc ${m.gc.runs.join('/')} in ${m.gc.ms} ms\n` +
     fps.map(f => bars[Math.min(7, Math.floor(8 * f / top))]).join('') + '  fps, last minute';
 }

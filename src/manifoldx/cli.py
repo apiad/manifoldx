@@ -119,7 +119,10 @@ def dev_command(args):
         show(call("/api/events/" + quote(args.event, safe=""), "POST", args.payload))
     elif args.command == "metrics":
         for m in json.loads(call("/api/metrics"))[-args.n:]:
+            s = m.get("split_ms", {})
             print(f"{m['time']}  fps {m['fps']:5.1f}  frame {m['frame_ms']:5.1f} ms  worst {m['worst_ms']:6.1f} ms"
+                  f"  update {s.get('update', 0):5.1f}  render {s.get('render', 0):5.1f}"
+                  f"  acquire {s.get('acquire', 0):5.1f}  idle {s.get('idle', 0):5.1f}"
                   f"  {m['rss_mb']:7.1f} MB  gc {'/'.join(map(str, m['gc']['runs']))} {m['gc']['ms']} ms")
     elif args.command == "events":
         for name, docs in json.loads(call("/api/events")).items():

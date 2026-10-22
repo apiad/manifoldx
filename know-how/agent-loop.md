@@ -45,6 +45,7 @@ Every request that reads or changes the app runs on the engine's thread between 
 Plain `manifoldx run` keeps the dev server light: the log has only the runner's lines and the app's own. `--debug` adds what everyone needs to debug performance, with no code in the app:
 
 - `manifoldx metrics -n 30` (and a panel on the page): each second's fps, mean and worst frame time, resident memory, and garbage collections per generation with the time they took.
+- Each frame's time split in four (`split_ms`, mean per second): `update` (events, async handlers, systems), `render` (preparing and submitting the GPU work), `acquire` (waiting for the window's next image: vsync, or the GPU behind), `idle` (the rest: the loop between frames). A frame rate stuck at half the screen's refresh with a large `acquire` is vsync missing a refresh; a large `update` is the app's Python.
 - The log gets a line every 10 s with the same numbers, a `slow frame N ms` line for each frame over 100 ms, a `slow gc` line for each collection over 20 ms, and the keys pressed.
 
 A slow frame line says only how long; log where the person was from the app (`engine.log`) so the two lines meet in the log. To find what makes frames slow, watch for them: `manifoldx log --match 'slow frame' --wait 120`, then `manifoldx log -n 20` for what happened around them.

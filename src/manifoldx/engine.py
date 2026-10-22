@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import time
 from time import perf_counter_ns
 
 # Import ECS components
@@ -329,6 +330,10 @@ class Engine:
         self.state = hot._state if hot._state is not None else hot.State()
         self._looks = []  # futures waiting for the next presented frame as PNG bytes (the dev server's look)
         self._look_copy = None  # a frame copied for them, read back on the frame after
+        # Seconds the last frame spent: updating (events, async, systems), acquiring the window's
+        # next image (vsync, or the GPU behind), and rendering the rest. manifoldx run --debug reads it.
+        self.frame_split = {"update": 0.0, "acquire": 0.0, "render": 0.0}
+        self._acquire_s = 0.0
 
         # Input layer — keyboard + mouse + resize. The bridge attaches to
         # the canvas in _init_canvas; until then it is dormant.
@@ -1142,6 +1147,7 @@ class Engine:
 
     def _draw_frame(self):
         """Draw a single frame. Backend-agnostic - used by both run() and render()."""
+        started = time.perf_counter()
         # Deliver finished background-task callbacks on the main thread.
         self._drain_tasks()
         # Check if we should stop (only for run() with event loop)
@@ -1203,7 +1209,10 @@ class Engine:
         self._compute_runner.run_all(dt)
         self._frame_index += 1
 
+        updated = time.perf_counter()
         self._render_only(dt)
+        self.frame_split = {"update": updated - started, "acquire": self._acquire_s,
+                            "render": time.perf_counter() - updated - self._acquire_s}
         return True  # Continue rendering
 
     def _render_only(self, dt):
@@ -1218,8 +1227,10 @@ class Engine:
             copy, self._look_copy = self._look_copy, None
             copy.finish()
 
-        # Get the next frame's texture and create view
+        # Get the next frame's texture and create view; waiting here is vsync or the GPU behind
+        acquiring = time.perf_counter()
         texture = self._wgpu_context.get_current_texture()
+        self._acquire_s = time.perf_counter() - acquiring
         texture_view = texture.create_view()
 
         # Recreate depth texture if canvas size changed

@@ -210,9 +210,10 @@ def test_the_meter_counts_each_second_and_logs_slow_frames():
     meter = devchannel.Meter()
     try:
         t = 100.0
+        split = {"update": 0.01, "acquire": 0.02, "render": 0.005}
         for dt in [0.0] + [0.05] * 18 + [0.15]:  # 19 frames in 1.05 s, the last one slow
             t += dt
-            meter.frame(t)
+            meter.frame(t, split)
         import gc
         gc.collect()
         t += 1.0
@@ -223,10 +224,12 @@ def test_the_meter_counts_each_second_and_logs_slow_frames():
     first, second = meter.history
     assert first["fps"] == pytest.approx(19 / 1.05, abs=0.1) and first["worst_ms"] == 150.0
     assert first["frame_ms"] == pytest.approx(1050 / 19, abs=0.1) and first["rss_mb"] > 0
+    assert first["split_ms"] == {"update": 10.0, "acquire": 20.0, "render": 5.0, "idle": 20.3}
     assert second["gc"]["runs"][2] >= 1
     texts = [line["text"] for line in lines.lines]
     assert "slow frame 150 ms" in texts and "slow frame 1000 ms" in texts
-    assert any(text.startswith("fps 18, frame 55.3 ms (worst 150)") for text in texts)
+    assert any(text.startswith("fps 18, frame 55.3 ms (worst 150; update 10.0, render 5.0, acquire 20.0, idle 20.3)")
+               for text in texts)
 
 
 def test_metrics_need_debug(hot):
@@ -251,6 +254,7 @@ def test_metrics_under_debug(tmp_path, monkeypatch):
             h.step()
         status, body = ask(h, "/api/metrics")
         got = json.loads(body)
-        assert status == 200 and got and {"fps", "frame_ms", "worst_ms", "rss_mb", "gc"} <= set(got[-1])
+        assert status == 200 and got and {"fps", "frame_ms", "worst_ms", "rss_mb", "gc", "split_ms"} <= set(got[-1])
+        assert got[-1]["split_ms"]["render"] > 0
     finally:
         h.channel.close()
