@@ -327,6 +327,8 @@ def spin(query: Query[Transform], dt: float):
 
 A broken edit leaves the running version on screen; an error while running pauses the app until the next save.
 
+What reloads, what to keep in `engine.state`, the gotchas and how to keep reloads fast: [know-how/hot-reload.md](know-how/hot-reload.md).
+
 ### Video Rendering
 
 Render simulations to video files for sharing or CI using the built-in CLI:

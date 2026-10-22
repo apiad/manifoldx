@@ -21,6 +21,9 @@ make format         # ruff format
 # Run an example interactively
 uv run python examples/<name>.py
 
+# Run with hot reload: saving a source file reruns it in the same window (know-how/hot-reload.md)
+uv run manifoldx run examples/<name>.py
+
 # Smoke-render an example to MP4 (good for visual regression)
 uv run python examples/<name>.py --render --duration 2 --fps 30 --output /tmp/<name>.mp4
 ```
@@ -53,6 +56,8 @@ uv run python examples/<name>.py --render --duration 2 --fps 30 --output /tmp/<n
 Procedure docs in `know-how/` encode how to do things in this repo. Match the current task against the *when to reach for it* line and load the matched doc(s) before acting. Each doc has its own `triggers` frontmatter for finer-grained matching.
 
 - [authoring-an-ecs-component](know-how/authoring-an-ecs-component.md) — adding a new ECS component (PointCloud-style marker, ScalarValue-style scalar, Velocity-style vector, etc.) using the `Component` base class with annotation-driven dtype + shape.
+
+- [hot-reload](know-how/hot-reload.md) — running an app with `manifoldx run`, keeping state across reloads in `engine.state`, the gotchas of rerunning app code, and keeping reloads fast.
 
 (More docs will land here as patterns crystallize. Empty bullet groups belong here, not in `know-how/`.)
 
