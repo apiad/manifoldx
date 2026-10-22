@@ -1,4 +1,5 @@
 import os
+import sys
 import textwrap
 import time
 
@@ -136,6 +137,25 @@ def test_project_modules_are_reimported(tmp_path):
     hot.step()
     assert hot.state.version == 7
     assert mx.Engine is __import__("manifoldx").Engine  # manifoldx itself never reloads
+
+
+def test_editing_the_module_run_with_m_reloads_it(tmp_path, monkeypatch):
+    (tmp_path / "watchpkg").mkdir()
+    write(tmp_path / "watchpkg" / "__init__.py", "")
+    write(tmp_path / "watchpkg" / "entry.py", APP.format(version=1))
+    monkeypatch.chdir(tmp_path)
+    hot = HotReloader(module="watchpkg.entry", canvas_factory=offscreen, poll=0, channel=False)
+    try:
+        hot.start()
+        hot.step()
+        assert hot.state.version == 1
+
+        write(tmp_path / "watchpkg" / "entry.py", APP.format(version=2))
+        hot.step()
+        hot.step()
+        assert hot.state.version == 2
+    finally:
+        sys.modules.pop("watchpkg", None)
 
 
 def test_reload_cancels_old_async_handlers(tmp_path):
