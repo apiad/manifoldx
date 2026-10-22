@@ -1115,7 +1115,7 @@ class RenderPipeline:
             elif material_subtype == "vcolor":
                 vertex_attributes.append(
                     {
-                        "format": wgpu.VertexFormat.float32x3,
+                        "format": wgpu.VertexFormat.float32x4,  # colour + surface id
                         "offset": 6 * 4,
                         "shader_location": 2,
                     }
