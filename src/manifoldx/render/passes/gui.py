@@ -298,7 +298,27 @@ def layout_gui(engine) -> Painter:
         paint(panel, spec, boxes, painter)
     if scale != 1.0:
         _scale_ops(painter, scale)
+    if getattr(engine.gui, "exact_colors", True):
+        _decode_colors(painter)
     return painter
+
+
+def _linear(c: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    from manifoldx.resources import srgb_to_linear
+
+    r, g, b = (float(v) for v in srgb_to_linear(c[:3]))
+    return (r, g, b, c[3])
+
+
+def _decode_colors(painter: Painter) -> None:
+    """Decode every op colour from sRGB to the linear light the shaders write,
+    so the sRGB target shows each hex as itself. Alpha stays as it is."""
+    painter.rect_ops[:] = [
+        replace(op, fill=_linear(op.fill), border_color=_linear(op.border_color))
+        for op in painter.rect_ops
+    ]
+    painter.text_ops[:] = [replace(op, fg=_linear(op.fg)) for op in painter.text_ops]
+    painter.image_ops[:] = [replace(op, tint=_linear(op.tint)) for op in painter.image_ops]
 
 
 def _scale_box(box: LayoutBox, s: float) -> LayoutBox:

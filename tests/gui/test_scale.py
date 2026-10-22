@@ -66,6 +66,7 @@ def test_panel_at_bottom_right_of_ui_viewport_touches_screen_corner():
 
 def test_scale_one_matches_unscaled_path():
     eng = _engine()
+    eng.gui.exact_colors = False  # compare geometry only, not the colour decode
     eng.gui.append(_panel(offset=(7, 9)))
     eng.gui.append(Panel(children=[Text("full")], offset=(3, 3)))
     viewport = LayoutBox(0.0, 0.0, 800.0, 600.0)

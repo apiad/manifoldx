@@ -79,6 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **GUI colours are sRGB, so a hex shows as itself.** `bg`, `border_color`, `fg` and
+  `tint` are decoded from sRGB like material colours and SVG fills; before, a hex was
+  drawn as linear light and showed lighter (`#808080` came out as about `#bcbcbc`).
+  Every GUI looks darker and truer. `engine.gui.exact_colors = False` keeps the old look.
+
 - **The GUI draws in the widget tree's order.** Rects, images and text interleave by
   root panel and child order, so a later panel covers an earlier one's text and images.
   Text used to be drawn above every panel.
