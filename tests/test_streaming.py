@@ -230,3 +230,35 @@ def test_a_streamed_cell_carries_its_surface_pattern_ids():
     plain = _pack(lambda i, j: data._replace(surfaces=None), 0, 0)
     assert "surfaces" not in plain.geo
     assert np.frombuffer(plain.vbytes, np.float32).reshape(4, -1)[:, 9].tolist() == [0, 0, 0, 0]
+
+
+def test_streamers_taking_turns_never_draw_in_the_same_frame():
+    engine = _offscreen_engine()
+    pair = [Streamer(engine, cell=8.0, build=build_cell, uploads_per_frame=1, turn=(k, 2)) for k in (0, 1)]
+    for s in pair:
+        s.focus(4.0, 4.0)
+    while not all(f.done() for s in pair for f in s._pending.values()):
+        time.sleep(0.005)
+    seen = []
+    for _ in range(8):
+        before = [len(s.drawn()) for s in pair]
+        for s in pair:
+            s.focus(4.0, 4.0)
+        seen.append([len(s.drawn()) - b for s, b in zip(pair, before)])
+    assert seen[:4] in ([[1, 0], [0, 1]] * 2, [[0, 1], [1, 0]] * 2)  # one of the pair a frame, in turn
+    for s in pair:
+        s.close()
+
+
+def test_a_cell_brings_its_bounds_from_the_worker():
+    engine = _offscreen_engine()
+    s = Streamer(engine, cell=8.0, build=build_cell)
+    try:
+        _settle(engine, s, 4.0, 4.0)
+        geo = s._ready[(0, 0)].geo
+        centre, radius = geo["bounds"]
+        assert np.allclose(centre, [4, 0, 4]) and np.isclose(radius, np.hypot(4, 4))
+        gid = s._drawn[(0, 0)]._geometry_id
+        assert engine._render_pipeline._bounds(engine, gid) is geo["bounds"]  # read, not recomputed
+    finally:
+        s.close()

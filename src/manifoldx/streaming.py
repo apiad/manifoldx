@@ -12,6 +12,9 @@ holds them, and the frame copies at most `upload_bytes_per_frame` of them to
 the GPU, nearest cell first, so a big cell takes several frames and none of
 them stalls. Stepping into a new cell then draws cells that are already on the
 GPU, at most `uploads_per_frame` a frame, and costs the frame next to nothing.
+Several streamers that cross the same border together can take turns:
+`turn=(k, n)` lets this one draw only on every n-th focus() call, the k-th, so
+n streamers with k = 0..n-1 never draw new cells in the same frame.
 A cell that leaves `radius` stops drawing and keeps its buffers; one that
 leaves `ready_radius` is dropped, its buffers freed and its data forgotten.
 
@@ -37,6 +40,7 @@ from typing import Callable, NamedTuple
 
 import numpy as np
 
+from manifoldx.renderer import vertex_bounds
 from manifoldx.resources import pack_vertices
 
 
@@ -73,6 +77,8 @@ def _pack(build, i, j):
     if data.surfaces is not None:
         geo["surfaces"] = np.asarray(data.surfaces, np.int32)
     vbytes, info = pack_vertices(geo)
+    if len(geo["positions"]):
+        geo["bounds"] = vertex_bounds(geo["positions"])  # the frustum test reads it, not the frame
     return _Cell(geo, info, vbytes, geo["indices"].tobytes())
 
 
@@ -90,6 +96,7 @@ class Streamer:
         upload_bytes_per_frame: int = 2 << 20,
         workers: str = "thread",
         material=None,
+        turn: tuple[int, int] = (0, 1),
     ):
         if ready_radius < radius:
             raise ValueError(f"ready_radius ({ready_radius}) must be at least radius ({radius})")
@@ -112,6 +119,8 @@ class Streamer:
             uploads_per_frame,
         )
         self.material = material
+        self.turn = turn
+        self._calls = 0
         self.upload_bytes_per_frame = max(4, int(upload_bytes_per_frame) // 4 * 4)
         self._pending = {}  # cell -> Future
         self._ready = {}  # cell -> _Cell | None, built and kept
@@ -161,7 +170,8 @@ class Streamer:
                 break
             if self._ready.get(c) is not None and not self._on_gpu(c):
                 room -= self._upload(c, room)
-        budget = self.uploads_per_frame
+        budget = self.uploads_per_frame if self._calls % self.turn[1] == self.turn[0] else 0
+        self._calls += 1
         for c in wanted:
             if budget == 0:
                 break

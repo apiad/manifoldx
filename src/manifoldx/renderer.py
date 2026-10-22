@@ -110,6 +110,16 @@ fn vs_main(@location(0) position: vec3<f32>,
 # =============================================================================
 
 
+def vertex_bounds(positions, skinned=False):
+    """A sphere (centre (3,), radius) around vertex positions, padded for a skinned
+    geometry whose joints move them."""
+    pos = np.asarray(positions, dtype=np.float64).reshape(-1, 3)
+    lo, hi = pos.min(axis=0), pos.max(axis=0)
+    c = (lo + hi) / 2
+    r = float(np.linalg.norm(pos - c, axis=1).max())
+    return c, (r * 1.5 + 0.5 if skinned else r)
+
+
 class MaterialGeometryMismatchError(ValueError):
     """A material requires geometry attributes (e.g. UVs) the geometry doesn't have."""
 
@@ -1290,14 +1300,12 @@ class RenderPipeline:
         if b is None:
             geo = engine._geometry_registry.get(geom_id) or {}
             pos = geo.get("positions", geo.get("vertices")) if isinstance(geo, dict) else None
-            if pos is None or not len(pos):
+            if isinstance(geo, dict) and "bounds" in geo:
+                b = geo["bounds"]  # computed where the geometry was built, off the frame
+            elif pos is None or not len(pos):
                 b = (np.zeros(3), np.inf)
             else:
-                pos = np.asarray(pos, dtype=np.float64).reshape(-1, 3)
-                lo, hi = pos.min(axis=0), pos.max(axis=0)
-                c = (lo + hi) / 2
-                r = float(np.linalg.norm(pos - c, axis=1).max())
-                b = (c, r * 1.5 + 0.5 if "joints" in geo else r)
+                b = vertex_bounds(pos, skinned="joints" in geo)
             self._geom_bounds[geom_id] = b
         return b
 
