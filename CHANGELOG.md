@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Image` style key `uv` = (u0, v0, u1, v1) and `textures.write_texture(engine,
+  handle, rgba, (x, y))`.** An Image draws that part of its source into its box, and
+  the window can change every frame without an upload, so a big map texture pans under
+  a round minimap. `write_texture` patches a region of a texture in place. The GUI
+  samples a texture's full-size level only, so a patch shows at once.
+
 - **`engine.render_to_texture(camera, (w, h), live=True, background=None)`: a second
   camera into a texture.** Rendered before each frame's main pass, without the GUI, and
   usable as an Image's source or an albedo_map. `live=False` renders once and then only

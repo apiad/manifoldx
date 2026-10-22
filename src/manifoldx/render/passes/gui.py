@@ -129,6 +129,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 #   row0 = (xy_top_left_px.x, xy_top_left_px.y, size_px.w, size_px.h)
 #   row1 = tint rgba (alpha already times opacity)
 #   row2 = (corner radius px, 0, 0, 0)
+#   row3 = (u0, v0, u1, v1): the source rect drawn into the quad
 # The texture holds sRGB colour with straight alpha; the output is
 # pre-multiplied, blended like the glyphs, and the tint is applied like a
 # glyph's fg.
@@ -149,6 +150,7 @@ struct ImageInstance {
     row0: vec4<f32>,
     row1: vec4<f32>,
     row2: vec4<f32>,
+    row3: vec4<f32>,
 };
 @group(0) @binding(1) var<storage, read> images: array<ImageInstance>;
 @group(1) @binding(0) var image_tex: texture_2d<f32>;
@@ -165,6 +167,7 @@ struct VsOut {
     @location(1) tint: vec4<f32>,
     @location(2) size: vec2<f32>,
     @location(3) radius: f32,
+    @location(4) local: vec2<f32>,
 };
 
 @vertex
@@ -179,7 +182,8 @@ fn vs_main(in: VsIn) -> VsOut {
         1.0 - (corner_px.y / globals.viewport_size.y) * 2.0,
         0.0, 1.0,
     );
-    out.uv     = in.position.xy + vec2<f32>(0.5, 0.5);
+    out.local  = in.position.xy + vec2<f32>(0.5, 0.5);
+    out.uv     = mix(inst.row3.xy, inst.row3.zw, out.local);
     out.tint   = inst.row1;
     out.size   = sz;
     out.radius = inst.row2.x;
@@ -192,7 +196,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Rounded corners: signed distance to the rounded box, one pixel of antialias.
     let half = in.size * 0.5;
     let r = min(in.radius, min(half.x, half.y));
-    let q = abs(in.uv * in.size - half) - (half - vec2<f32>(r, r));
+    let q = abs(in.local * in.size - half) - (half - vec2<f32>(r, r));
     let d = length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
     let cover = select(1.0, clamp(0.5 - d / max(fwidth(d), 1e-4), 0.0, 1.0), r > 0.0);
     let a = texel.a * in.tint.a * cover;
@@ -838,7 +842,9 @@ def _texture_bind_group(rp, handle):
         group = rp._device.create_bind_group(
             layout=rp._gui_image_bgl1,
             entries=[
-                {"binding": 0, "resource": handle.view},
+                # level 0 only: write_texture patches it, and the mips would lag
+                {"binding": 0, "resource": handle.texture.create_view(
+                    base_mip_level=0, mip_level_count=1)},
                 {"binding": 1, "resource": rp._gui_image_sampler},
             ],
         )
@@ -906,7 +912,7 @@ def _prepare_images(rp, engine, image_ops) -> list:
     rows, groups = [], []
     for op in image_ops:
         box, pw, ph = image_pixel_box(op.box, density)
-        rows.append([box.x, box.y, box.w, box.h, *op.tint, op.radius, 0.0, 0.0, 0.0])
+        rows.append([box.x, box.y, box.w, box.h, *op.tint, op.radius, 0.0, 0.0, 0.0, *op.uv])
         if op.box.w <= 0 or op.box.h <= 0:
             groups.append(None)
             continue

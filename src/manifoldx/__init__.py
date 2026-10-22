@@ -11,7 +11,7 @@ from manifoldx.camera import Camera
 from manifoldx.input import KeyEvent, PointerEvent, WheelEvent, ResizeEvent
 from manifoldx.resources import cube, sphere, plane, basic, phong, standard
 from manifoldx.assets import load_obj
-from manifoldx.textures import load_texture, texture_from_array, texture_from_svg
+from manifoldx.textures import load_texture, texture_from_array, texture_from_svg, write_texture
 from manifoldx.skinning import MAX_JOINTS
 from manifoldx import compute  # noqa: E402, F401
 from manifoldx import physics  # noqa: E402, F401
@@ -114,6 +114,7 @@ __all__ = [
     "load_texture",
     "texture_from_array",
     "texture_from_svg",
+    "write_texture",
     "MAX_JOINTS",
     "component",
     "types",

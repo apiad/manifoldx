@@ -158,8 +158,9 @@ class Image(Widget):
     Style: `width` and `height` in UI pixels (one alone keeps the SVG's aspect;
     neither uses the SVG's own size), `tint` (hex, multiplies the art like a
     text's fg), `opacity` (0..1) and `radius` (rounds the corners; half the
-    size makes a circle). The art keeps its aspect ratio, centred in its layout
-    box.
+    size makes a circle), and `uv` = (u0, v0, u1, v1), the part of the source
+    drawn into the box (default the whole; change it every frame to pan a map).
+    The art keeps its aspect ratio, centred in its layout box.
     """
 
     def __init__(

@@ -57,6 +57,7 @@ class ImageOp:
     tint: tuple[float, float, float, float]  # alpha already multiplied by opacity
     widget: int = 0  # id() of the widget, to tell a resize in progress from a settled size
     radius: float = 0.0  # corner radius in the box's units
+    uv: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)  # source rect drawn into the box
 
 
 @dataclass
@@ -108,11 +109,12 @@ class Painter:
         tint: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
         widget: int = 0,
         radius: float = 0.0,
+        uv: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0),
     ) -> None:
         self.order.append(("image", len(self.image_ops)))
         self.image_ops.append(ImageOp(
             box=box, key=key, raster=raster, texture=texture, tint=tint,
-            widget=widget, radius=radius,
+            widget=widget, radius=radius, uv=tuple(float(v) for v in uv),
         ))
 
     def clear(self) -> None:
@@ -196,6 +198,7 @@ def paint(
             tint=(r, g, b, a * float(s.get("opacity", 1.0))),
             widget=id(widget),
             radius=float(s.get("radius") or 0.0) * k,
+            uv=s.get("uv") or (0.0, 0.0, 1.0, 1.0),
         )
     elif isinstance(widget, ValueDisplay):
         s = widget.effective_style()
