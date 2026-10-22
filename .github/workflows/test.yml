@@ -27,7 +27,7 @@ jobs:
         # Offline backend for headless rendering, Pillow (viz) for the texture
         # tests. The runner has no GPU: tests/conftest.py turns every GPU
         # adapter request into a skip, so render tests skip instead of erroring.
-        run: uv sync --extra offline --extra viz --dev
+        run: uv sync --extra offline --extra viz --extra svg --dev
 
       - name: Run tests
         # Tests should pass with OFFSCREEN backend only
