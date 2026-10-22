@@ -247,7 +247,9 @@ def render_gui_pass(rp, engine, render_pass) -> None:
 
     # Upload every kind's instances once, then draw in the tree's paint order:
     # each run of same-kind ops is one draw over its slice of the instances.
-    rect_data = RectMaterial.pack_instances(painter.rect_ops)
+    rect_data = RectMaterial.pack_instances(
+        painter.rect_ops, exact=getattr(engine.gui, "exact_colors", True)
+    )
     if rect_data.size > 0:
         _upload_rect_instances(rp, rect_data)
     if painter.image_ops:
