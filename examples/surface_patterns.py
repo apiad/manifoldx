@@ -8,7 +8,7 @@ draws it. Far surfaces fade to their flat colour, so nothing shimmers.
 Run interactively:
     uv run python examples/surface_patterns.py
 
-Headless still:
+Headless still (needs Pillow, from the viz extra):
     uv run python examples/surface_patterns.py --still /tmp/surface_patterns.png
 """
 
@@ -47,6 +47,7 @@ def geometry():
 
 
 engine = mx.Engine("Surface patterns", width=1280, height=720)
+engine.background_color = (0.45, 0.65, 0.9)  # a sky, as linear light
 engine.set_sun(DirectionalLight(color="#fff3dc", intensity=4.5, direction=(-0.45, -1.0, -0.55)))
 engine.spawn(Mesh(geometry()), Material(StandardMaterial(color="#ffffff", vertex_colors=True,
                                                          roughness=0.9)),
@@ -60,8 +61,11 @@ def aim(_payload):
 
 if __name__ == "__main__":
     if "--still" in sys.argv:
+        i = sys.argv.index("--still")
+        if i + 1 >= len(sys.argv):
+            sys.exit("usage: surface_patterns.py --still OUT.png")
         from PIL import Image
 
-        Image.fromarray(engine.render_frame(dt=0.0)).save(sys.argv[sys.argv.index("--still") + 1])
+        Image.fromarray(engine.render_frame(dt=0.0)).save(sys.argv[i + 1])
     else:
         engine.cli(fps=30, duration=6, output="surface_patterns.mp4")
