@@ -158,8 +158,9 @@ class Image(Widget):
     Style: `width` and `height` in UI pixels (one alone keeps the SVG's aspect;
     neither uses the SVG's own size), `tint` (hex, multiplies the art like a
     text's fg), `opacity` (0..1) and `radius` (rounds the corners; half the
-    size makes a circle). The art keeps its aspect ratio, centred in its layout
-    box.
+    size makes a circle), and `uv` = (u0, v0, u1, v1), the part of the source
+    drawn into the box (default the whole; change it every frame to pan a map).
+    The art keeps its aspect ratio, centred in its layout box.
     """
 
     def __init__(
@@ -227,6 +228,10 @@ class _GuiRoot:
     pixels; on screen they are multiplied by `effective_scale(engine.h)`.
     Set `scale` for a fixed factor, or `design_height` to scale the UI with
     the window height (`engine.h / design_height`, which wins over `scale`).
+
+    Colours (`bg`, `border_color`, `fg`, `tint`) are sRGB, like material colours
+    and SVG fills: `#888888` shows as #888888. Set `exact_colors = False` for the
+    look before 0.11, where a hex was drawn as linear light and showed lighter.
     """
 
     def __init__(self) -> None:
@@ -234,6 +239,7 @@ class _GuiRoot:
         self.pointer_over_gui: bool = False
         self.scale: float = 1.0
         self.design_height: float | None = None
+        self.exact_colors: bool = True
 
     def effective_scale(self, screen_height: float) -> float:
         """Screen pixels per UI pixel for a screen `screen_height` pixels tall."""

@@ -4,7 +4,7 @@ One instanced draw call → one rounded rect per instance, with optional 1 px
 (or wider) border. Per-instance state is packed into a 16-float row that
 mirrors the WGSL ``RectInstance`` struct layout (including implicit padding)::
 
-    [xy.x, xy.y, size.x, size.y, radius, border, _pad, _pad,
+    [xy.x, xy.y, size.x, size.y, radius, border, exact, _pad,
      bg.r, bg.g, bg.b, bg.a,
      border_color.r, border_color.g, border_color.b, border_color.a]
 
@@ -39,6 +39,7 @@ struct RectInstance {
     size:         vec2<f32>,
     radius:       f32,
     border:       f32,
+    exact:        f32,          // 1: colours blend by their alpha (gui.exact_colors)
     bg:           vec4<f32>,
     border_color: vec4<f32>,
 };
@@ -85,6 +86,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let d = rounded_rect_sdf(in.local, half, inst.radius);
     // 1 px smoothstep gives cheap AA at the outer edge.
     let outer = 1.0 - smoothstep(-1.0, 0.0, d);
+    if (inst.exact > 0.5) {
+        // Premultiply fill and border by their own alpha, so a translucent
+        // colour blends as itself, with or without a border.
+        let bg = vec4<f32>(inst.bg.rgb * inst.bg.a, inst.bg.a);
+        let bc = vec4<f32>(inst.border_color.rgb * inst.border_color.a, inst.border_color.a);
+        if (inst.border > 0.0) {
+            let inner = 1.0 - smoothstep(-1.0, 0.0, d + inst.border);
+            return bg * inner + bc * clamp(outer - inner, 0.0, 1.0);
+        }
+        return bg * outer;
+    }
     var color = inst.bg;
     if (inst.border > 0.0) {
         let inside_d = d + inst.border;
@@ -127,7 +139,7 @@ class RectMaterial(Material):
         return "gui"
 
     @staticmethod
-    def pack_instances(rect_ops: list[Any]) -> "np.ndarray":  # noqa: F821
+    def pack_instances(rect_ops: list[Any], exact: bool = False) -> "np.ndarray":  # noqa: F821
         """Pack a list of painter.RectOp into a (N, 16) float32 buffer.
 
         Column order matches the WGSL `RectInstance` struct layout including
@@ -136,7 +148,7 @@ class RectMaterial(Material):
         8 bytes of implicit padding before `bg` (vec4, offset 32).  We
         represent the full 64-byte struct as 16 float32 values:
 
-            [xy.x, xy.y, size.x, size.y, radius, border, _pad, _pad,
+            [xy.x, xy.y, size.x, size.y, radius, border, exact, _pad,
              bg.r, bg.g, bg.b, bg.a,
              border_color.r, border_color.g, border_color.b, border_color.a]
         """
@@ -154,7 +166,7 @@ class RectMaterial(Material):
                     op.box.h,
                     op.radius,
                     op.border,
-                    0.0,  # padding to align bg to 16-byte boundary
+                    1.0 if exact else 0.0,  # exact: blend by alpha
                     0.0,  # padding
                     op.fill[0],
                     op.fill[1],

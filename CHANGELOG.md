@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Image` style key `uv` = (u0, v0, u1, v1) and `textures.write_texture(engine,
+  handle, rgba, (x, y))`.** An Image draws that part of its source into its box, and
+  the window can change every frame without an upload, so a big map texture pans under
+  a round minimap. `write_texture` patches a region of a texture in place. The GUI
+  samples a texture's full-size level only, so a patch shows at once.
+
 - **Render layers: `Layer(layer=n)` on entities, `camera.layers = {n, ...}`.** A camera
   draws only entities on its layers (`None`, the default, draws all; an entity without
   `Layer` is on layer 0), and drops the others before any per-entity work. A
@@ -85,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails if any frame takes more than twice the median (#85).
 
 ### Changed
+
+- **GUI colours are sRGB, so a hex shows as itself.** `bg`, `border_color`, `fg` and
+  `tint` are decoded from sRGB like material colours and SVG fills; before, a hex was
+  drawn as linear light and showed lighter (`#808080` came out as about `#bcbcbc`).
+  Every GUI looks darker and truer. `engine.gui.exact_colors = False` keeps the old look.
 
 - **The GUI draws in the widget tree's order.** Rects, images and text interleave by
   root panel and child order, so a later panel covers an earlier one's text and images.

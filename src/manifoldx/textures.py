@@ -163,3 +163,25 @@ def texture_from_svg(engine, svg, size_px: int | tuple[int, int]) -> TextureHand
     else:
         w, h = int(size_px[0]), int(size_px[1])
     return texture_from_array(engine, _svg.rasterize_svg(data, w, h))
+
+
+def write_texture(engine, handle: TextureHandle, rgba: np.ndarray, origin=(0, 0)) -> None:
+    """Overwrite part of a texture in place: `rgba` is a (h, w, 4) uint8 sRGB patch with
+    straight alpha, written with its top-left corner at `origin` = (x, y) pixels.
+
+    Only the full-size level changes. The GUI samples that level of any texture, so a
+    map in an Image shows the patch at once; a material's minified view of a texture
+    with mips keeps the old image in the smaller levels."""
+    rgba = np.ascontiguousarray(rgba, dtype=np.uint8)
+    if rgba.ndim != 3 or rgba.shape[2] != 4:
+        raise ValueError(f"write_texture expects a (h, w, 4) uint8 array, got {rgba.shape}")
+    h, w = rgba.shape[:2]
+    x, y = int(origin[0]), int(origin[1])
+    if x < 0 or y < 0 or x + w > handle.size[0] or y + h > handle.size[1]:
+        raise ValueError(f"a {w}x{h} patch at {(x, y)} does not fit a {handle.size} texture")
+    engine._device.queue.write_texture(
+        {"texture": handle.texture, "mip_level": 0, "origin": (x, y, 0)},
+        rgba.tobytes(),
+        {"offset": 0, "bytes_per_row": w * 4, "rows_per_image": h},
+        (w, h, 1),
+    )
