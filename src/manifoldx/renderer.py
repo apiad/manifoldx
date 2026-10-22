@@ -1310,15 +1310,19 @@ class RenderPipeline:
             return np.zeros(0, dtype=bool)
         c = np.empty((n, 3))
         r = np.empty(n)
-        for i, g in enumerate(geom_ids):
-            c[i], r[i] = self._bounds(engine, int(g))
+        geom_ids = np.asarray(geom_ids).astype(np.int64)
+        for g in np.unique(geom_ids):  # one lookup per geometry, not per instance
+            sel = geom_ids == g
+            c[sel], r[sel] = self._bounds(engine, int(g))
         m = np.asarray(models, dtype=np.float64).reshape(n, 4, 4)
         centre = np.einsum("nij,nj->ni", m[:, :3, :3], c) + m[:, :3, 3]
         radius = r * np.linalg.norm(m[:, :3, :3], axis=1).max(axis=1)
-        for i, mid in enumerate(mat_ids):
+        mat_ids = np.asarray(mat_ids).astype(np.int64)
+        for mid in np.unique(mat_ids):
             mirror = getattr(engine._material_registry.get(int(mid)), "mirror", None)
             if mirror is not None:
-                centre[i, 1] = 2.0 * mirror - centre[i, 1]
+                sel = mat_ids == mid
+                centre[sel, 1] = 2.0 * mirror - centre[sel, 1]
         k = np.asarray(clip, dtype=np.float64)
         planes = np.stack([k[3] + k[0], k[3] - k[0], k[3] + k[1], k[3] - k[1], k[2], k[3] - k[2]])
         planes /= np.linalg.norm(planes[:, :3], axis=1, keepdims=True)
@@ -1460,7 +1464,15 @@ class RenderPipeline:
         axis_batches = {}  # (geom_id, mat_id) -> list of local indices
         volume_batches = []  # list of (entity_local_idx, mat_id, vol_id)
 
-        for i, entity_idx in enumerate(alive_indices):
+        # A culled mesh entity ends in `continue` below unless an axis, label or
+        # volume route claims it first; with none of those components registered,
+        # skip culled meshes before the per-entity loop, which is what a camera
+        # looking at a corner of a large world spends its time on.
+        candidates = range(len(alive_indices))
+        if visible is not None and not (has_axis_frame or has_text_label or has_volume):
+            candidates = np.nonzero(~((mesh_data[:, 0] > 0) & ~visible))[0]
+        for i in candidates:
+            entity_idx = alive_indices[i]
             mat_id = int(material_data[i, 0]) if material_data is not None else 0
             geom_id = int(mesh_data[i, 0]) if mesh_data is not None else 0
 

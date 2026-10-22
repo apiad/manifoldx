@@ -17,7 +17,7 @@ style lookup itself; widgets pass already-resolved styles through.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from manifoldx.gui.button import Button
 from manifoldx.gui.layout import LayoutBox
@@ -47,11 +47,16 @@ class TextOp:
 
 @dataclass(frozen=True, slots=True)
 class ImageOp:
+    """A textured quad: either a raster drawn at the quad's pixel size, cached by
+    (key, width, height), or an existing texture drawn as it is."""
+
     box: LayoutBox
-    data: bytes  # the SVG document
-    digest: str  # its hash, the cache key with the pixel size
+    key: str | None  # content hash of the raster source; None with `texture`
+    raster: Callable[[int, int], Any] | None  # (width px, height px) -> RGBA uint8
+    texture: Any  # TextureHandle, or None
     tint: tuple[float, float, float, float]  # alpha already multiplied by opacity
-    widget: int = 0  # id() of the Image, to tell a resize in progress from a settled size
+    widget: int = 0  # id() of the widget, to tell a resize in progress from a settled size
+    radius: float = 0.0  # corner radius in the box's units
 
 
 @dataclass
@@ -97,15 +102,18 @@ class Painter:
         self,
         *,
         box: LayoutBox,
-        data: bytes,
-        digest: str,
+        key: str | None = None,
+        raster: Callable[[int, int], Any] | None = None,
+        texture: Any = None,
         tint: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
         widget: int = 0,
+        radius: float = 0.0,
     ) -> None:
         self.order.append(("image", len(self.image_ops)))
-        self.image_ops.append(
-            ImageOp(box=box, data=data, digest=digest, tint=tint, widget=widget)
-        )
+        self.image_ops.append(ImageOp(
+            box=box, key=key, raster=raster, texture=texture, tint=tint,
+            widget=widget, radius=radius,
+        ))
 
     def clear(self) -> None:
         self.rect_ops.clear()
@@ -137,6 +145,20 @@ def paint(
         )
         for child, child_spec in zip(widget.children, spec["children"]):
             paint(child, child_spec, boxes, painter)
+    elif isinstance(widget, Text) and widget.effective_style().get("font"):
+        # A font file: Pillow draws the line at its pixel size, through the image path.
+        from manifoldx.gui import font_text
+
+        s = widget.effective_style()
+        text, font, font_size = widget.text, str(s["font"]), int(s["font_size"])
+        lw, lh = _measure_text(text, font_size, font)
+        painter.draw_image(
+            box=LayoutBox(box.x, box.y, lw, lh),
+            key=font_text.key(text, font, font_size),
+            raster=lambda pw, ph: font_text.rasterize(text, font, font_size, pw, ph),
+            tint=parse_color(s["fg"]),
+            widget=id(widget),
+        )
     elif isinstance(widget, Text):
         s = widget.effective_style()
         font_size = int(s["font_size"])
@@ -160,12 +182,20 @@ def paint(
             k = min(k, 1.0)
         w, h = dw * k, dh * k
         r, g, b, a = parse_color(s["tint"]) if s.get("tint") else (1.0, 1.0, 1.0, 1.0)
+        raster = None
+        if widget.svg_data is not None:
+            from manifoldx.svg import rasterize_digest
+
+            data, digest = widget.svg_data, widget.svg_digest
+            raster = lambda pw, ph: rasterize_digest(data, digest, pw, ph)  # noqa: E731
         painter.draw_image(
             box=LayoutBox(box.x + (box.w - w) * 0.5, box.y + (box.h - h) * 0.5, w, h),
-            data=widget.svg_data,
-            digest=widget.svg_digest,
+            key=widget.svg_digest,
+            raster=raster,
+            texture=widget.svg if raster is None else None,
             tint=(r, g, b, a * float(s.get("opacity", 1.0))),
             widget=id(widget),
+            radius=float(s.get("radius") or 0.0) * k,
         )
     elif isinstance(widget, ValueDisplay):
         s = widget.effective_style()

@@ -125,9 +125,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
 # ---------------------------------------------------------------------------
 # Image shader — one screen-space quad per ImageOp, sampled from that image's
-# own texture (group 1). Instance layout (2 x vec4<f32> = 32 bytes):
+# own texture (group 1). Instance layout (3 x vec4<f32> = 48 bytes):
 #   row0 = (xy_top_left_px.x, xy_top_left_px.y, size_px.w, size_px.h)
 #   row1 = tint rgba (alpha already times opacity)
+#   row2 = (corner radius px, 0, 0, 0)
 # The texture holds sRGB colour with straight alpha; the output is
 # pre-multiplied, blended like the glyphs, and the tint is applied like a
 # glyph's fg.
@@ -147,6 +148,7 @@ struct Globals {
 struct ImageInstance {
     row0: vec4<f32>,
     row1: vec4<f32>,
+    row2: vec4<f32>,
 };
 @group(0) @binding(1) var<storage, read> images: array<ImageInstance>;
 @group(1) @binding(0) var image_tex: texture_2d<f32>;
@@ -161,6 +163,8 @@ struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv:   vec2<f32>,
     @location(1) tint: vec4<f32>,
+    @location(2) size: vec2<f32>,
+    @location(3) radius: f32,
 };
 
 @vertex
@@ -175,15 +179,23 @@ fn vs_main(in: VsIn) -> VsOut {
         1.0 - (corner_px.y / globals.viewport_size.y) * 2.0,
         0.0, 1.0,
     );
-    out.uv   = in.position.xy + vec2<f32>(0.5, 0.5);
-    out.tint = inst.row1;
+    out.uv     = in.position.xy + vec2<f32>(0.5, 0.5);
+    out.tint   = inst.row1;
+    out.size   = sz;
+    out.radius = inst.row2.x;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let texel = textureSample(image_tex, image_sampler, in.uv);
-    let a = texel.a * in.tint.a;
+    // Rounded corners: signed distance to the rounded box, one pixel of antialias.
+    let half = in.size * 0.5;
+    let r = min(in.radius, min(half.x, half.y));
+    let q = abs(in.uv * in.size - half) - (half - vec2<f32>(r, r));
+    let d = length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
+    let cover = select(1.0, clamp(0.5 - d / max(fwidth(d), 1e-4), 0.0, 1.0), r > 0.0);
+    let a = texel.a * in.tint.a * cover;
     return vec4<f32>(texel.rgb * in.tint.rgb * a, a);
 }
 """
@@ -315,7 +327,9 @@ def _scale_ops(painter: Painter, s: float) -> None:
         else:
             scaled_text.append(replace(op, box=_scale_box(op.box, s)))
     painter.text_ops[:] = scaled_text
-    painter.image_ops[:] = [replace(op, box=_scale_box(op.box, s)) for op in painter.image_ops]
+    painter.image_ops[:] = [
+        replace(op, box=_scale_box(op.box, s), radius=op.radius * s) for op in painter.image_ops
+    ]
 
 
 def target_density(engine) -> float:
@@ -786,6 +800,7 @@ def _ensure_image_pipeline(rp, engine) -> None:
     rp._gui_image_instance_buf = None
     rp._gui_image_instance_capacity = 0
     rp._gui_image_last = {}  # id(Image) -> its pixel size the frame before
+    rp._gui_image_external = {}  # TextureHandle.id -> (handle, bind group) for texture images
     # (digest, width px, height px) -> (texture, bind group). An evicted
     # texture may still be bound in this frame's pass: destroy it next frame.
     rp._gui_image_evicted = []
@@ -794,15 +809,28 @@ def _ensure_image_pipeline(rp, engine) -> None:
     )
 
 
-def _image_bind_group(rp, op, pw: int, ph: int):
-    """The bind group of `op`'s texture at pw x ph, rasterized and uploaded on
-    first use."""
-    from manifoldx.svg import rasterize_digest
+def _texture_bind_group(rp, handle):
+    """The bind group of an existing texture (a render_to_texture view, say)."""
+    entry = rp._gui_image_external.get(handle.id)
+    if entry is None or entry[0] is not handle:
+        group = rp._device.create_bind_group(
+            layout=rp._gui_image_bgl1,
+            entries=[
+                {"binding": 0, "resource": handle.view},
+                {"binding": 1, "resource": rp._gui_image_sampler},
+            ],
+        )
+        entry = rp._gui_image_external[handle.id] = (handle, group)
+    return entry[1]
 
-    key = (op.digest, pw, ph)
+
+def _image_bind_group(rp, op, pw: int, ph: int):
+    """The bind group of `op`'s raster at pw x ph, rasterized and uploaded on
+    first use."""
+    key = (op.key, pw, ph)
     entry = rp._gui_image_textures.get(key)
     if entry is None:
-        rgba = rasterize_digest(op.data, op.digest, pw, ph)
+        rgba = op.raster(pw, ph)
         device = rp._device
         texture = device.create_texture(
             size=(pw, ph, 1),
@@ -856,12 +884,15 @@ def _prepare_images(rp, engine, image_ops) -> list:
     rows, groups = [], []
     for op in image_ops:
         box, pw, ph = image_pixel_box(op.box, density)
-        rows.append([box.x, box.y, box.w, box.h, *op.tint])
+        rows.append([box.x, box.y, box.w, box.h, *op.tint, op.radius, 0.0, 0.0, 0.0])
         if op.box.w <= 0 or op.box.h <= 0:
             groups.append(None)
             continue
+        if op.texture is not None:
+            groups.append(_texture_bind_group(rp, op.texture))
+            continue
         rp._gui_image_last[op.widget] = (pw, ph)
-        have_exact = (op.digest, pw, ph) in rp._gui_image_textures
+        have_exact = (op.key, pw, ph) in rp._gui_image_textures
         rw, rh = settle_size(last.get(op.widget), pw, ph, have_exact)
         groups.append(_image_bind_group(rp, op, rw, rh))
     data = np.asarray(rows, dtype=np.float32)
