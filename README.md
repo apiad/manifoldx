@@ -140,6 +140,20 @@ python my_scene.py --render     # Render 60s video → my_scene.mp4
 python my_scene.py --render --fps 60 --duration 120 --output movie.mp4
 ```
 
+## Built to work with an agent
+
+`manifoldx run` reloads your app in the same window on every save, and serves a dev page and an HTTP API beside it, on 127.0.0.1. An agent (or you) can see the frame on screen, read the log the app writes with `engine.log`, read and patch `engine.state`, fire the app's events, and wait for a log line, while a person plays:
+
+```bash
+uv run manifoldx run -m mygame.dev     # prints: dev page and API at http://127.0.0.1:8770
+manifoldx look                          # .manifoldx/look.png: the frame on screen
+manifoldx log --match "entered cave" --wait 300
+manifoldx emit spawn '{"kind": "slime"}'
+manifoldx set '{"player": {"hp": 1}}'
+```
+
+So you build a game or a simulation interactively: the agent changes the code, sees the result in the running window, injects situations to test it through the app's own events, and follows what the person does. `know-how/agent-loop.md` and `know-how/hot-reload.md` describe both.
+
 ## N-Body Simulation
 
 A pure-numpy gravitational simulation running 500 bodies in real-time at a single draw call (instanced rendering).

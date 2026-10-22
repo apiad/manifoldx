@@ -72,6 +72,10 @@ Rules:
 - **`-- --render` does not work**: `engine.cli()` then renders a video instead of calling `run()`, and `manifoldx run` exits saying the app never called `engine.run()`.
 - **Two saves of one module within the same second that leave it the same size** can load the old cached bytecode (Python checks `.pyc` by whole-second mtime and size). Save again.
 
+## The dev server
+
+`manifoldx run` also serves a dev page and an HTTP API on 127.0.0.1 (the frame on screen, the log, `engine.state`, the app's events), and the commands `manifoldx look`, `state`, `set`, `emit`, `events` and `log` that use them. `know-how/agent-loop.md` says how to work with them and how to write an app an agent can drive.
+
 ## Performance
 
 Watching is cheap: one `stat` per source file every 0.25 s (about 0.4 ms for 100 files). A reload costs what the app's startup costs, minus opening the window and the GPU device; a one-cube app reloads in 25-30 ms, against about 3 s for a cold start. To keep reloads fast:
