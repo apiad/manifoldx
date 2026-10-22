@@ -122,3 +122,33 @@ def test_gpu_draws_font_text_in_fg():
     frame = np.asarray(canvas.draw()).astype(int)
     red = (frame[..., 0] > 200) & (frame[..., 1] < 40)
     assert red.sum() > 200
+
+
+def test_view_background_is_srgb_and_takes_rgb_or_hex():
+    eng, canvas = _offscreen()
+    cam = _stage(eng)
+    a = eng.render_to_texture(cam, (16, 16), background=(0.6, 0.8, 0.5))
+    b = eng.render_to_texture(cam, (16, 16), background="#99cc80")
+    with pytest.raises(ValueError):
+        eng.render_to_texture(cam, (16, 16), background=(0.6, 0.8))
+    eng._draw_frame()
+    for h in (a, b):
+        assert np.abs(_read(eng, h)[1, 1, :3].astype(int) - [153, 204, 128]).max() <= 2
+
+
+def test_view_skips_world_fog_unless_asked():
+    from manifoldx.resources import PointLight, StandardMaterial
+
+    eng, canvas = _offscreen()
+    eng.spawn(Mesh(sphere(8.0, 16)), Material(StandardMaterial(color="#ff0000")),
+              Transform(pos=(1000, 0, 0)))  # fog applies to StandardMaterial
+    eng.add_light(PointLight(position=(1000, 20, 40), color="#ffffff", intensity=4000.0))
+    cam = Camera()
+    cam.set_pose(position=(1000, 0, 60), target=(1000, 0, 0))  # far, like a minimap camera
+    eng.enable_fog(10.0, 40.0, color=(1.0, 1.0, 1.0))
+    clear = eng.render_to_texture(cam, (64, 64), background=(0, 0, 0, 1))
+    foggy = eng.render_to_texture(cam, (64, 64), background=(0, 0, 0, 1), fog=True)
+    eng._draw_frame()
+    c, f = _read(eng, clear)[32, 32], _read(eng, foggy)[32, 32]
+    assert c[0] > 120 and c[1] < 40  # the red ball as it is
+    assert f[1] > 200  # fully fogged to white

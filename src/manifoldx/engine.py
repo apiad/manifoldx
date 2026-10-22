@@ -246,7 +246,24 @@ class _View:
     depth_view: Any
     live: bool
     pending: bool
-    background: Any
+    background: Any  # linear RGBA clear colour, or None for the engine's background
+    fog: bool = False
+
+
+def _clear_color(color):
+    """An sRGB hex or RGB/RGBA tuple as the linear RGBA a clear colour takes."""
+    if color is None:
+        return None
+    from manifoldx.resources import srgb_to_linear
+
+    if isinstance(color, str):
+        from manifoldx.gui.style import parse_color
+
+        color = parse_color(color)
+    if len(color) not in (3, 4):
+        raise ValueError(f"background must be a hex string or an RGB/RGBA tuple, got {color!r}")
+    r, g, b = (float(v) for v in srgb_to_linear(color[:3]))
+    return (r, g, b, float(color[3]) if len(color) == 4 else 1.0)
 
 class Engine:
     def __init__(
@@ -1232,15 +1249,18 @@ class Engine:
         # Submit command buffer
         self._device.queue.submit([command_encoder.finish()])
 
-    def render_to_texture(self, camera, size, *, live: bool = True, background=None):
+    def render_to_texture(self, camera, size, *, live: bool = True, background=None,
+                          fog: bool = False):
         """Render the scene through `camera` into a texture of `size` = (width, height)
         pixels, before each frame's main pass, and return its TextureHandle.
 
         The texture works as an Image's source in the GUI and as an albedo_map. The
         GUI is not drawn into it. With live=False it renders on the next frame and
         then only when refresh_texture asks, so a still view costs nothing.
-        `background` is an RGBA clear colour (default: the engine's background,
-        opaque)."""
+        `background` is the clear colour in sRGB, like GUI colours: a hex string or an
+        RGB or RGBA tuple in [0, 1] (default: the engine's background, opaque). The
+        world's fog applies only with fog=True: fog grows with distance from the
+        camera, and a minimap camera high above the ground would come out pale."""
         from manifoldx.textures import TextureHandle
 
         if self._device is None:
@@ -1271,7 +1291,8 @@ class Engine:
             sampler=sampler, size=(w, h),
         )
         registry.add(handle)
-        self._views[handle.id] = _View(camera, handle, depth.create_view(), live, True, background)
+        self._views[handle.id] = _View(camera, handle, depth.create_view(), live, True,
+                                       _clear_color(background), fog)
         return handle
 
     def refresh_texture(self, handle) -> None:
@@ -1290,11 +1311,12 @@ class Engine:
         views = [v for v in self._views.values() if v.live or v.pending]
         if not views:
             return
-        saved = (self._camera, self.w, self.h)
+        saved = (self._camera, self.w, self.h, self.fog_enabled)
         try:
             for view in views:
                 view.pending = False
                 self._camera = view.camera
+                self.fog_enabled = saved[3] and view.fog
                 self.w, self.h = view.handle.size
                 encoder = self._device.create_command_encoder()
                 bg = view.background or (*self.background_color, 1.0)
@@ -1317,7 +1339,7 @@ class Engine:
                 render_pass.end()
                 self._device.queue.submit([encoder.finish()])
         finally:
-            self._camera, self.w, self.h = saved
+            self._camera, self.w, self.h, self.fog_enabled = saved
 
     # One frame is enough: shadows and IBL are complete on the first frame
     # (measured: identical output for 1, 2 and 3 frames, with shadows and with IBL).
