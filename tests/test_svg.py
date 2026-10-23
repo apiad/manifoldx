@@ -77,3 +77,12 @@ def test_bad_size_and_bad_svg_raise():
         svg.rasterize_svg(RED_SQUARE, 0, 10)
     with pytest.raises(ValueError):
         svg.rasterize_svg("<not svg", 10, 10)
+
+
+def test_svg_size_parses_each_svg_once(monkeypatch):
+    calls = []
+    real = svg._picture
+    monkeypatch.setattr(svg, "_picture", lambda data: calls.append(1) or real(data))
+    svg._size_of.cache_clear()
+    assert svg.svg_size(RED_SQUARE) == svg.svg_size(RED_SQUARE) == (20.0, 10.0)
+    assert len(calls) == 1

@@ -8,6 +8,7 @@ An SVG source is a path (str or os.PathLike), SVG markup (a str starting with
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import os
 from collections import OrderedDict
@@ -106,7 +107,14 @@ def _picture(data: bytes):
 
 def svg_size(source: SvgSource) -> tuple[float, float]:
     """The SVG's own size in pixels, from its width/height or its viewBox."""
-    _result, w, h = _picture(svg_bytes(source)).get_size()
+    return _size_of(svg_bytes(source))
+
+
+@functools.lru_cache(maxsize=1024)
+def _size_of(data: bytes) -> tuple[float, float]:
+    # A GUI that builds its Image widgets every frame asks for the same few icons again and again;
+    # parsing the whole SVG each time cost a game several milliseconds a frame.
+    _result, w, h = _picture(data).get_size()
     return (float(w), float(h))
 
 
