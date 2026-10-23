@@ -51,7 +51,9 @@ def _child() -> None:
             _send(out, (_ERROR, traceback.format_exc()))
         out.close()
     except BrokenPipeError:  # the parent exited or closed the stream: nobody wants the rest
-        os._exit(0)
+        pass
+    # Skip the interpreter's teardown: freeing a big heap object by object takes seconds.
+    os._exit(0)
 
 
 class ProcessStream:
@@ -97,11 +99,11 @@ class ProcessStream:
             return None
         if data is None:
             self.done = True
-            raise RuntimeError(f"the worker process exited ({self._proc.wait()}) before finishing")
+            raise RuntimeError(f"the worker process exited ({self._proc.poll()}) before finishing")
         kind, payload = pickle.loads(data)
         if kind == _END:
             self.done = True
-            self._proc.wait(timeout=5)
+            self._proc.poll()  # never wait: the child exits on its own right after
             return None
         if kind == _ERROR:
             self.done = True
