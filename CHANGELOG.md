@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`manifoldx.workers.ProcessStream`: heavy pure-Python work in a child process.** It
+  runs a generator function in a spawned process and hands back what it yields, one
+  item per `take()`, so a frame loop unpickles one piece per frame. A thread running the
+  same work shares the GIL with the loop, and frames then stall for up to a second.
+
 - **`manifoldx run app.py` (or `-m package.module`) with hot reload, and
   `engine.state`.** Saving any of the app's source files reruns it in the same window,
   on the same GPU device. The scene is rebuilt from the new code; `engine.state`, a
