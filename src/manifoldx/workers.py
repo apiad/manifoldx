@@ -8,56 +8,74 @@ them in pieces lets the frame loop unpickle one per frame:
     stream = ProcessStream(build_world, seed)   # build_world: a generator, importable by name
     ...
     item = stream.take()                        # each frame: the next piece, or None
+
+The child is a fresh `python -m manifoldx.workers`, not a multiprocessing spawn, which would
+run the parent's main script again (an app's window, a test's GPU lock) before the work.
 """
 
 from __future__ import annotations
 
-import multiprocessing as mp
+import os
 import pickle
 import queue
+import struct
+import subprocess
+import sys
 import threading
 import traceback
 
 _ITEM, _ERROR, _END = "item", "error", "end"
+_LEN = struct.Struct("<Q")
 
 
-def _serve(send, fn, args):
+def _send(out, message) -> None:
+    data = pickle.dumps(message, protocol=pickle.HIGHEST_PROTOCOL)
+    out.write(_LEN.pack(len(data)))
+    out.write(data)
+    out.flush()
+
+
+def _child() -> None:
+    """The child's side: read (fn, args) from stdin, send each item fn yields on stdout."""
+    out = os.fdopen(os.dup(1), "wb")
+    os.dup2(2, 1)  # what the work prints goes to stderr, never into the item stream
     try:
+        fn, args = pickle.load(sys.stdin.buffer)
         for item in fn(*args):
-            send.send_bytes(pickle.dumps((_ITEM, item), protocol=pickle.HIGHEST_PROTOCOL))
-        send.send_bytes(pickle.dumps((_END, None)))
+            _send(out, (_ITEM, item))
+        _send(out, (_END, None))
     except BaseException:  # noqa: BLE001  the parent raises it, with the child's traceback
-        send.send_bytes(pickle.dumps((_ERROR, traceback.format_exc())))
+        _send(out, (_ERROR, traceback.format_exc()))
     finally:
-        send.close()
+        out.close()
 
 
 class ProcessStream:
-    """Run the generator function `fn(*args)` in a spawned child process and hand back what it yields.
+    """Run the generator function `fn(*args)` in a child process and hand back what it yields.
 
-    `fn` and its arguments must be picklable (a module-level function). A reader thread
-    receives each item's bytes (I/O, no GIL held); take() unpickles at most one per call, so
-    a caller that takes once per frame spends one item's unpickling per frame.
+    `fn` and its arguments must be picklable (a module-level function), and the child finds
+    them on the parent's sys.path. A reader thread receives each item's bytes (I/O, no GIL
+    held); take() unpickles at most one per call, so a caller that takes once per frame
+    spends one item's unpickling per frame.
     """
 
     def __init__(self, fn, *args):
-        ctx = mp.get_context("spawn")  # never fork a process holding a GPU device and threads
-        recv, send = ctx.Pipe(duplex=False)
-        self._proc = ctx.Process(target=_serve, args=(send, fn, args), daemon=True)
-        self._proc.start()
-        send.close()
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)}
+        self._proc = subprocess.Popen([sys.executable, "-m", "manifoldx.workers"],
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+        self._proc.stdin.write(pickle.dumps((fn, args)))
+        self._proc.stdin.close()
         self._inbox: queue.SimpleQueue = queue.SimpleQueue()
         self.done = False  # True once every item has been taken
-        threading.Thread(target=self._read, args=(recv,), daemon=True).start()
+        threading.Thread(target=self._read, args=(self._proc.stdout,), daemon=True).start()
 
-    def _read(self, recv):
+    def _read(self, pipe):
         try:
-            while True:
-                self._inbox.put(recv.recv_bytes())
-        except (EOFError, OSError):
-            self._inbox.put(None)  # the child died without saying why
+            while head := pipe.read(_LEN.size):
+                self._inbox.put(pipe.read(_LEN.unpack(head)[0]))
         finally:
-            recv.close()
+            self._inbox.put(None)  # end of the stream; take() tells a clean end from a death
+            pipe.close()
 
     def take(self, timeout: float | None = 0.0):
         """The next item, or None when none has arrived (within `timeout` seconds; None waits).
@@ -73,11 +91,11 @@ class ProcessStream:
             return None
         if data is None:
             self.done = True
-            raise RuntimeError(f"the worker process exited ({self._proc.exitcode}) before finishing")
+            raise RuntimeError(f"the worker process exited ({self._proc.wait()}) before finishing")
         kind, payload = pickle.loads(data)
         if kind == _END:
             self.done = True
-            self._proc.join(timeout=5)
+            self._proc.wait(timeout=5)
             return None
         if kind == _ERROR:
             self.done = True
@@ -86,6 +104,10 @@ class ProcessStream:
 
     def close(self):
         """Stop the child if it still runs."""
-        if self._proc.is_alive():
+        if self._proc.poll() is None:
             self._proc.terminate()
         self.done = True
+
+
+if __name__ == "__main__":
+    _child()
