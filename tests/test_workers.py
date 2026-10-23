@@ -1,3 +1,5 @@
+import itertools
+
 import pytest
 
 from manifoldx.workers import ProcessStream
@@ -22,6 +24,13 @@ def test_take_never_waits_by_default():
     assert first is None
     assert drain(stream) == [0, 1]
     assert stream.take() is None
+
+
+def test_a_child_whose_parent_stops_listening_exits_quietly():
+    stream = ProcessStream(itertools.count)  # endless: only the closed pipe stops it
+    assert stream.take(timeout=30) == 0
+    stream._proc.stdout.close()
+    assert stream._proc.wait(timeout=30) == 0
 
 
 def test_a_failing_worker_raises_its_traceback_in_the_parent():

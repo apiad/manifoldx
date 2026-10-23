@@ -40,14 +40,18 @@ def _child() -> None:
     out = os.fdopen(os.dup(1), "wb")
     os.dup2(2, 1)  # what the work prints goes to stderr, never into the item stream
     try:
-        fn, args = pickle.load(sys.stdin.buffer)
-        for item in fn(*args):
-            _send(out, (_ITEM, item))
-        _send(out, (_END, None))
-    except BaseException:  # noqa: BLE001  the parent raises it, with the child's traceback
-        _send(out, (_ERROR, traceback.format_exc()))
-    finally:
+        try:
+            fn, args = pickle.load(sys.stdin.buffer)
+            for item in fn(*args):
+                _send(out, (_ITEM, item))
+            _send(out, (_END, None))
+        except BrokenPipeError:
+            raise
+        except BaseException:  # noqa: BLE001  the parent raises it, with the child's traceback
+            _send(out, (_ERROR, traceback.format_exc()))
         out.close()
+    except BrokenPipeError:  # the parent exited or closed the stream: nobody wants the rest
+        os._exit(0)
 
 
 class ProcessStream:
@@ -73,6 +77,8 @@ class ProcessStream:
         try:
             while head := pipe.read(_LEN.size):
                 self._inbox.put(pipe.read(_LEN.unpack(head)[0]))
+        except (OSError, ValueError):  # the pipe was closed under the read
+            pass
         finally:
             self._inbox.put(None)  # end of the stream; take() tells a clean end from a death
             pipe.close()
