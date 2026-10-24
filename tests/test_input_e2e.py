@@ -118,3 +118,30 @@ def test_synthetic_resize_updates_viewport_size():
     engine._render_canvas._process_events()
     engine._draw_frame()
     assert engine.input.viewport_size == (1024, 768)
+
+
+def test_viewport_size_is_known_before_any_resize_event():
+    engine = _make_offscreen_engine(width=80, height=48)
+    assert engine.input.viewport_size == (80, 48)
+
+
+def test_gui_ignores_the_pointer_while_it_is_captured():
+    from manifoldx.gui import Panel
+    from manifoldx.gui.widgets import Widget
+
+    class _Marker(Widget):
+        _is_gui_interactive = True
+
+        def intrinsic_size(self):
+            return (10.0, 10.0)
+
+    engine = _make_offscreen_engine()
+    engine.gui.append(Panel(children=[_Marker()], style_overrides={"padding": 0}))
+    engine.input._pointer_captured = True
+    engine._render_canvas.submit_event({
+        "event_type": "pointer_down", "x": 2.0, "y": 2.0, "button": 1,
+        "buttons": (1,), "modifiers": (),
+    })
+    engine._render_canvas._process_events()
+    engine._draw_frame()
+    assert engine.gui.pointer_over_gui is False

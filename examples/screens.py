@@ -25,7 +25,7 @@ BLUE = mx.material.phong(mx.colors.BLUE)
 async def wait_for_space():
     while True:
         await engine.tick()
-        if engine.input.just_pressed(" "):  # the key name rendercanvas gives Space
+        if engine.input.just_pressed("Space"):
             return
 
 

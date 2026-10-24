@@ -2,7 +2,9 @@
 
 Demonstrates `engine.input.is_pressed(...)` and `engine.input.mouse_delta`
 read from inside a system. W/A/S/D translate along the camera basis;
-Space/Shift go up/down; right-mouse-drag rotates the look direction.
+Space/Shift go up/down. A left click captures the pointer for mouse look
+(`engine.input.capture_pointer`) and Escape releases it; right-mouse-drag
+also looks around without capture.
 """
 
 import math
@@ -106,8 +108,14 @@ def setup(_payload):
 
 @engine.system
 def fly(query: Query[Transform], dt: float):
-    # Rotate when right button (2) is held; mouse_delta is this-frame only.
-    if engine.input.is_mouse_pressed(2):
+    if engine.input.just_mouse_pressed(1) and not engine.input.pointer_captured:
+        engine.input.capture_pointer(True)
+    if engine.input.just_pressed("Escape"):
+        engine.input.capture_pointer(False)
+
+    # Rotate while captured or while the right button (2) is held; mouse_delta
+    # is this-frame only.
+    if engine.input.pointer_captured or engine.input.is_mouse_pressed(2):
         dx, dy = engine.input.mouse_delta
         _fly["azimuth"] += dx * 0.2
         _fly["elevation"] = max(-89.0, min(89.0, _fly["elevation"] - dy * 0.2))

@@ -151,3 +151,87 @@ def test_begin_frame_triggers_state_swap(setup):
     assert not state.just_pressed("w")
     bridge.begin_frame()
     assert state.just_pressed("w")
+
+
+def _key(bridge, et, key, modifiers=()):
+    bridge._on_event({"event_type": et, "key": key, "modifiers": modifiers})
+
+
+def test_letter_pressed_under_shift_is_recorded_lowercase(setup):
+    engine, state, bridge = setup
+    _key(bridge, "key_down", "Shift", ("Shift",))
+    _key(bridge, "key_down", "W", ("Shift",))
+    assert state.is_pressed("w")
+    assert engine.emitted[-1][1].key == "w"
+    _key(bridge, "key_up", "w", ())
+    assert not state.is_pressed("w")
+
+
+def test_space_is_named_space_and_accepts_the_blank_alias(setup):
+    engine, state, bridge = setup
+    _key(bridge, "key_down", " ")
+    bridge.begin_frame()
+    assert engine.emitted[-1][1].key == "Space"
+    assert state.is_pressed("Space") and state.is_pressed(" ")
+    assert state.just_pressed("Space") and state.just_pressed(" ")
+    _key(bridge, "key_up", " ")
+    bridge.begin_frame()
+    assert not state.is_pressed("Space")
+    assert state.just_released(" ")
+
+
+class _StubWindowCanvas:
+    """A canvas with the private glfw window rendercanvas keeps in `_window`."""
+
+    def __init__(self) -> None:
+        self._window = object()
+        self.handlers = []
+
+    def add_event_handler(self, fn, *types):
+        self.handlers.append(fn)
+
+    def remove_event_handler(self, fn, *types):
+        self.handlers.remove(fn)
+
+
+def test_capture_pointer_without_a_window_is_a_noop(setup):
+    _, state, _ = setup
+    assert state.capture_pointer(True) is False
+    assert state.pointer_captured is False
+
+
+def test_capture_pointer_sets_glfw_modes_and_resets_the_anchor(setup, monkeypatch):
+    engine, state, bridge = setup
+    calls = []
+    import manifoldx.input as inp
+
+    monkeypatch.setattr(inp, "_glfw_set_capture", lambda win, on: calls.append((win, on)))
+    canvas = _StubWindowCanvas()
+    bridge.attach(canvas)
+    bridge._on_event({"event_type": "pointer_move", "x": 10.0, "y": 10.0,
+                      "buttons": (), "modifiers": ()})
+    assert state.capture_pointer(True) is True
+    assert state.pointer_captured
+    assert calls == [(canvas._window, True)]
+    # glfw jumps the virtual cursor on capture; the first move must not count it.
+    bridge._on_event({"event_type": "pointer_move", "x": 900.0, "y": 700.0,
+                      "buttons": (), "modifiers": ()})
+    assert engine.emitted[-1][1].dx == 0.0
+    assert state.capture_pointer(False) is True
+    assert not state.pointer_captured
+    assert calls[-1] == (canvas._window, False)
+
+
+def test_detach_releases_capture(setup, monkeypatch):
+    _, state, bridge = setup
+    calls = []
+    import manifoldx.input as inp
+
+    monkeypatch.setattr(inp, "_glfw_set_capture", lambda win, on: calls.append(on))
+    canvas = _StubWindowCanvas()
+    bridge.attach(canvas)
+    state.capture_pointer(True)
+    bridge.detach(canvas)
+    assert calls == [True, False]
+    assert not state.pointer_captured
+    assert state.capture_pointer(True) is False
