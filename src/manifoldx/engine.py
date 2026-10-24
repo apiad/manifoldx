@@ -67,7 +67,7 @@ class _TransformProxy:
 
 
 class EntityHandle:
-    """A handle to a spawned entity: move its transform, swap its geometry in place."""
+    """A handle to a spawned entity: move its transform, swap its geometry or material."""
 
     def __init__(self, engine, index, geometry_id):
         self._engine = engine
@@ -130,6 +130,15 @@ class EntityHandle:
                 np.float32
             )
         self._engine._device.queue.write_buffer(bufs["vertex_buffer"], 0, inter.tobytes())
+
+    def set_material(self, material):
+        """Draw this entity with `material` from the next frame on.
+
+        The same material object keeps one registry id, so switching back and
+        forth (a selection highlight) does not grow the registry.
+        """
+        mat_id = self._engine._material_registry.register(material)
+        self._engine.store._components["Material"][self.index, 0] = mat_id
 
     def set_joints(self, matrices):
         """Pose this entity's joints: (J, 4, 4) matrices, 1 <= J <= MAX_JOINTS.
