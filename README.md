@@ -315,6 +315,8 @@ python demos/terrain_stream.py --render --duration 8 --output flyby.mp4
 - Typed event dataclasses on the bus: `KeyEvent`, `PointerEvent`, `WheelEvent`, `ResizeEvent`
 - Bevy-style polling state at `engine.input`: `is_pressed(key)` / `just_pressed(key)` / `just_released(key)`, plus `mouse_pos`, `mouse_delta`, `wheel_delta`, `viewport_size`
 - Polling state is updated immediately on every event; `just_*` and delta accumulators are this-frame-bound
+- Key names: letters are lowercase whatever Shift says (Shift is in `modifiers`), the space bar is `"Space"`
+- `engine.input.capture_pointer(True)` hides and locks the cursor for mouse look (glfw windows); `mouse_delta` keeps counting
 
 ### GPU compute systems
 - Author kernels as a typed-Python `def main(self, i)` body — no inline WGSL strings required

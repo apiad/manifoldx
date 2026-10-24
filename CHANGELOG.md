@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`engine.input.capture_pointer(on)` and `engine.input.pointer_captured`: mouse look
+  without the window edge.** In a glfw window it hides and locks the cursor (raw motion
+  where the system has it); `mouse_delta` keeps counting, and the GUI ignores the pointer
+  while it is captured. Offscreen it returns False and does nothing. `examples/input_fly.py`
+  captures on a left click and releases on Escape (#16).
+
+- **`EntityHandle.set_material(material)`.** Swaps an entity's material from the next
+  frame, to any material type; the same material object keeps one registry id, so a
+  selection highlight that switches back and forth does not grow the registry (#15).
+
 - **`manifoldx.workers.ProcessStream`: heavy pure-Python work in a child process.** It
   runs a generator function in a spawned process and hands back what it yields, one
   item per `take()`, so a frame loop unpickles one piece per frame. A thread running the
@@ -115,6 +125,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Key names no longer depend on Shift, and Space is `"Space"`.** A letter pressed with
+  Shift held arrived as `"W"`, so `is_pressed("w")` was false while sprinting. Letters are
+  now lowercase on `KeyEvent.key` and in the polling state, and the space bar, which
+  rendercanvas reports as `" "`, is `"Space"`; `is_pressed(" ")` still works. Code that
+  compared `KeyEvent.key` with an uppercase letter or with `" "` needs the new name (#18, #73).
+
 - **`render_to_texture` views skip the world's fog unless `fog=True`, and `background`
   is sRGB** (a hex string or an RGB/RGBA tuple, like GUI colours; an RGB tuple used to
   fail inside wgpu). Fog grows with distance from the camera, so a minimap camera high
@@ -159,6 +175,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compiled its own pipeline, about 50 ms and 2.9 MB each on a software renderer. Meshes
   with the same layout and material now share one, so 1,000 new meshes went from about
   50 s to 0.7 s, with flat memory (#85).
+
+### Fixed
+
+- **`engine.input.viewport_size` is right from the first frame.** It read (0, 0) until a
+  resize event, which a window that is never resized does not send (#17).
 
 ## [0.10.0] - 2026-10-15
 
