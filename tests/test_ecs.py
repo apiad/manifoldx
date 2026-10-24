@@ -237,3 +237,61 @@ def test_fieldview_expression_order():
     result = 3 * fv + 2
     assert isinstance(result, np.ndarray)
     assert np.allclose(result, 3 * data + 2)
+
+
+def test_spawn_many_is_fast():
+    """One large spawn assigns slots in one vectorised step (issue #107)."""
+    import time
+    from manifoldx.ecs import EntityStore
+    store = EntityStore(max_entities=300_000)
+    store.register_component("position", np.dtype("f4"), shape=(3,))
+    start = time.perf_counter()
+    indices = store.spawn(n=300_000, position=np.zeros((300_000, 3)))
+    elapsed = time.perf_counter() - start
+    np.testing.assert_array_equal(indices, np.arange(300_000))
+    assert store._alive.all()
+    # The per-entity scan took minutes here; the vectorised path takes milliseconds.
+    assert elapsed < 2.0
+
+
+def test_spawn_reuses_freed_slots_then_fresh_ones():
+    """Freed slots come back newest first, then the lowest never-used slots."""
+    from manifoldx.ecs import EntityStore
+    store = EntityStore(max_entities=20)
+    store.register_component("position", np.dtype("f4"), shape=(3,))
+    store.spawn(n=10)
+    store.destroy(np.array([2, 5, 7]))
+    indices = store.spawn(n=5, position=np.arange(15).reshape(5, 3))
+    np.testing.assert_array_equal(indices, [7, 5, 2, 10, 11])
+    assert store._free_list == []
+    np.testing.assert_array_equal(store._components["position"][7], [0, 1, 2])
+    np.testing.assert_array_equal(store._components["position"][11], [12, 13, 14])
+    assert store._alive.sum() == 12
+
+
+def test_spawn_partial_reuse_keeps_rest_of_free_list():
+    """A spawn smaller than the free list leaves the older freed slots for later."""
+    from manifoldx.ecs import EntityStore
+    store = EntityStore(max_entities=10)
+    store.spawn(n=6)
+    store.destroy(np.array([1, 3, 4]))
+    np.testing.assert_array_equal(store.spawn(n=2), [4, 3])
+    assert store._free_list == [1]
+    np.testing.assert_array_equal(store.spawn(n=2), [1, 6])
+
+
+def test_spawn_over_capacity_spawns_nothing():
+    """Running out of slots raises before any slot is taken."""
+    from manifoldx.ecs import EntityStore
+    store = EntityStore(max_entities=10)
+    hooked = []
+    store._release_hooks.append(hooked.append)
+    store.spawn(n=8)
+    store.destroy(np.array([0]))
+    hooked.clear()
+    with pytest.raises(RuntimeError, match=r"Engine\(max_entities=\.\.\.\)"):
+        store.spawn(n=4)
+    assert store._alive.sum() == 7
+    assert store._free_list == [0]
+    assert hooked == []
+    np.testing.assert_array_equal(store.spawn(n=3), [0, 8, 9])

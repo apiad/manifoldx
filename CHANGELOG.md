@@ -154,6 +154,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **`EntityStore.spawn` assigns slots in one vectorised step** (#107): free list first,
+  then the lowest dead slots via `np.flatnonzero`, instead of scanning the alive mask
+  once per entity. `spawn(200_000)` drops from about 60 s to 0.03 s. Running out of
+  slots now raises before any slot is taken, and the error names
+  `Engine(max_entities=...)`.
+
 - **`Camera.get_view_matrix` uses plain float arithmetic** instead of `np.cross` on
   3-vectors, which cost more than the math; the renderer asks for it several times a
   frame.
