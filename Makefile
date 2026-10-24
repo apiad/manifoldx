@@ -1,4 +1,4 @@
-.PHONY: help test format lint run clean install
+.PHONY: help test format lint run clean install bench
 
 help:
 	@echo "ManifoldX Makefile"
@@ -9,6 +9,7 @@ help:
 	@echo "  make format   - Format code with ruff"
 	@echo "  make lint     - Lint code with ruff"
 	@echo "  make run      - Run an example (EXAMPLE=examples.pbr_demo)"
+	@echo "  make bench    - Run benchmark suites (ARGS=\"frame --against main\")"
 	@echo "  make clean    - Clean build artifacts"
 
 install:
@@ -22,6 +23,9 @@ format:
 
 lint:
 	uv run ruff check src/
+
+bench:
+	uv run python -m benchmarks $(ARGS)
 
 run:
 	@if [ -z "$(EXAMPLE)" ]; then \
