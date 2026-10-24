@@ -62,19 +62,20 @@ class EntityStore:
         Returns:
             np.ndarray of entity indices
         """
-        indices = np.zeros(n, dtype=np.int32)
-
-        for i in range(n):
-            if self._free_list:
-                idx = self._free_list.pop()
-            else:
-                # Find first dead slot
-                dead = np.where(~self._alive)[0]
-                if len(dead) == 0:
-                    raise RuntimeError(f"Max entities {self.max_entities} reached")
-                idx = dead[0]
-            indices[i] = idx
-            self._alive[idx] = True
+        # Free list first, popped from its end, then the lowest never-used slots.
+        # Every free-list slot is dead, so the remaining dead slots exclude them.
+        k = min(n, len(self._free_list))
+        reused = self._free_list[len(self._free_list) - k :][::-1]
+        dead = np.flatnonzero(~self._alive)
+        if len(dead) < n:
+            raise RuntimeError(
+                f"Max entities {self.max_entities} reached: spawning {n} with "
+                f"{len(dead)} free slots; raise it with Engine(max_entities=...)"
+            )
+        fresh = dead[~np.isin(dead, reused)][: n - k] if k else dead[:n]
+        indices = np.concatenate([np.asarray(reused, dtype=np.int32), fresh.astype(np.int32)])
+        del self._free_list[len(self._free_list) - k :]
+        self._alive[indices] = True
         for hook in self._release_hooks:
             hook(indices)
 
