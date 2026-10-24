@@ -1113,6 +1113,9 @@ class Engine:
 
         # Wire input event flow: rendercanvas → _InputBridge → bus + state.
         self._input_bridge.attach(canvas)
+        # A window that is never resized sends no resize event; start from its size.
+        w, h = canvas.get_logical_size()
+        self.input._viewport_size = (int(round(w)), int(round(h)))
 
         # Get the wgpu context from the canvas
         self._wgpu_context = canvas.get_wgpu_context()

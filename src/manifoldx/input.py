@@ -8,6 +8,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+def _key_name(key: str) -> str:
+    """One name per physical key: letters lowercase (Shift is in the modifiers),
+    and the space bar "Space", which rendercanvas reports as " "."""
+    if key == " ":
+        return "Space"
+    return key.lower() if len(key) == 1 else key
+
+
+def _glfw_set_capture(window, on: bool) -> None:
+    """Hide and lock the cursor of a glfw window, with raw motion where supported."""
+    import glfw
+
+    glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED if on else glfw.CURSOR_NORMAL)
+    if glfw.raw_mouse_motion_supported():
+        glfw.set_input_mode(window, glfw.RAW_MOUSE_MOTION, on)
+
+
 @dataclass(frozen=True, slots=True)
 class KeyEvent:
     """A keyboard event delivered on `key_down` or `key_up`."""
@@ -104,17 +121,19 @@ class InputState:
 
         # Window
         self._viewport_size: tuple[int, int] = (0, 0)
+        self._pointer_captured: bool = False
+        self._capture_fn = None  # set by the bridge while a canvas with a window is attached
 
     # ---- Keyboard public API ----
 
     def is_pressed(self, key: str) -> bool:
-        return key in self._pressed_keys
+        return _key_name(key) in self._pressed_keys
 
     def just_pressed(self, key: str) -> bool:
-        return key in self._just_pressed_keys
+        return _key_name(key) in self._just_pressed_keys
 
     def just_released(self, key: str) -> bool:
-        return key in self._just_released_keys
+        return _key_name(key) in self._just_released_keys
 
     @property
     def pressed_keys(self) -> frozenset[str]:
@@ -157,21 +176,35 @@ class InputState:
     def viewport_size(self) -> tuple[int, int]:
         return self._viewport_size
 
+    @property
+    def pointer_captured(self) -> bool:
+        return self._pointer_captured
+
+    def capture_pointer(self, on: bool) -> bool:
+        """Hide the cursor and lock it to the window, for mouse look: `mouse_delta`
+        keeps counting motion while the cursor cannot reach the window edge, and
+        the GUI ignores the pointer. Returns False, and does nothing, when the
+        canvas has no window to capture in (offscreen, or a non-glfw backend)."""
+        if self._capture_fn is None:
+            return False
+        self._capture_fn(bool(on))
+        self._pointer_captured = bool(on)
+        return True
+
     # ---- Bridge-only mutators ----
 
     def _record_key_down(self, key: str, modifiers: tuple[str, ...]) -> None:
+        key = _key_name(key)
         if key not in self._pressed_keys:
             self._pending_just_pressed_keys.add(key)
         self._pressed_keys.add(key)
         self._modifiers = modifiers
 
     def _record_key_up(self, key: str, modifiers: tuple[str, ...]) -> None:
-        # A letter can go down as "s" and come up as "S" when Shift changed in
-        # between (glfw names letters by the Shift state), so release both cases.
-        for k in {key, key.swapcase()} if len(key) == 1 else {key}:
-            if k in self._pressed_keys:
-                self._pending_just_released_keys.add(k)
-            self._pressed_keys.discard(k)
+        key = _key_name(key)
+        if key in self._pressed_keys:
+            self._pending_just_released_keys.add(key)
+        self._pressed_keys.discard(key)
         self._modifiers = modifiers
 
     def _record_pointer_down(self, ev: PointerEvent) -> None:
@@ -248,9 +281,21 @@ class _InputBridge:
 
     def attach(self, canvas) -> None:
         canvas.add_event_handler(self._on_event, *_BRIDGED_EVENTS)
+        window = getattr(canvas, "_window", None)  # glfw only; private in rendercanvas
+        if window is not None:
+            self._state._capture_fn = lambda on: self._set_capture(window, on)
 
     def detach(self, canvas) -> None:
         canvas.remove_event_handler(self._on_event, *_BRIDGED_EVENTS)
+        if self._state._pointer_captured:
+            self._state.capture_pointer(False)
+        self._state._capture_fn = None
+
+    def _set_capture(self, window, on: bool) -> None:
+        _glfw_set_capture(window, on)
+        # glfw moves the virtual cursor when the mode changes; measure the next
+        # move from where it lands, not from the last position seen before.
+        self._last_pointer_pos = None
 
     def begin_frame(self) -> None:
         self._state._begin_frame()
@@ -258,11 +303,11 @@ class _InputBridge:
     def _on_event(self, rc: dict) -> None:
         et = rc.get("event_type")
         if et == "key_down":
-            ev = KeyEvent(key=rc["key"], modifiers=rc["modifiers"], is_down=True)
+            ev = KeyEvent(key=_key_name(rc["key"]), modifiers=rc["modifiers"], is_down=True)
             self._state._record_key_down(ev.key, ev.modifiers)
             self._engine.emit("key_down", ev)
         elif et == "key_up":
-            ev = KeyEvent(key=rc["key"], modifiers=rc["modifiers"], is_down=False)
+            ev = KeyEvent(key=_key_name(rc["key"]), modifiers=rc["modifiers"], is_down=False)
             self._state._record_key_up(ev.key, ev.modifiers)
             self._engine.emit("key_up", ev)
         elif et in ("pointer_down", "pointer_up", "pointer_move"):

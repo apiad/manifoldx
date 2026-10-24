@@ -40,6 +40,10 @@ class _GuiBridge:
         Widgets lay out in UI pixels, so the event is mapped from screen
         pixels by the GUI scale before hit-testing and dispatch.
         """
+        # A captured pointer turns the view; its position means nothing to widgets.
+        input_state = getattr(self._engine, "input", None)
+        if input_state is not None and input_state.pointer_captured:
+            return
         gui = self._engine.gui
         scale = gui.effective_scale(self._engine.h)
         if scale != 1.0:
