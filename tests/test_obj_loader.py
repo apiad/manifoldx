@@ -240,3 +240,33 @@ def test_pinned_mixed_triangles_and_quads(tmp_path):
     geo = _load(tmp_path, HEAD + "f 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/2 2/2/1\n")
     np.testing.assert_array_equal(geo["indices"], [0, 1, 2, 0, 2, 3, 0, 3, 1])
     np.testing.assert_array_equal(geo["normals"][3], N[1])
+
+
+@pytest.mark.parametrize("form", ["v", "v/vt", "v/vt/vn", "v//vn"])
+def test_vectorised_path_matches_the_line_parser(tmp_path, monkeypatch, form):
+    """Random triangles with repeated corners: the numpy path (taken here) and the
+    line-by-line parser give the same arrays."""
+    from manifoldx.assets import obj
+    rng = np.random.default_rng(len(form))
+    nv, nt, nn, nf = 40, 30, 7, 200
+    pi, ti, ni = rng.integers(1, nv + 1, (nf, 3)), rng.integers(1, nt + 1, (nf, 3)), rng.integers(1, nn + 1, (nf, 3))
+    corner = {"v": "{0}", "v/vt": "{0}/{1}", "v/vt/vn": "{0}/{1}/{2}", "v//vn": "{0}//{2}"}[form]
+    src = (
+        "# random\no thing\n"
+        + "".join(f"v {x:.5f} {y:.5f} {z:.5f}\n" for x, y, z in rng.random((nv, 3)))
+        + "".join(f"vt {u:.5f}\t{v:.5f}\n" for u, v in rng.random((nt, 2)))
+        + "".join(f"vn {x:.5f} {y:.5f} {z:.5f}\n" for x, y, z in rng.random((nn, 3)))
+        + "usemtl a\n"
+        + "".join("f " + " ".join(corner.format(*c) for c in zip(pi[i], ti[i], ni[i])) + "  \n" for i in range(nf))
+    )
+    path = tmp_path / "r.obj"
+    path.write_text(src)
+    assert obj._load_triangles(src) is not None
+    fast = obj.load_obj(path)
+    monkeypatch.setattr(obj, "_load_triangles", lambda text: None)
+    slow = obj.load_obj(path)
+    assert list(fast) == list(slow)
+    for k in fast:
+        if k != "name":
+            assert fast[k].dtype == slow[k].dtype
+            np.testing.assert_array_equal(fast[k], slow[k])

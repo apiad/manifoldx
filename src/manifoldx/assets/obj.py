@@ -14,6 +14,7 @@ material info through Python kwargs, not MTL.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import Optional
 
@@ -36,6 +37,9 @@ def load_obj(path: str | Path) -> dict:
     """
     p = Path(path)
     text = p.read_text()
+    geo = _load_triangles(text)
+    if geo is not None:
+        return {"name": p.stem, **geo}
 
     raw_positions: list[list[float]] = []
     raw_normals: list[list[float]] = []
@@ -72,6 +76,118 @@ def load_obj(path: str | Path) -> dict:
 
     return _build_geometry(p.stem, raw_positions, raw_normals, raw_uvs,
                            face_triples, face_form)
+
+
+# A face line with every number replaced by "d", for each form.
+_FORMS = {b"d": "v", b"d/d": "v/vt", b"d/d/d": "v/vt/vn", b"d//d": "v//vn"}
+# Bytes str.split() splits on that the byte scan below does not; ASCII only.
+_ODD_SPACE = np.array([11, 12, 13, 28, 29, 30, 31], np.uint8)
+_CLASS = np.full(256, ord("x"), np.uint8)
+_CLASS[ord("0"):ord("9") + 1] = ord("d")
+for _c in b" /\n":
+    _CLASS[_c] = _c
+
+
+def _floats(body: np.ndarray, rows: int, cols: int) -> Optional[np.ndarray]:
+    if rows == 0:
+        return np.zeros((0, cols))
+    try:
+        a = np.loadtxt(io.StringIO(body.tobytes().decode()), comments=None, ndmin=2)
+    except ValueError:
+        return None
+    return a[:, :cols] if a.shape == (rows, a.shape[1]) and a.shape[1] >= cols else None
+
+
+def _load_triangles(text: str) -> Optional[dict]:
+    """Vectorised parse of the common case: unindented lines, every face a triangle of
+    one form, every index in range. Returns None for anything else, which the line
+    parser handles with its own results and error messages."""
+    if not text.isascii():
+        return None
+    data = np.frombuffer((text + "\n").encode(), np.uint8).copy()
+    data[data == 9] = 32  # a tab splits like a space
+    if np.isin(data, _ODD_SPACE).any():
+        return None
+    ends = np.flatnonzero(data == 10)
+    starts = np.r_[0, ends[:-1] + 1]
+    pad = np.append(data, [10, 10])
+    c0, c1, c2 = pad[starts], pad[starts + 1], pad[starts + 2]
+    v, f, t, n, sp, nl = (ord(c) for c in "vftn \n")
+    if (c0 == sp).any() or (((c0 == v) | (c0 == f)) & (c1 == nl)).any() or (
+        (c0 == v) & ((c1 == t) | (c1 == n)) & (c2 == nl)
+    ).any():
+        return None  # indented lines, or a bare "v"/"f": the line parser's business
+
+    # Label every byte with its line's kind (1 v, 2 vt, 3 vn, 4 f, 0 other), heads unlabelled.
+    is_v = c0 == v
+    kinds = [is_v & (c1 == sp), is_v & (c1 == t) & (c2 == sp), is_v & (c1 == n) & (c2 == sp), (c0 == f) & (c1 == sp)]
+    line_kind = np.zeros(len(starts), np.uint8)
+    for k, sel in enumerate(kinds, start=1):
+        line_kind[sel] = k
+    byte_kind = np.repeat(line_kind, ends - starts + 1)
+    for sel, head in zip(kinds, (2, 3, 3, 2)):
+        for i in range(head):
+            byte_kind[starts[sel] + i] = 0
+
+    def body(k):
+        """The bytes of the lines of kind k after their head, newlines kept, and their count."""
+        return data[byte_kind == k], int(kinds[k - 1].sum())
+
+    face_bytes, n_faces = body(4)
+    if n_faces == 0:
+        return None
+    # Collapse each number to "d" and each blank run to one space, drop blanks at the
+    # line ends: a file of triangles of one form is then the same line n_faces times.
+    shape = _CLASS[face_bytes]
+    shape = shape[~np.r_[False, (shape[1:] == shape[:-1]) & ((shape[1:] == ord("d")) | (shape[1:] == sp))]]
+    shape = shape[~((shape == sp) & (np.r_[True, shape[:-1] == nl] | np.r_[shape[1:] == nl, True]))].tobytes()
+    corner = shape.split(b" ", 1)[0]
+    form = _FORMS.get(corner)
+    if form is None or shape != (b" ".join([corner] * 3) + b"\n") * n_faces:
+        return None
+    has_uv = form in ("v/vt", "v/vt/vn")
+    has_normal = form in ("v/vt/vn", "v//vn")
+
+    pools = [_floats(*body(1), 3)]
+    uvs = _floats(*body(2), 2)
+    normals = _floats(*body(3), 3)
+    if pools[0] is None or uvs is None or normals is None:
+        return None
+    if has_uv:
+        pools.append(uvs)
+    if has_normal:
+        pools.append(normals)
+
+    face_bytes[face_bytes == ord("/")] = sp
+    corners = np.fromstring(face_bytes.tobytes(), dtype=np.int64, sep=" ").reshape(-1, len(pools)) - 1
+    sizes = [len(a) for a in pools]
+    if corners.min() < 0 or (corners >= sizes).any():
+        return None  # 0 or out of range: the line parser reproduces what that does
+
+    # Deduplicate corners in first-occurrence order, as the line parser's dict does.
+    if np.prod(sizes, dtype=np.float64) < 2**62:
+        key = corners[:, 0]
+        for j in range(1, len(pools)):
+            key = key * sizes[j] + corners[:, j]
+        _, first, inverse = np.unique(key, return_index=True, return_inverse=True)
+    else:
+        _, first, inverse = np.unique(corners, axis=0, return_index=True, return_inverse=True)
+    order = np.argsort(first)
+    rank = np.empty_like(order)
+    rank[order] = np.arange(len(order))
+    unique = corners[first[order]]
+
+    geo = {
+        "positions": pools[0][unique[:, 0]].astype(np.float32),
+        "indices": rank[inverse.ravel()].astype(np.uint32),
+    }
+    if has_normal:
+        geo["normals"] = normals[unique[:, -1]].astype(np.float32)
+    if has_uv:
+        uv = uvs[unique[:, 1]]
+        # OBJ puts v=0 at the bottom of the image: flip to the engine's top-left origin.
+        geo["uvs"] = np.stack([uv[:, 0], 1.0 - uv[:, 1]], 1).astype(np.float32)
+    return geo
 
 
 def _parse_face(lineno: int, tokens: list[str]) -> tuple[list[tuple], str]:
