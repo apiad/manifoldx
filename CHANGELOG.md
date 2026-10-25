@@ -168,6 +168,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **`load_obj` and the HDR decoder no longer run Python per line or per byte** (#117):
+  a file whose faces are all triangles of one form is parsed with numpy in one pass over
+  its bytes and deduplicated on one int64 key; quads, n-gons, mixed forms and indented
+  lines still go to the line parser, with the same output and error messages. The RGBE
+  decoder appends runs to one bytearray per scanline and scales by a lookup table, with
+  the same floats. A 300k-triangle v/vt/vn OBJ loads in 0.99 s instead of 4.05 s, and a
+  2048x1024 HDR decodes in 136 ms instead of 829 ms.
+
 - **The mesh pass reuses its bind groups and uploads a material's uniform only when it
   changed** (#113): bind groups are cached per material and rebuilt when a bound buffer
   grows or a texture is swapped, the shadow-map one when its view changes, and each

@@ -186,21 +186,20 @@ def _decode_rgbe(path: str) -> np.ndarray:
         if marker[0] == 2 and marker[1] == 2:
             # New RLE: each channel encoded separately
             scanline_w = (marker[2] << 8) | marker[3]
+            line = bytearray()  # the four channels one after another
             for ch in range(4):
-                x = 0
-                while x < scanline_w:
+                end = len(line) + scanline_w
+                while len(line) < end:
                     code = raw[pos]
-                    pos += 1
                     if code > 128:
-                        count = code - 128
-                        val = raw[pos]
-                        pos += 1
-                        result[row, x: x + count, ch] = val
-                        x += count
+                        line += raw[pos + 1: pos + 2] * (code - 128)
+                        pos += 2
                     else:
-                        result[row, x: x + code, ch] = list(raw[pos: pos + code])
-                        pos += code
-                        x += code
+                        line += raw[pos + 1: pos + 1 + code]
+                        pos += 1 + code
+                del line[end:]  # a run past the end of the scanline is cut there
+            w = min(W, scanline_w)
+            result[row, :w] = np.frombuffer(line, dtype=np.uint8).reshape(4, scanline_w)[:, :w].T
         else:
             # Uncompressed / old RLE
             chunk = np.frombuffer(raw[pos - 4: pos - 4 + W * 4], dtype=np.uint8)
@@ -208,13 +207,11 @@ def _decode_rgbe(path: str) -> np.ndarray:
             pos += (W - 1) * 4
 
     # RGBE → float32 RGB
-    R = result[..., 0].astype(np.float32)
-    G = result[..., 1].astype(np.float32)
-    B = result[..., 2].astype(np.float32)
-    E = result[..., 3].astype(np.float32)
-    scale = np.where(E > 0, np.ldexp(1.0, (E.astype(int) - 128 - 8)), 0.0)
-    rgb = np.stack([R * scale, G * scale, B * scale], axis=-1)
-    return rgb.astype(np.float32)
+    # 2^(E - 136) is a power of two, so the float32 product is exact: no rounding
+    # beyond what a float64 product cast to float32 does.
+    e = np.arange(256)
+    scale = np.where(e > 0, np.ldexp(1.0, e - 128 - 8), 0.0).astype(np.float32)
+    return result[..., :3] * scale[result[..., 3]][..., None]
 
 
 # ---------------------------------------------------------------------------
