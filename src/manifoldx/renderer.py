@@ -390,6 +390,10 @@ class RenderPipeline:
         self._store = store
         self._device = device
         self._transform_cache = TransformCache(store.max_entities)
+        # Between run() and end_frame() the store does not change: matrices and shadow bounds
+        # are computed once there and reused by every pass.
+        self._in_frame = False
+        self._frame_bounds = None  # (bounds,) once _scene_bounds ran this frame
         self._pipelines = {}  # (geometry_id, material_type) -> pipeline
         self._pipeline_layouts = {}  # material_type -> layout
         self._bind_group_layouts = {}  # material_type -> bind group layout
@@ -1212,6 +1216,14 @@ class RenderPipeline:
         Local AABBs are cached per geometry id; skinned geometry keeps one per
         joint, moved by the entity's joint matrix. Returns None for an empty scene.
         """
+        if self._in_frame and self._frame_bounds is not None:
+            return self._frame_bounds[0]
+        bounds = self._compute_scene_bounds(engine)
+        if self._in_frame:
+            self._frame_bounds = (bounds,)
+        return bounds
+
+    def _compute_scene_bounds(self, engine):
         instances = self._collect_mesh_instances(engine, with_entities=True)
         if not instances:
             return None
@@ -1236,6 +1248,18 @@ class RenderPipeline:
                     boxes = (None, _box_corners(pos)[None])
                 cache[geom_id] = boxes
             js, corners = boxes  # corners: (K, 8, 4), one box per joint (K = 1 unskinned)
+            if js is None:
+                # The box of a box under an affine map is centre' = M c + t, half' = |M| h:
+                # per axis from the matrix columns, no corner products.
+                lo, hi = corners[0, 0, :3], corners[0, 7, :3]
+                c, h = (lo + hi) * 0.5, (hi - lo) * 0.5
+                for i in range(3):
+                    row = mats[:, 4 * i : 4 * i + 4]
+                    centre = row[:, 0] * c[0] + row[:, 1] * c[1] + row[:, 2] * c[2] + row[:, 3]
+                    half = np.abs(row[:, 0]) * h[0] + np.abs(row[:, 1]) * h[1] + np.abs(row[:, 2]) * h[2]
+                    gmin[i] = min(gmin[i], (centre - half).min())
+                    gmax[i] = max(gmax[i], (centre + half).max())
+                continue
             full = mats.reshape(-1, 1, 4, 4)  # (N, 1, 4, 4) row-major model matrices
             if js is not None:
                 # The mirror holds joint matrices transposed (column-major).
@@ -1365,8 +1389,7 @@ class RenderPipeline:
         alive = np.where(store._alive)[0]
         if len(alive) == 0:
             return {}
-        self._transform_cache.mark_dirty(alive)
-        models = self._transform_cache.get_transforms(store, alive)  # (N,16) row-major
+        models = self._model_matrices(alive)  # (N,16) row-major
         if "Mesh" not in store._components:
             return {}
         mesh_data = store.get_component_data("Mesh", alive)
@@ -1460,8 +1483,7 @@ class RenderPipeline:
         view_mat = camera.get_view_matrix().T.astype(np.float32)
 
         # Get transform data
-        self._transform_cache.mark_dirty(alive_indices)
-        model_matrices = self._transform_cache.get_transforms(self._store, alive_indices)
+        model_matrices = self._model_matrices(alive_indices)
 
         # Get mesh and material IDs
         mesh_data = None
@@ -1700,8 +1722,17 @@ class RenderPipeline:
                 self, engine, render_pass, axis_batches, model_matrices, material_data
             )
 
+    def _model_matrices(self, indices):
+        """(N,16) row-major model matrices: computed once in a frame, afresh on every call outside one."""
+        if not self._in_frame:
+            self._transform_cache.mark_dirty(indices)
+        return self._transform_cache.get_transforms(self._store, indices)
+
     def run(self, engine, dt: float):
-        """Execute full render pipeline (CPU-side prep)."""
+        """Execute full render pipeline (CPU-side prep). Starts a frame, which end_frame() closes."""
+        self._transform_cache.mark_dirty(slice(None))
+        self._frame_bounds = None
+        self._in_frame = True
         if "Transform" not in self._store._components:
             return
 
@@ -1709,8 +1740,11 @@ class RenderPipeline:
         if len(alive_indices) == 0:
             return
 
-        self._transform_cache.mark_dirty(alive_indices)
         self._transform_cache.get_transforms(self._store, alive_indices)
+
+    def end_frame(self):
+        """Close the frame run() opened: later reads see the store as it is then."""
+        self._in_frame = False
 
 
 __all__ = [
