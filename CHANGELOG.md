@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`benchmarks/`: suites that time manifoldx as N grows, and before/after tables
+  for pull requests.** `uv run python -m benchmarks <suite> [--case ...] [--sizes ...]`
+  runs the `frame`, `ecs`, `compute`, `skinning`, `modeling` and `loaders` suites;
+  `--against main` runs the same cases on another ref's `src/` and prints a Markdown
+  speed-up table. A smoke test runs every case at a tiny size; `know-how/benchmarking.md`
+  says how to prove a performance change (#109).
+
 - **`engine.input.capture_pointer(on)` and `engine.input.pointer_captured`: mouse look
   without the window edge.** In a glfw window it hides and locks the cursor (raw motion
   where the system has it); `mouse_delta` keeps counting, and the GUI ignores the pointer
