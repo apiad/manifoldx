@@ -15,21 +15,21 @@ def render_sprite_batches(
     Per-instance buffers: transforms, scalar_values, radii.
     """
     # Flatten all sprite local indices for single buffer upload
-    all_local_indices = []  # ordered list across sprite batches
+    all_local_indices = []  # one index array per batch, concatenated below
     batch_draw_info = {}  # mat_id -> (first_instance, instance_count)
     instance_offset = 0
 
     for mat_id, local_indices in sprite_batches.items():
         count = len(local_indices)
         batch_draw_info[mat_id] = (instance_offset, count)
-        all_local_indices.extend(local_indices)
+        all_local_indices.append(np.asarray(local_indices, dtype=np.int64))
         instance_offset += count
 
-    if not all_local_indices:
+    if not instance_offset:
         return
 
     # Collect per-instance arrays
-    ent_arr = np.asarray(all_local_indices, dtype=np.int64)
+    ent_arr = np.concatenate(all_local_indices)
 
     # Transform matrices
     all_matrices = model_matrices[ent_arr]  # (total_instances, 16)

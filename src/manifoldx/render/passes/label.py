@@ -15,19 +15,19 @@ def render_label_pass(
     from manifoldx.renderer import _BatchBuffers
     from manifoldx.viz.materials import LabelMaterial
 
-    all_local_indices = []
+    all_local_indices = []  # one index array per batch, concatenated below
     batch_draw_info = {}
     instance_offset = 0
     for mat_id, local_indices in label_batches.items():
         count = len(local_indices)
         batch_draw_info[mat_id] = (instance_offset, count)
-        all_local_indices.extend(local_indices)
+        all_local_indices.append(np.asarray(local_indices, dtype=np.int64))
         instance_offset += count
 
-    if not all_local_indices:
+    if not instance_offset:
         return
 
-    ent_arr = np.asarray(all_local_indices, dtype=np.int64)
+    ent_arr = np.concatenate(all_local_indices)
 
     # Transforms for label entities (column-major upload, like sprites).
     # A dedicated label batch buffer is required: reusing the sprite buffer

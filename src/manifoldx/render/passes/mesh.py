@@ -20,18 +20,19 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
     # ---------------------------------------------------------------
 
     # Flatten batch order and record (first_instance, instance_count) per batch
-    all_local_indices = []  # ordered list of local indices across all batches
+    all_local_indices = []  # one index array per batch, concatenated below
     batch_draw_info = {}  # key -> (first_instance, instance_count)
     instance_offset = 0
 
     for key, local_indices in mesh_batches.items():
         count = len(local_indices)
         batch_draw_info[key] = (instance_offset, count)
-        all_local_indices.extend(local_indices)
+        all_local_indices.append(np.asarray(local_indices, dtype=np.int64))
         instance_offset += count
 
-    if not all_local_indices:
+    if not instance_offset:
         return
+    all_local_indices = np.concatenate(all_local_indices)
 
     # Transpose all matrices for WGSL column-major layout and upload once
     all_matrices = model_matrices[all_local_indices]  # (total_instances, 16)
