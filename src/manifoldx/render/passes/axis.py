@@ -63,7 +63,7 @@ def render_axis_pass(
             line=True,
         )
 
-        mat_data = mat_obj.get_data(instance_count, engine._material_registry)
+        mat_data = mat_obj.get_data(1, engine._material_registry)  # only row 0 is uploaded
         material_type = type(mat_obj).__name__
         material_subtype = getattr(mat_obj, "pipeline_subtype", None)
         bkey = (geom_id, material_type, material_subtype, "line")

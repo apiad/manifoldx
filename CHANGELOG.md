@@ -168,6 +168,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **The mesh pass reuses its bind groups and uploads a material's uniform only when it
+  changed** (#113): bind groups are cached per material and rebuilt when a bound buffer
+  grows or a texture is swapped, the shadow-map one when its view changes, and each
+  material's uniform row is built once per frame (`get_data(1)`, not one row per
+  instance) and written only when its bytes differ. The sprite, label and axis passes
+  also build one row. A frame of 5000 entities with a geometry each drops from 2040 ms
+  to 421 ms; 100k vertex-coloured instances from 212 ms to 153 ms.
+
 - **Compute dispatches move only the slots ever used, not `max_entities` rows** (#114):
   `EntityStore` tracks a high-water mark, one past the highest slot ever spawned into, and
   `ComputeRunner` uploads and reads back only the rows below it. Kernel results are

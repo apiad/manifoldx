@@ -29,7 +29,7 @@ def sprites(n: int):
     return engine
 
 
-def meshes(n: int, *, shadows: bool = False, moving: bool = False):
+def meshes(n: int, *, shadows: bool = False, moving: bool = False, vertex_colors: bool = False):
     """n instances of one cube geometry with one StandardMaterial."""
     import manifoldx as mx
     from manifoldx.components import Material, Mesh, Transform
@@ -37,9 +37,11 @@ def meshes(n: int, *, shadows: bool = False, moving: bool = False):
 
     engine = headless_engine(n)
     engine.camera.fit(60)
-    engine.spawn(
-        Mesh(cube(0.5, 0.5, 0.5)), Material(StandardMaterial("#88aaff")), Transform(pos=_positions(n)), n=n
-    )
+    geo = cube(0.5, 0.5, 0.5)
+    if vertex_colors:
+        geo["colors"] = np.ones((len(geo["positions"]), 3), np.float32)
+    mat = StandardMaterial("#88aaff", vertex_colors=vertex_colors)
+    engine.spawn(Mesh(geo), Material(mat), Transform(pos=_positions(n)), n=n)
     if shadows:
         engine.set_sun(DirectionalLight("#ffffff", 2.0, (-1, -2, -1)))
         engine.enable_shadows()
