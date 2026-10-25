@@ -77,9 +77,7 @@ class CommandBuffer:
             col_start = cmd.data.get("col_start")
             col_end = cmd.data.get("col_end")
             if col_start is not None and col_end is not None:
-                store._components[component_name][np.ix_(indices, range(col_start, col_end))] = (
-                    new_data
-                )
+                store._components[component_name][indices, col_start:col_end] = new_data
             else:
                 store._components[component_name][indices] = new_data
 
