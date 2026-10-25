@@ -295,3 +295,20 @@ def test_spawn_over_capacity_spawns_nothing():
     assert store._free_list == [0]
     assert hooked == []
     np.testing.assert_array_equal(store.spawn(n=3), [0, 8, 9])
+
+
+def test_high_water_tracks_highest_slot_ever_spawned():
+    """Destroying never lowers the mark; reusing freed slots does not raise it."""
+    from manifoldx.ecs import EntityStore
+    store = EntityStore(max_entities=10)
+    assert store._high_water == 0
+    store.spawn(n=0)
+    assert store._high_water == 0
+    store.spawn(n=6)
+    assert store._high_water == 6
+    store.destroy(np.array([2, 5]))
+    assert store._high_water == 6
+    store.spawn(n=2)
+    assert store._high_water == 6
+    store.spawn(n=1)
+    assert store._high_water == 7

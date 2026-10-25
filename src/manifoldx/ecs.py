@@ -34,6 +34,9 @@ class EntityStore:
         self._alive = np.zeros(max_entities, dtype=bool)
         self._components: dict[str, np.ndarray] = {}
         self._free_list: list[int] = []  # Reusable dead entity indices
+        # One past the highest slot ever spawned into: every live entity sits
+        # below it, so GPU syncs move only rows [0, _high_water).
+        self._high_water = 0
         # Called with the indices of every spawn and destroy, so per-entity
         # state kept outside the store (joint blocks) never outlives its entity.
         self._release_hooks: list = []
@@ -76,6 +79,8 @@ class EntityStore:
         indices = np.concatenate([np.asarray(reused, dtype=np.int32), fresh.astype(np.int32)])
         del self._free_list[len(self._free_list) - k :]
         self._alive[indices] = True
+        if len(indices):
+            self._high_water = max(self._high_water, int(indices.max()) + 1)
         for hook in self._release_hooks:
             hook(indices)
 

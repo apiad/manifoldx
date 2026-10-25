@@ -161,6 +161,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **Compute dispatches move only the slots ever used, not `max_entities` rows** (#114):
+  `EntityStore` tracks a high-water mark, one past the highest slot ever spawned into, and
+  `ComputeRunner` uploads and reads back only the rows below it. Kernel results are
+  unchanged. With 1000 live entities and one kernel reading and writing `Transform` and a
+  3-float component, a dispatch at `max_entities=1_000_000` drops from 189 ms to 3.2 ms.
+
 - **`modeling` operators on large meshes avoid `np.unique(axis=0)` and `np.add.at`**
   (#116): `Mesh.adjacency()`, `subdivide` and `decimate` dedup edge and cell rows through
   one int64 key and a 1-D `np.unique`; `smooth`, Loop subdivision and `decimate` sum with
