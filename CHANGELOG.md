@@ -180,6 +180,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `arr[indices, a:b]`. A system doing `q[Transform].position += c` plus the command
   flush drops from about 13-16 ms to 8.5 ms at 100k entities.
 
+- **Model matrices are computed once per frame, and the sun's auto-fit shadow bounds
+  once per frame from the matrix columns** (#112). Every pass marked all transforms dirty
+  before reading them, so each frame recomputed every matrix 2 times, 4 with sun shadows;
+  now `RenderPipeline.run` recomputes them and the passes until `end_frame` reuse them.
+  The bounds take a mesh's box under its affine model matrix as `centre ± |R|·half`
+  instead of multiplying 8 corners per instance (skinned geometry keeps its per-joint
+  boxes). Reads outside a frame still recompute. On a 4-CPU machine without a GPU, a
+  frame of 100k static meshes with shadows drops from about 450 ms to 190-230 ms.
+
 - **`EntityStore.spawn` assigns slots in one vectorised step** (#107): free list first,
   then the lowest dead slots via `np.flatnonzero`, instead of scanning the alive mask
   once per entity. `spawn(200_000)` drops from about 60 s to 0.03 s. Running out of

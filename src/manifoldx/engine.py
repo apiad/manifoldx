@@ -1231,6 +1231,12 @@ class Engine:
         """Steps 8 onward of _draw_frame: draw the current state, no simulation."""
         # Step 8: render pipeline.
         self._render_pipeline.run(self, dt)
+        try:
+            self._draw_passes()
+        finally:
+            self._render_pipeline.end_frame()
+
+    def _draw_passes(self):
 
         # Ensure render pipeline is initialized
         self._render_pipeline._ensure_pipeline(self._device, self._texture_format)
