@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`engine.set_joints(indices, matrices)`: pose a crowd of skinned entities in one
+  call.** `matrices` is (N, J, 4, 4), one pose per index, with the same rule and checks as
+  `EntityHandle.set_joints`. It allocates every missing joint block at once, writes the
+  CPU mirror in one assignment and uploads the touched range of blocks once, instead of
+  one `write_buffer` per entity: 5000 entities of 20 joints take about 30-38 ms instead
+  of about 106 ms of CPU time per frame (#115).
+
 - **`benchmarks/`: suites that time manifoldx as N grows, and before/after tables
   for pull requests.** `uv run python -m benchmarks <suite> [--case ...] [--sizes ...]`
   runs the `frame`, `ecs`, `compute`, `skinning`, `modeling` and `loaders` suites;

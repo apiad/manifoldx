@@ -26,3 +26,15 @@ def set_joints_each(n):
             h.set_joints(m)
 
     return measure(run)
+
+
+@case("skinning", "set_joints_batched", sizes=[100, 1_000, 5_000], smoke=4)
+def set_joints_batched(n):
+    """One engine.set_joints call posing n entities of 20 joints each."""
+    engine, first = scenes.skinned(n)
+    engine._ensure_offscreen(1)
+    indices = np.arange(first.index, first.index + n)
+    mats = np.tile(np.eye(4, dtype=np.float32), (n, JOINTS, 1, 1))
+    engine.set_joints(indices, mats)
+    engine._draw_frame()  # creates the joint buffer, so later sets upload
+    return measure(lambda: engine.set_joints(indices, mats))
