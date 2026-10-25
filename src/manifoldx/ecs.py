@@ -179,12 +179,12 @@ class _FieldView:
     def data(self) -> np.ndarray:
         """Get current data."""
         return self._store._components[self._component_name][
-            np.ix_(self._indices, range(self._col_start, self._col_end))
+            self._indices, self._col_start : self._col_end
         ]
 
     def _get_data(self) -> np.ndarray:
         return self._store._components[self._component_name][
-            np.ix_(self._indices, range(self._col_start, self._col_end))
+            self._indices, self._col_start : self._col_end
         ]
 
     def _set_data(self, value):
@@ -236,7 +236,7 @@ class _FieldView:
             )
         else:
             self._store._components[self._component_name][
-                np.ix_(self._indices, range(self._col_start, self._col_end))
+                self._indices, self._col_start : self._col_end
             ] = value
 
     def __iadd__(self, other):
@@ -464,8 +464,8 @@ class ComponentAccessor:
         """Access component fields by name: .position, .life, .velocity."""
         from manifoldx.ecs import _COMPONENT_REGISTRY
 
-        # Get full data for component
-        data = self._store.get_component_data(self._component_name, self._indices)
+        if self._component_name not in self._store._components:
+            raise ValueError(f"Component {self._component_name} not registered")
 
         # Check if it's Transform with built-in fields
         if self._component_name == "Transform":

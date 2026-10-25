@@ -168,6 +168,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `adjacency()` drops from about 4.0 s to 1.2 s, `subdivide(1)` from 2.2 s to 0.26 s,
   `decimate(64)` from 0.30 s to 0.06 s and one `smooth` iteration from 189 ms to 97 ms.
 
+- **System field access no longer copies the component or indexes with `np.ix_`**
+  (#118): `q[Comp].field` skips a fancy-indexed copy of the whole component that was
+  never used, and field reads, writes and the deferred write in `CommandBuffer` index
+  with `arr[indices, a:b]`. A system doing `q[Transform].position += c` plus the command
+  flush drops from about 13-16 ms to 8.5 ms at 100k entities.
+
 - **`EntityStore.spawn` assigns slots in one vectorised step** (#107): free list first,
   then the lowest dead slots via `np.flatnonzero`, instead of scanning the alive mask
   once per entity. `spawn(200_000)` drops from about 60 s to 0.03 s. Running out of
