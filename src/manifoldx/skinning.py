@@ -60,24 +60,39 @@ class JointStore:
     def _current(self) -> bool:
         return self.buffer is not None and self._buffer_blocks == len(self.mirror)
 
-    def _alloc(self) -> int:
-        if self._free:
-            return self._free.pop()
-        if self._next == len(self.mirror):
+    def _alloc(self, k: int) -> np.ndarray:
+        """k unused blocks: freed ones first, then new ones (the mirror doubles until they fit)."""
+        reused = [self._free.pop() for _ in range(min(k, len(self._free)))]
+        fresh = k - len(reused)
+        while self._next + fresh > len(self.mirror):
             self.mirror = np.concatenate([self.mirror, np.tile(_IDENTITY_BLOCK, (len(self.mirror), 1, 1, 1))])
-        self._next += 1
-        return self._next - 1
+        self._next += fresh
+        return np.concatenate([np.array(reused, dtype=np.uint32),
+                               np.arange(self._next - fresh, self._next, dtype=np.uint32)])
 
     def set(self, entity: int, matrices: np.ndarray):
         """Write (J, 4, 4) row-major matrices into the entity's block; upload J*64 bytes."""
         block = int(self.block_of[entity])
         if block == 0:
-            block = self._alloc()
+            block = int(self._alloc(1)[0])
             self.block_of[entity] = block
         n = len(matrices)
         self.mirror[block, :n] = matrices.transpose(0, 2, 1)
         if self._current():
             self._device.queue.write_buffer(self.buffer, block * _BLOCK_BYTES, self.mirror[block, :n].tobytes())
+
+    def set_many(self, entities, matrices: np.ndarray):
+        """Write (N, J, 4, 4) row-major matrices into the entities' blocks; upload the touched blocks once."""
+        entities = np.asarray(entities, dtype=np.int64)
+        blocks = self.block_of[entities]
+        new = np.unique(entities[blocks == 0])
+        if len(new):
+            self.block_of[new] = self._alloc(len(new))
+            blocks = self.block_of[entities]
+        self.mirror[blocks, : matrices.shape[1]] = matrices.transpose(0, 1, 3, 2)
+        if self._current():
+            lo, hi = int(blocks.min()), int(blocks.max()) + 1
+            self._device.queue.write_buffer(self.buffer, lo * _BLOCK_BYTES, self.mirror[lo:hi].tobytes())
 
     def release(self, entities):
         """Free the blocks of destroyed or respawned entities, reset to identity."""

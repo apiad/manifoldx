@@ -146,7 +146,8 @@ class EntityHandle:
         Column-vector convention in model space, before the entity's Transform:
         a vertex of joint j moves to matrices[j] @ (x, y, z, 1); its normal by the
         inverse transpose of the 3x3 (identity when singular). Joints >= J keep
-        their previous matrix (identity until first set). Uploads J*64 bytes.
+        their previous matrix (identity until first set). Uploads J*64 bytes;
+        pose many entities in one call with Engine.set_joints.
         """
         from manifoldx.skinning import MAX_JOINTS
 
@@ -1077,6 +1078,37 @@ class Engine:
             indices = self.store.spawn(n, **processed_kwargs)
             return EntityHandle(self, int(indices[0]), mesh_geo_id)
         return None
+
+    def set_joints(self, indices, matrices):
+        """Pose many skinned entities in one call: matrices[k] poses entity indices[k].
+
+        `indices` is (N,) entity indices, `matrices` is (N, J, 4, 4) with
+        1 <= J <= MAX_JOINTS, J the same for all. Each pose follows the rule of
+        EntityHandle.set_joints; joints >= J keep their previous matrix. Writes
+        every block at once and uploads the touched range of blocks once, so a
+        crowd costs one call per frame instead of one per entity.
+        """
+        from manifoldx.skinning import MAX_JOINTS
+
+        idx = np.asarray(indices, dtype=np.int64)
+        m = np.asarray(matrices, dtype=np.float32)
+        if (idx.ndim != 1 or m.ndim != 4 or len(m) != len(idx) or m.shape[2:] != (4, 4)
+                or not 1 <= m.shape[1] <= MAX_JOINTS):
+            raise ValueError(
+                f"set_joints expects indices of shape (N,) and matrices of shape (N, J, 4, 4) "
+                f"with 1 <= J <= {MAX_JOINTS}, got {idx.shape} and {m.shape}"
+            )
+        if len(idx) == 0:
+            return
+        meshes = self.store._components.get("Mesh")
+        geo_ids = np.unique(meshes[idx, 0]) if meshes is not None else [None]
+        for g in geo_ids:
+            geo = None if g is None else self._geometry_registry.get(int(g))
+            if geo is None or "joints" not in geo:
+                raise ValueError(
+                    "set_joints needs an entity whose geometry has joints (Mesh(joints=...))"
+                )
+        self._render_pipeline._joints.set_many(idx, m)
 
     def destroy(self, indices):
         """Destroy entities matching condition by emitting DESTROY command."""

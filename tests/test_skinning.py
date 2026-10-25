@@ -128,7 +128,7 @@ def _mesh_for(variant):
 
 
 # Both ways to pose: one EntityHandle.set_joints per entity, or one batched call.
-HOW = ["handle"]
+HOW = ["handle", "batched"]
 
 
 def _set_joints(e, handles, poses, how):
@@ -362,6 +362,56 @@ def test_a_destroyed_entity_frees_its_block_for_the_next_pose(how):
     _set_joints(e, [c], [_pose()[:1]], how)
     assert joints.block_of[c.index] == freed
     assert joints.block_of[b.index] not in (0, freed)
+
+
+def test_batched_set_joints_with_an_unskinned_entity_raises():
+    e = mx.Engine("skin", width=32, height=32)
+    a, box = _spawn(e, _parts()), _spawn(e, Mesh.box())
+    with pytest.raises(ValueError, match="joints"):
+        e.set_joints([a.index, box.index], np.stack([_pose(), _pose()]))
+
+
+@pytest.mark.parametrize(
+    "n, mats",
+    [(1, _pose()), (2, np.stack([_pose()])), (1, np.zeros((1, 0, 4, 4))),
+     (1, np.tile(np.eye(4), (1, 33, 1, 1))), (1, np.zeros((1, 3, 3, 3)))],
+)
+def test_batched_set_joints_bad_shape_raises(n, mats):
+    e = mx.Engine("skin", width=32, height=32)
+    hs = [_spawn(e, _parts()) for _ in range(n)]
+    with pytest.raises(ValueError, match=r"\(N, J, 4, 4\)"):
+        e.set_joints([h.index for h in hs], mats)
+
+
+def test_batched_set_joints_grows_the_mirror_for_many_new_blocks():
+    e = mx.Engine("skin", width=32, height=32)
+    geo = _parts().to_geometry()
+    first = e.spawn(MeshC(geo), Material(StandardMaterial(color="#ffffff")), Transform(), n=40)
+    idx = np.arange(first.index, first.index + 40)
+    mats = np.tile(np.eye(4, dtype=np.float32), (40, 3, 1, 1))
+    mats[:, 0, 0, 3] = np.arange(40)  # each entity's joint 0 moved by its own x
+    e.set_joints(idx, mats)
+    joints = e._render_pipeline._joints
+    blocks = joints.block_of[idx]
+    assert len(np.unique(blocks)) == 40 and blocks.min() > 0
+    assert np.allclose(joints.mirror[blocks, 0, 3, 0], np.arange(40))
+
+
+def test_batched_set_joints_after_the_buffer_exists_uploads_every_pose(tmp_path):
+    mesh = _parts()
+    other = _pose()[[1, 0, 2]].copy()
+    other[2] = _rot((0, 1, 0), 1.0, (0.8, 0, 0))
+    e = _engine()
+    geo = mesh.to_geometry()
+    mat = StandardMaterial(color="#d0a060", roughness=0.6)
+    hs = [e.spawn(MeshC(geo), Material(mat), Transform(pos=(x, 0, 0), scale=(0.6, 0.6, 0.6)))
+          for x in (-0.7, 0.7)]
+    e.set_joints([h.index for h in hs], np.stack([_pose(), other]))
+    e.render_frame(supersample=1)  # creates the buffer, so the next call uploads
+    e.set_joints([h.index for h in hs], np.stack([other, _pose()]))
+    gpu = e.render_frame(supersample=1).astype(np.float64)
+    cpu = _render([(mesh, other, -0.7), (mesh, _pose(), 0.7)], "plain", tmp_path, skinned=False)
+    _assert_same(gpu, cpu)
 
 
 # --- pixels ---------------------------------------------------------------------------
