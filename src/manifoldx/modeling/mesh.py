@@ -23,11 +23,14 @@ def _build_adjacency(faces: np.ndarray, n_vertices: int) -> VertexAdjacency:
     # Directed edges for all three triangle sides, both ways.
     edges = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]], axis=0)
     edges = np.concatenate([edges, edges[:, ::-1]], axis=0)
-    edges = np.unique(edges, axis=0)                 # dedup, sorts by (src, dst)
-    counts = np.bincount(edges[:, 0], minlength=n_vertices)
+    # Dedup and sort by (src, dst) through one int64 key: np.unique(axis=0) sorts
+    # rows as a structured type and is several times slower on large meshes.
+    keys = np.unique(edges[:, 0] * n_vertices + edges[:, 1])
+    src, dst = np.divmod(keys, n_vertices)
+    counts = np.bincount(src, minlength=n_vertices)
     offsets = np.zeros(n_vertices + 1, dtype=np.int64)
     offsets[1:] = np.cumsum(counts)
-    return VertexAdjacency(offsets=offsets, neighbors=edges[:, 1].astype(np.int32))
+    return VertexAdjacency(offsets=offsets, neighbors=dst.astype(np.int32))
 
 
 @dataclass(frozen=True)
