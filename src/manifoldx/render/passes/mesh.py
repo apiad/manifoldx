@@ -39,6 +39,7 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
     all_matrices_t = all_matrices.reshape(-1, 4, 4).transpose(0, 2, 1).reshape(-1, 16)
     rp._batch_buffers.upload_transforms(all_matrices_t.astype(np.float32))
     joint_blocks_uploaded = False
+    mat_states = {}  # mat_id -> (needs_lights, buffer, buffer size), built once this frame
 
     # ---------------------------------------------------------------
     # Draw each batch using first_instance to index into the
@@ -76,49 +77,30 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
         # Per-mat_id uniform buffer: one per material instance, allocated
         # lazily on first sight. Sizing follows the existing convention
         # (32B for materials that bind lights, 16B otherwise), or the
-        # material's own data when it holds more.
-        mat_data = mat_obj.get_data(instance_count, engine._material_registry)
-        first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
-        needs_lights = "@binding(3)" in type(mat_obj)._compile()
-        mat_buffer_size = max(32 if needs_lights else 16, -(-first_row.size * 4 // 16) * 16)
-        mat_buffer = rp._material_buffers_by_mat_id.get(mat_id)
-        if mat_buffer is None:
-            mat_buffer = rp._device.create_buffer(
-                size=mat_buffer_size,
-                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
-            )
-            rp._material_buffers_by_mat_id[mat_id] = mat_buffer
+        # material's own data when it holds more. Built once per material
+        # per frame and written only when its bytes changed.
+        mat_state = mat_states.get(mat_id)
+        if mat_state is None:
+            mat_data = mat_obj.get_data(1, engine._material_registry)
+            first_row = mat_data[0] if mat_data.ndim > 1 else mat_data
+            row = first_row.astype(np.float32).tobytes()
+            needs_lights = "@binding(3)" in type(mat_obj)._compile()
+            mat_buffer_size = max(32 if needs_lights else 16, -(-len(row) // 16) * 16)
+            mat_buffer = rp._material_buffers_by_mat_id.get(mat_id)
+            if mat_buffer is None:
+                mat_buffer = rp._device.create_buffer(
+                    size=mat_buffer_size,
+                    usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+                )
+                rp._material_buffers_by_mat_id[mat_id] = mat_buffer
+            if rp._material_uniforms_by_mat_id.get(mat_id) != row:
+                rp._device.queue.write_buffer(mat_buffer, 0, row)
+                rp._material_uniforms_by_mat_id[mat_id] = row
+            mat_state = mat_states[mat_id] = (needs_lights, mat_buffer, mat_buffer_size)
+        needs_lights, mat_buffer, mat_buffer_size = mat_state
 
-        # Upload material uniforms for this batch.
-        rp._device.queue.write_buffer(mat_buffer, 0, first_row.astype(np.float32).tobytes())
-        bind_group_entries = [
-            {
-                "binding": 0,
-                "resource": {
-                    "buffer": rp._globals_buffer,
-                    "offset": 0,
-                    "size": 560,
-                },
-            },
-            {
-                "binding": 1,
-                "resource": {
-                    "buffer": rp._batch_buffers.transforms_buf,
-                    "offset": 0,
-                    "size": rp._batch_buffers.transforms_capacity,
-                },
-            },
-            {
-                "binding": 2,
-                "resource": {
-                    "buffer": mat_buffer,
-                    "offset": 0,
-                    "size": mat_buffer_size,
-                },
-            },
-        ]
-
-        if gpu_buffers.get("has_joints"):
+        has_joints = bool(gpu_buffers.get("has_joints"))
+        if has_joints:
             # Block index per instance, in the same order as the transforms,
             # uploaded once per frame on the first skinned batch.
             if not joint_blocks_uploaded:
@@ -126,56 +108,102 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
                 rp._batch_buffers.upload_joint_blocks(blocks)
                 joint_blocks_uploaded = True
             joints_buf = rp._joints.ensure_buffer(rp._device)
-            bind_group_entries.append(
-                {
-                    "binding": JOINTS_BINDING,
-                    "resource": {"buffer": joints_buf, "offset": 0, "size": joints_buf.size},
-                }
-            )
-            bind_group_entries.append(
-                {
-                    "binding": BLOCKS_BINDING,
-                    "resource": {
-                        "buffer": rp._batch_buffers.joint_blocks_buf,
-                        "offset": 0,
-                        "size": rp._batch_buffers.joint_blocks_capacity,
-                    },
-                }
-            )
 
-        if needs_lights:
-            bind_group_entries.append(
-                {
-                    "binding": 3,
-                    "resource": {
-                        "buffer": rp._lights_buffer,
-                        "offset": 0,
-                        "size": 128,
-                    },
-                }
-            )
-
-        # Append texture bindings declared by the material
-        # (sampler at N, view at N+1 for each entry).
+        # Every object the bind group points at: it is rebuilt only when one
+        # of them changed (a grown buffer, a swapped texture).
         texture_bindings = mat_obj.get_texture_bindings()
-        for binding, handle in texture_bindings.items():
-            bind_group_entries.append(
-                {
-                    "binding": binding,
-                    "resource": handle.sampler,
-                }
-            )
-            bind_group_entries.append(
-                {
-                    "binding": binding + 1,
-                    "resource": handle.view,
-                }
-            )
-
-        bind_group = rp._device.create_bind_group(
-            layout=bind_group_layout,
-            entries=bind_group_entries,
+        resources = (
+            bind_group_layout,
+            rp._globals_buffer,
+            rp._batch_buffers.transforms_buf,
+            mat_buffer,
+            joints_buf if has_joints else None,
+            rp._batch_buffers.joint_blocks_buf if has_joints else None,
+            rp._lights_buffer if needs_lights else None,
+            *((b, h.sampler, h.view) for b, h in texture_bindings.items()),
         )
+        cached = rp._mesh_bind_groups.get((mat_id, has_joints))
+        if cached is not None and cached[0] == resources:
+            bind_group = cached[1]
+        else:
+            bind_group_entries = [
+                {
+                    "binding": 0,
+                    "resource": {
+                        "buffer": rp._globals_buffer,
+                        "offset": 0,
+                        "size": 560,
+                    },
+                },
+                {
+                    "binding": 1,
+                    "resource": {
+                        "buffer": rp._batch_buffers.transforms_buf,
+                        "offset": 0,
+                        "size": rp._batch_buffers.transforms_capacity,
+                    },
+                },
+                {
+                    "binding": 2,
+                    "resource": {
+                        "buffer": mat_buffer,
+                        "offset": 0,
+                        "size": mat_buffer_size,
+                    },
+                },
+            ]
+
+            if has_joints:
+                bind_group_entries.append(
+                    {
+                        "binding": JOINTS_BINDING,
+                        "resource": {"buffer": joints_buf, "offset": 0, "size": joints_buf.size},
+                    }
+                )
+                bind_group_entries.append(
+                    {
+                        "binding": BLOCKS_BINDING,
+                        "resource": {
+                            "buffer": rp._batch_buffers.joint_blocks_buf,
+                            "offset": 0,
+                            "size": rp._batch_buffers.joint_blocks_capacity,
+                        },
+                    }
+                )
+
+            if needs_lights:
+                bind_group_entries.append(
+                    {
+                        "binding": 3,
+                        "resource": {
+                            "buffer": rp._lights_buffer,
+                            "offset": 0,
+                            "size": 128,
+                        },
+                    }
+                )
+
+            # Append texture bindings declared by the material
+            # (sampler at N, view at N+1 for each entry).
+            for binding, handle in texture_bindings.items():
+                bind_group_entries.append(
+                    {
+                        "binding": binding,
+                        "resource": handle.sampler,
+                    }
+                )
+                bind_group_entries.append(
+                    {
+                        "binding": binding + 1,
+                        "resource": handle.view,
+                    }
+                )
+
+            bind_group = rp._device.create_bind_group(
+                layout=bind_group_layout,
+                entries=bind_group_entries,
+            )
+            rp._mesh_bind_groups[(mat_id, has_joints)] = (resources, bind_group)
 
         render_pass.set_pipeline(pipeline)
         render_pass.set_bind_group(0, bind_group)
@@ -202,14 +230,15 @@ def render_mesh_batches(rp, engine, render_pass, mesh_batches, model_matrices, m
                 and rp._shadow_map_view is not None
             )
             shadow_view = rp._shadow_map_view if shadow_on else rp._shadow_placeholder_view
-            shadow_bg = rp._device.create_bind_group(
-                layout=rp._shadow_bind_group_layout,
-                entries=[
-                    {"binding": 0, "resource": shadow_view},
-                    {"binding": 1, "resource": rp._shadow_sampler},
-                ],
-            )
-            render_pass.set_bind_group(2, shadow_bg)
+            if rp._shadow_bind_group is None or rp._shadow_bind_group[0] is not shadow_view:
+                rp._shadow_bind_group = (shadow_view, rp._device.create_bind_group(
+                    layout=rp._shadow_bind_group_layout,
+                    entries=[
+                        {"binding": 0, "resource": shadow_view},
+                        {"binding": 1, "resource": rp._shadow_sampler},
+                    ],
+                ))
+            render_pass.set_bind_group(2, rp._shadow_bind_group[1])
 
         render_pass.set_vertex_buffer(0, gpu_buffers["vertex_buffer"])
         render_pass.set_index_buffer(gpu_buffers["index_buffer"], wgpu.IndexFormat.uint32)
