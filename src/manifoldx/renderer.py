@@ -120,6 +120,18 @@ def vertex_bounds(positions, skinned=False):
     return c, (r * 1.5 + 0.5 if skinned else r)
 
 
+def _groups(idx, *keys):
+    """[(key tuple, local indices)] per distinct key over `idx` (ascending local indices), each
+    key read from the `keys` arrays. Groups come in order of their first index, indices
+    ascending within each, as a per-entity loop building dicts would give."""
+    if not len(idx):
+        return []
+    order = idx[np.lexsort([k[idx] for k in reversed(keys)])]  # stable: index order kept
+    split = np.flatnonzero(np.any([np.diff(k[order]) != 0 for k in keys], axis=0)) + 1
+    out = [(tuple(int(k[v[0]]) for k in keys), v) for v in np.split(order, split)]
+    return sorted(out, key=lambda kv: kv[1][0])
+
+
 class MaterialGeometryMismatchError(ValueError):
     """A material requires geometry attributes (e.g. UVs) the geometry doesn't have."""
 
@@ -1324,7 +1336,8 @@ class RenderPipeline:
             c[sel], r[sel] = self._bounds(engine, int(g))
         m = np.asarray(models, dtype=np.float64).reshape(n, 4, 4)
         centre = np.einsum("nij,nj->ni", m[:, :3, :3], c) + m[:, :3, 3]
-        radius = r * np.linalg.norm(m[:, :3, :3], axis=1).max(axis=1)
+        a = m[:, :3, :3]  # largest column norm: the scale; summing rows beats norm on (N,3,3)
+        radius = r * np.sqrt((a[:, 0] ** 2 + a[:, 1] ** 2 + a[:, 2] ** 2).max(axis=1))
         mat_ids = np.asarray(mat_ids).astype(np.int64)
         for mid in np.unique(mat_ids):
             mirror = getattr(engine._material_registry.get(int(mid)), "mirror", None)
@@ -1461,88 +1474,48 @@ class RenderPipeline:
         if has_volume:
             volume_data = self._store.get_component_data("Volume", alive_indices)
 
-        # Frustum culling: a mesh whose bounding sphere is out of view is not drawn.
-        visible = None
-        if mesh_data is not None:
-            visible = self._in_frustum(engine, mesh_data[:, 0], model_matrices,
-                                       material_data[:, 0] if material_data is not None
-                                       else np.zeros(len(alive_indices)), vp.T)
+        # Per-entity routing. Priority: axis > label > volume > sprite > mesh. It depends
+        # only on the material, so each distinct material is classified once and entities
+        # are grouped by sorting: a Python loop over entities cost ~100 ms at 100k.
+        # An entity is a sprite when PointCloud is registered AND it has no Mesh
+        # geometry (geom_id == 0). Axis frames carry both AxisFrame *and* an
+        # AXIS_LINE_* mesh, so they need to win over the mesh path.
+        from manifoldx.viz import AxisMaterial, LabelMaterial, VolumeMaterial
 
-        # Group by (geom_id, material_type) for mesh batches
-        # Group by mat_id for sprite/label/axis batches
-        mesh_batches = {}  # (geom_id, mat_type) -> list of local indices
-        sprite_batches = {}  # mat_id -> list of local indices
-        label_batches = {}  # mat_id -> list of local indices
-        axis_batches = {}  # (geom_id, mat_id) -> list of local indices
+        n = len(alive_indices)
+        mats = material_data[:, 0].astype(np.int64) if material_data is not None else np.zeros(n, np.int64)
+        geoms = mesh_data[:, 0].astype(np.int64) if mesh_data is not None else np.zeros(n, np.int64)
+        uniq, inv = np.unique(mats, return_inverse=True)
+        routes = [(has_axis_frame, AxisMaterial), (has_text_label, LabelMaterial), (has_volume, VolumeMaterial)]
+        kind = np.zeros(len(uniq), np.int8)  # 0 sprite or mesh, 1 axis, 2 label, 3 volume
+        for u, mid in enumerate(uniq):
+            mat_obj = engine._material_registry.get(int(mid)) if mid > 0 else None
+            kind[u] = next((r for r, (on, cls) in enumerate(routes, 1) if on and isinstance(mat_obj, cls)), 0)
+        kind = kind[inv]
+
+        axis_batches = {k: v for k, v in _groups(np.flatnonzero(kind == 1), geoms, mats)}
+        label_batches = {k[0]: v for k, v in _groups(np.flatnonzero(kind == 2), mats)}
         volume_batches = []  # list of (entity_local_idx, mat_id, vol_id)
+        if volume_data is not None:
+            vols = volume_data[:, 0].astype(np.int64)
+            volume_batches = [(int(i), int(mats[i]), int(vols[i])) for i in np.flatnonzero((kind == 3) & (vols > 0))]
+        sprite_batches = {}
+        if has_point_cloud:
+            sprite_batches = {k[0]: v for k, v in _groups(np.flatnonzero((kind == 0) & (geoms == 0)), mats)}
 
-        # A culled mesh entity ends in `continue` below unless an axis, label or
-        # volume route claims it first; with none of those components registered,
-        # skip culled meshes before the per-entity loop, which is what a camera
-        # looking at a corner of a large world spends its time on.
-        candidates = range(len(alive_indices))
-        if visible is not None and not (has_axis_frame or has_text_label or has_volume):
-            candidates = np.nonzero(~((mesh_data[:, 0] > 0) & ~visible))[0]
-        for i in candidates:
-            entity_idx = alive_indices[i]
-            mat_id = int(material_data[i, 0]) if material_data is not None else 0
-            geom_id = int(mesh_data[i, 0]) if mesh_data is not None else 0
-
-            # Per-entity routing. Priority: axis > label > sprite > mesh.
-            # An entity is a sprite when PointCloud is registered AND it has no
-            # Mesh geometry (geom_id == 0). Axis frames carry both AxisFrame
-            # *and* an AXIS_LINE_* mesh, so they need to win over the mesh path.
-            is_axis = has_axis_frame and self._is_axis_entity(entity_idx, mat_id, engine)
-            is_label = (
-                (not is_axis)
-                and has_text_label
-                and self._is_label_entity(entity_idx, mat_id, engine)
-            )
-            is_volume = (
-                (not is_axis)
-                and (not is_label)
-                and has_volume
-                and self._is_volume_entity(entity_idx, mat_id, engine)
-            )
-            is_sprite = (
-                (not is_axis)
-                and (not is_label)
-                and (not is_volume)
-                and has_point_cloud
-                and geom_id == 0
-            )
-
-            if is_axis:
-                key = (geom_id, mat_id)
-                if key not in axis_batches:
-                    axis_batches[key] = []
-                axis_batches[key].append(i)
-            elif is_label:
-                if mat_id not in label_batches:
-                    label_batches[mat_id] = []
-                label_batches[mat_id].append(i)
-            elif is_volume:
-                vol_id = int(volume_data[i, 0]) if volume_data is not None else 0
-                if vol_id > 0:
-                    volume_batches.append((i, mat_id, vol_id))
-            elif is_sprite:
-                if mat_id not in sprite_batches:
-                    sprite_batches[mat_id] = []
-                sprite_batches[mat_id].append(i)
-            else:
-                if not has_mesh or geom_id == 0 or not visible[i]:
-                    continue
-
+        # Frustum culling: a mesh whose bounding sphere is out of view is not drawn. Only
+        # entities with geometry are tested: sprites and labels would never be culled.
+        mesh_batches = {}  # (geom_id, mat_type, mat_subtype, mat_id) -> local indices
+        if has_mesh:
+            idx = np.flatnonzero((kind == 0) & (geoms > 0))
+            idx = idx[self._in_frustum(engine, geoms[idx], model_matrices[idx], mats[idx], vp.T)]
+            for (geom_id, mat_id), v in _groups(idx, geoms, mats):
                 mat_obj = engine._material_registry.get(mat_id) if mat_id > 0 else None
                 mat_type = type(mat_obj).__name__ if mat_obj else "BasicMaterial"
                 mat_subtype = getattr(mat_obj, "pipeline_subtype", None) if mat_obj else None
-
                 # mat_id is part of the key so two material *instances* of the
                 # same class never share a uniform buffer.
-                key = (geom_id, mat_type, mat_subtype, mat_id)
-                if key not in mesh_batches:
-                    mesh_batches[key] = []
-                mesh_batches[key].append(i)
+                mesh_batches[(geom_id, mat_type, mat_subtype, mat_id)] = v
 
         # Get camera position for globals
         camera_pos = np.array([0.0, 0.0, 5.0], dtype=np.float32)
@@ -1726,36 +1699,6 @@ class RenderPipeline:
             _axis_pass.render_axis_pass(
                 self, engine, render_pass, axis_batches, model_matrices, material_data
             )
-
-    def _is_axis_entity(self, entity_idx, mat_id, engine):
-        if mat_id <= 0:
-            return False
-        mat_obj = engine._material_registry.get(mat_id)
-        if mat_obj is None:
-            return False
-        from manifoldx.viz import AxisMaterial
-
-        return isinstance(mat_obj, AxisMaterial)
-
-    def _is_label_entity(self, entity_idx, mat_id, engine):
-        if mat_id <= 0:
-            return False
-        mat_obj = engine._material_registry.get(mat_id)
-        if mat_obj is None:
-            return False
-        from manifoldx.viz import LabelMaterial
-
-        return isinstance(mat_obj, LabelMaterial)
-
-    def _is_volume_entity(self, entity_idx, mat_id, engine):
-        if mat_id <= 0:
-            return False
-        mat_obj = engine._material_registry.get(mat_id)
-        if mat_obj is None:
-            return False
-        from manifoldx.viz import VolumeMaterial
-
-        return isinstance(mat_obj, VolumeMaterial)
 
     def run(self, engine, dt: float):
         """Execute full render pipeline (CPU-side prep)."""

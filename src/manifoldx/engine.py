@@ -1494,13 +1494,9 @@ class Engine:
         geom = comps["Mesh"][alive, 0]
         mat_ids = comps["Material"][alive, 0]
         special = (AxisMaterial, LabelMaterial, VolumeMaterial)
-        return np.array(
-            [
-                g > 0 and not isinstance(self._material_registry.get(int(m)), special)
-                for g, m in zip(geom, mat_ids)
-            ],
-            dtype=bool,
-        )
+        # One registry lookup per material, not per entity.
+        drop = [m for m in np.unique(mat_ids) if isinstance(self._material_registry.get(int(m)), special)]
+        return (geom > 0) & ~np.isin(mat_ids, drop)
 
     def _render_ids(self, groups):
         """Draw every mesh flat in its group's label colour; restore afterwards.
