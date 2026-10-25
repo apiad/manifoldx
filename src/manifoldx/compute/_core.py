@@ -397,14 +397,16 @@ class ComputeRunner:
         # shader can read the current state before mutating it). Pure Writes
         # don't strictly need an upload, but Phase 1 doesn't distinguish
         # Writes from ReadsWrites — both go through _writes. The cost is
-        # small so we upload regardless.
+        # small so we upload regardless. Only rows below the store's high-water
+        # mark move: no entity has ever lived above it.
+        rows = engine.store._high_water
         all_input_bindings = list(cls._reads) + list(cls._writes)
         for binding_name in all_input_bindings:
             comp_type, buf, n_bytes = cc.component_buffers[binding_name]
             comp_name = comp_type.__name__
-            if not getattr(comp_type, "_gpu_only", False):
+            if rows and not getattr(comp_type, "_gpu_only", False):
                 arr = engine.store._components[comp_name]
-                device.queue.write_buffer(buf, 0, arr.tobytes())
+                device.queue.write_buffer(buf, 0, arr[:rows])
 
         # 2. Resolve uniforms + pack into bytes.
         engine._last_dt = dt  # auto-bound 'frame_dt' uses this
@@ -492,7 +494,7 @@ class ComputeRunner:
         for binding_name in cls._writes:
             comp_type, buf, n_bytes = cc.component_buffers[binding_name]
             comp_name = comp_type.__name__
-            if getattr(comp_type, "_gpu_only", False):
+            if getattr(comp_type, "_gpu_only", False) or not rows:
                 continue
             # Use copy_buffer_to_buffer staging approach is cleaner, but for
             # simplicity v1 reads back via queue.read_buffer after submit.
@@ -504,8 +506,8 @@ class ComputeRunner:
         for binding_name in list(cc.pending_readbacks):
             comp_type, buf, n_bytes = cc.component_buffers[binding_name]
             comp_name = comp_type.__name__
-            data = device.queue.read_buffer(buf, 0, n_bytes)
-            arr = engine.store._components[comp_name]
+            arr = engine.store._components[comp_name][:rows]
+            data = device.queue.read_buffer(buf, 0, arr.nbytes)
             np.copyto(arr, np.frombuffer(data, dtype=arr.dtype).reshape(arr.shape))
         cc.pending_readbacks.clear()
 
