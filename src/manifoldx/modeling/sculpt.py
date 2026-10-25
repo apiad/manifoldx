@@ -88,10 +88,11 @@ def smooth(mesh: Mesh, iterations: int = 1, strength: float = 1.0,
         gate = np.ones(n, dtype=np.float32)
 
     positions = mesh.positions.astype(np.float32)
+    # One bincount per axis: np.add.at is several times slower on large meshes.
     for _ in range(iterations):
-        sums = np.zeros_like(positions)
-        np.add.at(sums, src, positions[adj.neighbors])
-        avg = sums / deg[:, None]
+        nbr = positions[adj.neighbors]
+        sums = np.stack([np.bincount(src, weights=nbr[:, d], minlength=n) for d in range(3)], axis=1)
+        avg = (sums / deg[:, None]).astype(np.float32)
         positions = positions + (strength * gate)[:, None] * (avg - positions)
 
     return mesh.with_positions(positions).recompute_normals()

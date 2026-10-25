@@ -161,6 +161,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **`modeling` operators on large meshes avoid `np.unique(axis=0)` and `np.add.at`**
+  (#116): `Mesh.adjacency()`, `subdivide` and `decimate` dedup edge and cell rows through
+  one int64 key and a 1-D `np.unique`; `smooth`, Loop subdivision and `decimate` sum with
+  one `np.bincount` per axis. Outputs are unchanged. On a 327 680-face icosphere,
+  `adjacency()` drops from about 4.0 s to 1.2 s, `subdivide(1)` from 2.2 s to 0.26 s,
+  `decimate(64)` from 0.30 s to 0.06 s and one `smooth` iteration from 189 ms to 97 ms.
+
 - **`EntityStore.spawn` assigns slots in one vectorised step** (#107): free list first,
   then the lowest dead slots via `np.flatnonzero`, instead of scanning the alive mask
   once per entity. `spawn(200_000)` drops from about 60 s to 0.03 s. Running out of

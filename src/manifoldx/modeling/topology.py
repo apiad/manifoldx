@@ -7,6 +7,11 @@ import numpy as np
 from manifoldx.modeling.mesh import Mesh
 
 
+def _scatter_sum(index: np.ndarray, values: np.ndarray, n: int) -> np.ndarray:
+    """(n, 3) sums of values rows by index: one bincount per axis, faster than np.add.at."""
+    return np.stack([np.bincount(index, weights=values[:, d], minlength=n) for d in range(3)], axis=1)
+
+
 def _unique_edges(faces: np.ndarray):
     """Return (uniq (E,2) sorted, inv (3,M)) mapping each face side to its edge id.
 
@@ -15,8 +20,11 @@ def _unique_edges(faces: np.ndarray):
     f = faces.astype(np.int64)
     sides = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]], axis=0)
     sides_sorted = np.sort(sides, axis=1)
-    uniq, inv = np.unique(sides_sorted, axis=0, return_inverse=True)
-    inv = np.asarray(inv).reshape(-1)          # numpy 2.x may return (K,1)
+    # One int64 key per side keeps the (lo, hi) order and sorts much faster
+    # than np.unique(axis=0) on rows.
+    n = int(f.max(initial=0)) + 1
+    keys, inv = np.unique(sides_sorted[:, 0] * n + sides_sorted[:, 1], return_inverse=True)
+    uniq = np.stack(np.divmod(keys, n), axis=1)
     inv = inv.reshape(3, -1)                    # rows: ab, bc, ca
     return uniq, inv
 
@@ -89,8 +97,7 @@ def _loop_positions(pos, faces, uniq, inv):
 
     # One-ring neighbour sums (undirected) for interior rule.
     both = np.concatenate([uniq, uniq[:, ::-1]], axis=0)
-    nbr_sum = np.zeros((n, 3))
-    np.add.at(nbr_sum, both[:, 0], pos[both[:, 1]])
+    nbr_sum = _scatter_sum(both[:, 0], pos[both[:, 1]], n)
     valence = np.bincount(both[:, 0], minlength=n).astype(np.float64)
     valence[valence == 0] = 1.0
     k = valence
@@ -98,9 +105,7 @@ def _loop_positions(pos, faces, uniq, inv):
     interior_new = (1.0 - k * beta)[:, None] * pos + beta[:, None] * nbr_sum
 
     # Boundary rule: 3/4 v + 1/8 (sum of two boundary neighbours).
-    bsum = np.zeros((n, 3))
-    np.add.at(bsum, boundary_edges[:, 0], pos[boundary_edges[:, 1]])
-    np.add.at(bsum, boundary_edges[:, 1], pos[boundary_edges[:, 0]])
+    bsum = _scatter_sum(boundary_edges.T.reshape(-1), pos[boundary_edges[:, ::-1].T.reshape(-1)], n)
     boundary_new = 0.75 * pos + 0.125 * bsum
 
     new_orig = np.where(is_boundary[:, None], boundary_new, interior_new)
@@ -172,15 +177,14 @@ def decimate(mesh: Mesh, grid: int = 32) -> Mesh:
 
     # Cell index per vertex, then a unique cluster id per occupied cell.
     ijk = np.floor((pos - lo) / cell).astype(np.int64)
-    _, cluster, inverse = np.unique(ijk, axis=0, return_index=True, return_inverse=True)
-    inverse = np.asarray(inverse).reshape(-1)
-    m = len(cluster)
+    # One int64 key per cell, in (i, j, k) order, instead of np.unique(axis=0) on rows.
+    g = int(ijk.max()) + 1
+    _, inverse = np.unique((ijk[:, 0] * g + ijk[:, 1]) * g + ijk[:, 2], return_inverse=True)
+    m = int(inverse.max()) + 1
 
     # Cluster representative = average of its member vertices.
-    rep = np.zeros((m, 3))
-    counts = np.zeros(m)
-    np.add.at(rep, inverse, pos)
-    np.add.at(counts, inverse, 1.0)
+    counts = np.bincount(inverse, minlength=m)
+    rep = _scatter_sum(inverse, pos, m)
     rep /= counts[:, None]
 
     # Remap faces; drop those whose corners collapse into < 3 distinct clusters.
