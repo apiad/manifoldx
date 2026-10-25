@@ -167,6 +167,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slots now raises before any slot is taken, and the error names
   `Engine(max_entities=...)`.
 
+- **The scene pass routes entities without a per-entity Python loop** (#111). Axis,
+  label, volume, sprite or mesh depends only on the material, so each distinct material is
+  classified once and entities are grouped by sorting; the passes take index arrays.
+  Frustum culling now runs only on entities with geometry (it tested every point sprite
+  and kept them all), and the id pass of `render_frame` builds its mesh mask per material.
+  On a 4-CPU machine without a GPU, a frame of 100k point sprites drops from about 450 ms
+  to 110 ms, of 100k static meshes from about 550-730 ms to 170-240 ms, and an id pass
+  over 100k meshes from about 1.1 s to 0.65 s.
+
 - **`Camera.get_view_matrix` uses plain float arithmetic** instead of `np.cross` on
   3-vectors, which cost more than the math; the renderer asks for it several times a
   frame.
