@@ -404,6 +404,11 @@ class RenderPipeline:
         # type, which silently broke per-instance material data. The mesh
         # pass now uses this dict keyed by mat_id, one buffer per material.
         self._material_buffers_by_mat_id = {}  # mat_id -> buffer
+        self._material_uniforms_by_mat_id = {}  # mat_id -> bytes last written to its buffer
+        # (mat_id, has_joints) -> (resources, bind group): rebuilt only when a
+        # bound resource changes (a grown buffer, a swapped texture).
+        self._mesh_bind_groups = {}
+        self._shadow_bind_group = None  # (view, bind group) for group(2)
         self._geom_bounds = {}  # geom_id -> (centre (3,), radius): a sphere around its rest vertices
         self.drawn = 0  # mesh instances the last frame drew, after frustum culling
         self._globals_buffer = None  # VP matrix + view matrix + camera_pos

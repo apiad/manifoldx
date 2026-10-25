@@ -95,7 +95,7 @@ def render_sprite_batches(
         )
 
         # Upload material uniforms
-        mat_data = mat_obj.get_data(instance_count, engine._material_registry)
+        mat_data = mat_obj.get_data(1, engine._material_registry)  # only row 0 is uploaded
         material_type = type(mat_obj).__name__
         material_subtype = getattr(mat_obj, "pipeline_subtype", None)
         bkey = (sprite_geom_id, material_type, material_subtype, True)
