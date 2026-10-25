@@ -127,20 +127,37 @@ def _mesh_for(variant):
     return _parts(colors=variant == "vcolor", uvs=variant == "textured")
 
 
-def _render(meshes_and_poses, variant, tmp_path, skinned):
+# Both ways to pose: one EntityHandle.set_joints per entity, or one batched call.
+HOW = ["handle"]
+
+
+def _set_joints(e, handles, poses, how):
+    """Pose each handle with its (J, 4, 4) matrices, all of one J."""
+    if not handles:
+        return
+    if how == "handle":
+        for h, m in zip(handles, poses):
+            h.set_joints(m)
+    else:
+        e.set_joints([h.index for h in handles], np.stack(poses))
+
+
+def _render(meshes_and_poses, variant, tmp_path, skinned, how="handle"):
     """Render [(mesh, mats or None, x)] either skinned via set_joints or CPU-posed."""
     e = _engine()
     mat = _material(variant, e, tmp_path)
-    geos = {}
+    geos, posed_handles, poses = {}, [], []
     for mesh, mats, x in meshes_and_poses:
         if skinned:
             geo = geos.setdefault(id(mesh), mesh.to_geometry())  # one geometry per Mesh object
             h = e.spawn(MeshC(geo), Material(mat), Transform(pos=(x, 0, 0), scale=(0.6, 0.6, 0.6)))
             if mats is not None:
-                h.set_joints(mats)
+                posed_handles.append(h)
+                poses.append(mats)
         else:
             posed = mesh if mats is None else _cpu_pose(mesh, mats)
             e.spawn(MeshC(posed.to_geometry()), Material(mat), Transform(pos=(x, 0, 0), scale=(0.6, 0.6, 0.6)))
+    _set_joints(e, posed_handles, poses, how)
     return e.render_frame(supersample=1).astype(np.float64)
 
 
@@ -307,10 +324,11 @@ def test_set_joints_bad_shape_raises(mats):
         h.set_joints(mats)
 
 
-def test_set_joints_before_device_is_kept_in_the_mirror():
+@pytest.mark.parametrize("how", HOW)
+def test_set_joints_before_device_is_kept_in_the_mirror(how):
     e = mx.Engine("skin", width=32, height=32)
     h = _spawn(e, _parts())
-    h.set_joints(_pose()[:2])
+    _set_joints(e, [h], [_pose()[:2]], how)
     joints = e._render_pipeline._joints
     block = joints.block_of[h.index]
     assert block > 0
@@ -318,10 +336,11 @@ def test_set_joints_before_device_is_kept_in_the_mirror():
     assert np.array_equal(joints.mirror[block, 2:], np.tile(np.eye(4, dtype=np.float32), (30, 1, 1)))
 
 
-def test_a_respawned_entity_does_not_inherit_a_block():
+@pytest.mark.parametrize("how", HOW)
+def test_a_respawned_entity_does_not_inherit_a_block(how):
     e = mx.Engine("skin", width=32, height=32)
     h = _spawn(e, _parts())
-    h.set_joints(_pose())
+    _set_joints(e, [h], [_pose()], how)
     e.destroy([h.index])
     e.commands.execute(e.store)
     h2 = _spawn(e, _parts())
@@ -329,13 +348,30 @@ def test_a_respawned_entity_does_not_inherit_a_block():
     assert e._render_pipeline._joints.block_of[h2.index] == 0
 
 
+@pytest.mark.parametrize("how", HOW)
+def test_a_destroyed_entity_frees_its_block_for_the_next_pose(how):
+    e = mx.Engine("skin", width=32, height=32)
+    a, b = _spawn(e, _parts()), _spawn(e, _parts())
+    _set_joints(e, [a, b], [_pose(), _pose()], how)
+    joints = e._render_pipeline._joints
+    freed = int(joints.block_of[a.index])
+    e.destroy([a.index])
+    e.commands.execute(e.store)
+    assert np.array_equal(joints.mirror[freed], np.tile(np.eye(4, dtype=np.float32), (32, 1, 1)))
+    c = _spawn(e, _parts())
+    _set_joints(e, [c], [_pose()[:1]], how)
+    assert joints.block_of[c.index] == freed
+    assert joints.block_of[b.index] not in (0, freed)
+
+
 # --- pixels ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("variant", ["plain", "vcolor", "textured"])
-def test_skinned_render_matches_cpu_posed_render(variant, tmp_path):
+@pytest.mark.parametrize("how", HOW)
+def test_skinned_render_matches_cpu_posed_render(variant, how, tmp_path):
     mesh = _mesh_for(variant)
-    gpu = _render([(mesh, _pose(), 0.0)], variant, tmp_path, skinned=True)
+    gpu = _render([(mesh, _pose(), 0.0)], variant, tmp_path, skinned=True, how=how)
     cpu = _render([(mesh, _pose(), 0.0)], variant, tmp_path, skinned=False)
     rest = _render([(mesh, None, 0.0)], variant, tmp_path, skinned=False)
     assert np.abs(cpu - rest).mean() > 3.0  # the pose is visible, so the check can fail
@@ -350,25 +386,27 @@ def test_unposed_skinned_entity_renders_its_rest_pose(tmp_path):
     _assert_same(gpu, cpu)
 
 
-def test_two_entities_from_one_mesh_are_posed_independently(tmp_path):
+@pytest.mark.parametrize("how", HOW)
+def test_two_entities_from_one_mesh_are_posed_independently(how, tmp_path):
     mesh = _parts()
     other = _pose()[[1, 0, 2]].copy()
     other[2] = _rot((0, 1, 0), 1.0, (0.8, 0, 0))
     scene = [(mesh, _pose(), -0.7), (mesh, other, 0.7)]
-    gpu = _render(scene, "plain", tmp_path, skinned=True)
+    gpu = _render(scene, "plain", tmp_path, skinned=True, how=how)
     cpu = _render(scene, "plain", tmp_path, skinned=False)
     _assert_same(gpu, cpu)
 
 
-def test_fewer_joints_keep_the_previous_higher_matrices(tmp_path):
+@pytest.mark.parametrize("how", HOW)
+def test_fewer_joints_keep_the_previous_higher_matrices(how, tmp_path):
     mesh = _parts()
     first, second = _pose(), _pose()[[1]]
     e = _engine()
     h = e.spawn(MeshC(mesh.to_geometry()), Material(StandardMaterial(color="#d0a060", roughness=0.6)),
                 Transform(scale=(0.6, 0.6, 0.6)))
-    h.set_joints(first)
+    _set_joints(e, [h], [first], how)
     e.render_frame(supersample=1)
-    h.set_joints(second)
+    _set_joints(e, [h], [second], how)
     gpu = e.render_frame(supersample=1).astype(np.float64)
     expected = np.concatenate([second, first[1:]])
     cpu = _render([(mesh, expected, 0.0)], "plain", tmp_path, skinned=False)
